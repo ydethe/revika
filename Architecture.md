@@ -67,7 +67,7 @@ addressing (IPFS-style provider records).
 ├─────────────────────────────────────────────┤
 │ Storage layer (Node)                          │  blob store by shardID      [implemented]
 ├─────────────────────────────────────────────┤
-│ Network layer — go-libp2p                     │  identity, transport, DHT, NAT [planned]
+│ Network layer — go-libp2p                     │  identity, transport, protocols [partial]
 └─────────────────────────────────────────────┘
 ```
 
@@ -336,9 +336,12 @@ Prove the core loop before adding breadth. Each phase is independently testable.
    Round-trips and any-`k`-of-`n` reconstruction verified on both stores.
 2. ✅ **Repair loop, still on the mock store.** Delete shards, confirm `Check` detects the
    deficit and `Repair` restores redundancy (with address-stable regeneration).
-3. ⬜ **Real network** ← *next*. Swap the mock store for a libp2p-backed `Store`:
-   `revika-node` serving the shard/probe protocols, DHT provider records, multi-node
-   placement. Because §3.2's `Store` is the seam, steps 1–2 should run unchanged on top.
+3. 🟡 **Real network** (in progress). `internal/net` puts the shard store on libp2p:
+   a `Server` serving the `/revika/shard` + `/revika/probe` stream protocols, and a
+   `NetStore` client that *is* a `store.Store` — so §3.2's seam holds and the encode
+   and repair stacks run unchanged over the wire (proven by `TestPipelineOverNetwork`).
+   The `revika-node` daemon (`cmd/revika-node`) is runnable. **Still open:** DHT
+   provider records / multi-node placement, and repairing onto *fresh* nodes.
 4. ⬜ **Metadata + mutable root.** Serialize/encrypt manifests, encrypted directories,
    signed root pointers.
 5. ⬜ **Sharing.** Read/write/verify capabilities and cap delivery wrapped to recipient
