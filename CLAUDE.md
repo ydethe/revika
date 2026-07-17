@@ -4,15 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Early — the offline core loop plus the networked Node role are implemented; the
-User daemon, manifests-on-disk, and sharing are not.** Build-order steps 1–3 exist
-and pass `go test -race`: the offline pipeline (chunk → encrypt → erasure-code →
-store → retrieve → **repair**) *and* the libp2p network layer that puts the shard
-store on the wire, with a runnable `revika-node` daemon (Node role). There is as yet
-**no User daemon (`revika-daemon`), no DHT provider records, no manifests-on-disk, no
-sharing, no sync engine** — everything above the network/repair layer is still the
-*intended* design described below. Verify against the actual tree before relying on
-any path or type not listed as implemented, and update this file as more lands.
+**The offline core loop, the networked Node role, and a User-side client CLI
+(store/retrieve/share) are implemented; the background User daemon and
+manifests-as-network-blobs are not.** Build-order steps 1–3 pass `go test -race`
+(offline pipeline: chunk → encrypt → erasure-code → store → retrieve → **repair**;
+plus the libp2p network layer with a runnable `revika-node` daemon), and a first cut
+of step 5 (**sharing** via capability wrapping) ships in the `revika-ctl` client.
+There is as yet **no background User daemon (`revika-daemon`), no DHT provider
+records, no sync engine, and no directories/mutable root pointer**. Manifests are
+persisted by the client as local JSON files (the interim read-cap), not yet as
+encrypted network blobs. Verify against the actual tree before relying on any path or
+type not listed as implemented, and update this file as more lands.
 
 Implemented packages (see [Architecture.md](Architecture.md) for detail):
 
@@ -25,7 +27,9 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
 | `internal/pipeline`| `StoreFile`/`LoadFile` + `FileManifest`; wires the four above |
 | `internal/repair`  | `Check` (probe) + `Repair` (regenerate missing shards) |
 | `internal/net`     | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` (Node) + `NetStore` (a `store.Store` over the wire) |
+| `internal/cap`     | capability wrapping: X25519 identities + `Wrap`/`Unwrap` (NaCl box anonymous seal) for sharing a read-cap to a recipient key |
 | `cmd/revika-node`  | headless Node daemon: serves shards from a `DiskStore`, persistent libp2p identity, mDNS |
+| `cmd/revika-ctl`   | User client CLI: `keygen`/`put`/`get`/`share` — drives the pipeline over `NetStore`, manifests as local JSON |
 
 ### Toolchain & key decisions made during implementation
 
@@ -150,6 +154,7 @@ go test ./path/to/pkg     # test a single package
 go test -run TestName ./path/to/pkg   # run a single test
 go vet ./...              # static checks
 go run ./cmd/revika-node  # run the Node daemon (flags: -data, -listen, -mdns, -v)
+go run ./cmd/revika-ctl   # User client: keygen | put | get | share (see -h)
 ```
 
 Runtime state is written under `.revika/` and is git-ignored. Compiled binaries
@@ -160,15 +165,17 @@ names in `.gitignore` if the final binary names differ.
 
 ```
 cmd/revika-node/   ✓ headless Node daemon           cmd/revika-daemon/  (planned)
+cmd/revika-ctl/    ✓ User client CLI (keygen/put/get/share)
 internal/
   store/     ✓ content-addressed blob store (Mem + Disk); leases/quotas TBD
-  crypto/    ✓ AES-256-GCM AEAD; key derivation & capabilities TBD
+  crypto/    ✓ AES-256-GCM AEAD; key derivation TBD
   erasure/   ✓ Reed–Solomon encode/decode
   chunk/     ✓ fixed-size chunking (CDC planned)
   pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory manifest for now)
   repair/    ✓ availability probes + shard regeneration
   net/       ✓ libp2p host, protocol IDs, shard/probe stream handlers, NetStore client
              (DHT provider records still TBD)
+  cap/       ✓ X25519 capability wrapping (Wrap/Unwrap) for sharing read-caps
   manifest/    on-disk/on-wire manifest + capabilities      (planned)
   placement/   node selection & redundancy policy           (planned)
   ledger/      per-user index/accounting, root pointer       (planned)
@@ -176,8 +183,10 @@ internal/
 ```
 
 Note: `FileManifest`/`ChunkRef` currently live in `internal/pipeline` as in-memory
-values. When serialization + capabilities land they are expected to move to
-`internal/manifest`.
+values; `cmd/revika-ctl` serializes them to local JSON (the interim read-cap, hex keys
++ shard IDs). When network serialization lands they are expected to move to
+`internal/manifest`. `internal/cap` already provides the recipient-key wrapping that
+`share` uses to deliver a read-cap.
 
 ## Open questions (decide before/while implementing)
 

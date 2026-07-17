@@ -176,11 +176,15 @@ proves possession without shipping the shard), placing regenerated shards on *fr
 nodes rather than back into the same store, and the repair *cadence*/threshold policy
 (who runs it, how often, what margin triggers it).
 
-### 3.5 Capability & crypto layer — **[partial]** (`internal/crypto`)
+### 3.5 Capability & crypto layer — **[partial]** (`internal/crypto`, `internal/cap`)
 
-**Implemented:** symmetric authenticated encryption only — `NewKey`, `Seal`, `Open`
-(AES-256-GCM), which is what the pipeline uses for per-chunk encryption. **Planned:**
-the capability model and all asymmetric key material below.
+**Implemented:** symmetric authenticated encryption — `NewKey`, `Seal`, `Open`
+(AES-256-GCM, `internal/crypto`), used by the pipeline for per-chunk encryption; and a
+first cut of **cap delivery** (`internal/cap`): X25519 recipient identities with
+`Wrap`/`Unwrap` (NaCl box anonymous seal), which `revika-ctl share` uses to encrypt a
+file's read-cap (its serialized manifest) to a recipient's public key. **Still
+planned:** the derivation chain (write-cap → read-cap → verify-cap), signing keys for
+mutable root pointers, and a compact string form for caps.
 
 The **capability** ("cap") is how access is named and delegated, following Tahoe-LAFS:
 
@@ -288,16 +292,18 @@ DHT usage:
 
 ```
 cmd/
-  revika-node/       # headless Node server binary                        (planned)
+  revika-node/     ✓ headless Node server binary
+  revika-ctl/      ✓ User client CLI (keygen/put/get/share)
   revika-daemon/     # User background daemon (+ optional embedded node)  (planned)
 internal/
   store/     ✓ content-addressed blob store (Mem + Disk); leases/quotas/GC TBD
-  crypto/    ✓ AES-256-GCM AEAD; key derivation, capabilities, signing TBD
+  crypto/    ✓ AES-256-GCM AEAD; key derivation, signing TBD
   erasure/   ✓ Reed–Solomon encode/decode
   chunk/     ✓ fixed-size chunking (CDC planned)
   pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory)
   repair/    ✓ availability probes + shard regeneration (local store)
-  net/         # libp2p host setup, protocol IDs, stream handlers         (planned)
+  net/       ✓ libp2p host, protocol IDs, shard/probe stream handlers, NetStore client
+  cap/       ✓ X25519 capability wrapping (Wrap/Unwrap) for sharing read-caps
   manifest/    # file/dir manifest & capability types + serialization     (planned)
   placement/   # node selection & redundancy policy                       (planned)
   ledger/      # per-user index/accounting, root-pointer management        (planned)
@@ -313,13 +319,15 @@ Currently in `go.mod`:
 | Erasure coding | `github.com/klauspost/reedsolomon` **v1.14.1** | in use |
 | Symmetric AEAD | stdlib `crypto/aes` + `crypto/cipher` (AES-256-GCM) | in use |
 | Hashing        | stdlib `crypto/sha256` (content addresses) | in use |
+| P2P / transport / discovery | `github.com/libp2p/go-libp2p` (TCP+QUIC, Noise/TLS, mDNS) | in use |
+| Cap wrapping   | `golang.org/x/crypto/nacl/box` + `curve25519` (X25519 anonymous seal) | in use |
 
 Planned as later layers land:
 
 | Concern            | Library |
 |--------------------|---------|
-| P2P / discovery / NAT | `github.com/libp2p/go-libp2p`, `go-libp2p-kad-dht` |
-| Cap wrapping / signing / KDF | `crypto/ecdh` (X25519), `crypto/ed25519`, `golang.org/x/crypto` (nacl/box, hkdf) |
+| DHT discovery / provider records | `go-libp2p-kad-dht` |
+| Signing / KDF | `crypto/ed25519` (root pointers), `golang.org/x/crypto/hkdf` |
 | Local metadata DB  | `go.etcd.io/bbolt` (or SQLite) |
 | Filesystem watching (daemon) | `github.com/fsnotify/fsnotify` |
 | Content-defined chunking | a FastCDC implementation |
@@ -344,8 +352,10 @@ Prove the core loop before adding breadth. Each phase is independently testable.
    provider records / multi-node placement, and repairing onto *fresh* nodes.
 4. ⬜ **Metadata + mutable root.** Serialize/encrypt manifests, encrypted directories,
    signed root pointers.
-5. ⬜ **Sharing.** Read/write/verify capabilities and cap delivery wrapped to recipient
-   keys.
+5. 🟡 **Sharing** (in progress). Cap *delivery* is implemented (`internal/cap`:
+   `Wrap`/`Unwrap` to a recipient's X25519 key) and driven by `revika-ctl share` /
+   `get -cap`. **Still open:** the write-cap → read-cap → verify-cap derivation chain
+   and signing keys for mutable objects.
 6. ⬜ **Sync daemon.** Folder watching, reconcile, conflict handling; optional embedded
    node.
 

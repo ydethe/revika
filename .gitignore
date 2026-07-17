@@ -36,4 +36,5 @@ go.work.sum
 # compiled binaries
 /revika
 /revika-node
+/revika-ctl
 /revika-daemon
