@@ -10,6 +10,7 @@ import (
 
 	"revika/internal/cap"
 	"revika/internal/pipeline"
+	"revika/internal/store"
 )
 
 // cmdKeygen generates and persists a recipient identity.
@@ -48,11 +49,16 @@ func cmdKeygen(args []string) error {
 	return nil
 }
 
-// cmdPut stores a file on a node and writes its manifest.
+// cmdPut stores a file and writes its manifest. It targets either a single node
+// (-node) or, via the DHT, a set of discovered nodes across which the shards are
+// spread (-bootstrap / -mdns).
 func cmdPut(args []string) error {
 	fs := flag.NewFlagSet("put", flag.ExitOnError)
-	node := fs.String("node", "", "node multiaddr (with /p2p/<peerid>)")
+	node := fs.String("node", "", "store on this single node multiaddr (with /p2p/<peerid>)")
 	manifestPath := fs.String("manifest", "", "where to write the file manifest (default <file>.rvk.json)")
+	var bootstrap multiFlag
+	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); spreads shards across discovered nodes")
+	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -65,14 +71,15 @@ func cmdPut(args []string) error {
 		outManifest = file + ".rvk.json"
 	}
 
+	cfg := pipeline.DefaultConfig()
 	ctx := context.Background()
-	s, closer, err := dial(ctx, *node)
+	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, cfg)
 	if err != nil {
 		return err
 	}
 	defer closer()
 
-	m, err := runStore(ctx, s, pipeline.DefaultConfig(), file)
+	m, err := runStore(ctx, s, cfg, file)
 	if err != nil {
 		return fmt.Errorf("store %s: %w", file, err)
 	}
@@ -94,15 +101,44 @@ func cmdPut(args []string) error {
 	return nil
 }
 
-// cmdGet reconstructs a file from a node, via a plaintext manifest or an
-// unwrapped shared cap.
+// putBackend selects the store `put` writes through. With -node it targets that
+// single node (unchanged behaviour). Otherwise it joins the DHT and returns a
+// PlacementStore spreading shards across discovered nodes, warning if fewer than
+// k+m nodes are available (shards will then colocate, weakening the erasure
+// guarantee).
+func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool, cfg pipeline.Config) (store.Store, func(), error) {
+	switch {
+	case node != "":
+		return dial(ctx, node)
+	case len(bootstrap) > 0 || mdns:
+		ps, closer, err := dialPlacement(ctx, bootstrap, mdns)
+		if err != nil {
+			return nil, nil, err
+		}
+		if n := cfg.Params.N(); len(ps.Nodes()) < n {
+			fmt.Fprintf(os.Stderr, "warning: only %d storage node(s) discovered for k+m=%d shards per chunk; shards will colocate, reducing failure-domain diversity\n", len(ps.Nodes()), n)
+		} else {
+			fmt.Fprintf(os.Stderr, "Placing shards across %d discovered node(s)\n", len(ps.Nodes()))
+		}
+		return ps, closer, nil
+	default:
+		return nil, nil, fmt.Errorf("provide -node <ma> to store on one node, or -bootstrap/-mdns to place across DHT-discovered nodes")
+	}
+}
+
+// cmdGet reconstructs a file, via a plaintext manifest or an unwrapped shared
+// cap, fetching shards from a single node (-node) or by discovering their
+// providers on the DHT (-bootstrap / -mdns).
 func cmdGet(args []string) error {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
-	node := fs.String("node", "", "node multiaddr (with /p2p/<peerid>)")
+	node := fs.String("node", "", "fetch from this single node multiaddr (with /p2p/<peerid>)")
 	manifestPath := fs.String("manifest", "", "manifest file to read (your own file)")
 	capPath := fs.String("cap", "", "wrapped cap file to read (a shared file); requires -key")
 	keyPath := fs.String("key", "", "your private key file, to unwrap -cap")
 	out := fs.String("o", "", "output file (default stdout)")
+	var bootstrap multiFlag
+	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); discovers shard providers")
+	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS on the LAN")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -113,7 +149,7 @@ func cmdGet(args []string) error {
 	}
 
 	ctx := context.Background()
-	s, closer, err := dial(ctx, *node)
+	s, closer, err := getBackend(ctx, *node, bootstrap, *mdns)
 	if err != nil {
 		return err
 	}
@@ -135,6 +171,19 @@ func cmdGet(args []string) error {
 		fmt.Fprintf(os.Stderr, "Wrote %s (%d bytes)\n", *out, m.Size)
 	}
 	return nil
+}
+
+// getBackend selects the store `get` fetches through: a single node (-node) or
+// a DHT-backed store that discovers each shard's providers (-bootstrap / -mdns).
+func getBackend(ctx context.Context, node string, bootstrap []string, mdns bool) (store.Store, func(), error) {
+	switch {
+	case node != "":
+		return dial(ctx, node)
+	case len(bootstrap) > 0 || mdns:
+		return dialDHT(ctx, bootstrap, mdns)
+	default:
+		return nil, nil, fmt.Errorf("provide -node <ma> to fetch from one node, or -bootstrap/-mdns to discover providers via the DHT")
+	}
 }
 
 // resolveManifest loads a manifest from either a plaintext manifest file or a

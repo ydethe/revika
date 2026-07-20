@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"revika/internal/cap"
@@ -70,13 +71,16 @@ Commands:
         <prefix>.key (private) and <prefix>.pub (public); prints the public key.
         Default prefix: .revika/keys/user
 
-  put -node <multiaddr> [-manifest <path>] <file>
-        Chunk, encrypt, erasure-code and store <file> on the node. Writes the
-        file's manifest (its read-capability) to <path> (default <file>.rvk.json).
+  put (-node <ma> | -bootstrap <ma>... | -mdns) [-manifest <path>] <file>
+        Chunk, encrypt, erasure-code and store <file>. With -node, store on that
+        single node; with -bootstrap/-mdns, join the DHT and spread the shards
+        across discovered storage nodes. Writes the file's manifest (its
+        read-capability) to <path> (default <file>.rvk.json).
 
-  get -node <multiaddr> (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
-        Reconstruct a file from the node. Read your own file with -manifest, or a
-        shared file by unwrapping a -cap with your private -key. Default out: stdout.
+  get (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
+        Reconstruct a file. With -node, fetch from that node; with -bootstrap/-mdns,
+        discover each shard's providers via the DHT. Read your own file with
+        -manifest, or a shared file by unwrapping a -cap with your -key. Out: stdout.
 
   share -manifest <path> -to <recipient-pubkey|@file> [-o <path>]
         Wrap a manifest (read-capability) to a recipient's public key so only they
@@ -84,14 +88,25 @@ Commands:
 
 A <multiaddr> includes the node's peer ID, e.g.
   /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW...
-as printed by revika-node on startup.
+as printed by revika-node on startup. A -bootstrap peer is any running node; the
+client joins the revika DHT through it and needs no central server.
 `)
 }
 
 // --- shared helpers -------------------------------------------------------
 
+// multiFlag collects a repeatable string flag (e.g. -bootstrap a -bootstrap b).
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
 // dialTimeout bounds establishing the client→node connection.
 const dialTimeout = 30 * time.Second
+
+// discoveryTimeout bounds a DHT discovery step (finding storage nodes or a
+// shard's providers) before we give up.
+const discoveryTimeout = 30 * time.Second
 
 // dial builds an ephemeral client host (no persistent identity, no mDNS),
 // connects it to the node at nodeAddr, and returns a NetStore over that node
@@ -116,6 +131,111 @@ func dial(ctx context.Context, nodeAddr string) (*net.NetStore, func(), error) {
 	}
 	closer := func() { h.Close() }
 	return net.NewNetStore(h, info.ID), closer, nil
+}
+
+// joinDHT builds an ephemeral client-mode DHT host and joins the network via the
+// given bootstrap peers (and/or mDNS on the LAN). It returns the host, the
+// Discovery, and a closer that tears both down. At least one of bootstrap/mdns
+// must be provided — a client with no way in cannot reach the DHT.
+func joinDHT(ctx context.Context, bootstrap []string, mdns bool) (host.Host, *net.Discovery, func(), error) {
+	if len(bootstrap) == 0 && !mdns {
+		return nil, nil, nil, fmt.Errorf("DHT mode needs -bootstrap <multiaddr> (or -mdns on a LAN)")
+	}
+	h, err := net.NewHost(net.HostConfig{EnableMDNS: mdns})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	disc, err := net.NewDiscovery(dctx, h, net.DiscoveryConfig{Mode: net.DHTModeClient, Bootstrap: bootstrap})
+	if err != nil {
+		h.Close()
+		return nil, nil, nil, err
+	}
+	closer := func() { disc.Close(); h.Close() }
+	// The routing table fills asynchronously after bootstrap; wait for it before
+	// querying, or the first lookup races an empty table and finds nothing.
+	rctx, rcancel := context.WithTimeout(ctx, discoveryTimeout)
+	defer rcancel()
+	if err := disc.WaitReady(rctx); err != nil {
+		closer()
+		return nil, nil, nil, err
+	}
+	return h, disc, closer, nil
+}
+
+// dialDHT returns a read store that retrieves shards by discovering their
+// providers on the DHT — no explicit node needed. Used by `get`.
+func dialDHT(ctx context.Context, bootstrap []string, mdns bool) (store.Store, func(), error) {
+	h, disc, closer, err := joinDHT(ctx, bootstrap, mdns)
+	if err != nil {
+		return nil, nil, err
+	}
+	return net.NewDHTStore(h, disc), closer, nil
+}
+
+// dialPlacement joins the DHT, discovers storage nodes, and returns a
+// PlacementStore that spreads shards across them. Used by `put`.
+func dialPlacement(ctx context.Context, bootstrap []string, mdns bool) (*net.PlacementStore, func(), error) {
+	h, disc, closer, err := joinDHT(ctx, bootstrap, mdns)
+	if err != nil {
+		return nil, nil, err
+	}
+	fctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
+	defer cancel()
+	nodes, err := discoverNodes(fctx, h, disc)
+	if err != nil {
+		closer()
+		return nil, nil, err
+	}
+	ps, err := net.NewPlacementStore(h, disc, nodes)
+	if err != nil {
+		closer()
+		return nil, nil, err
+	}
+	return ps, closer, nil
+}
+
+// discoverNodes finds storage nodes advertised on the DHT and connects to them,
+// returning the peer IDs of those we could reach. DHT discovery is eventually
+// consistent — advertise records and routing tables converge asynchronously — so
+// it polls, accumulating reachable nodes across rounds, and returns once a round
+// turns up nothing new (the reachable set has stabilised) or the timeout hits.
+func discoverNodes(ctx context.Context, h host.Host, disc *net.Discovery) ([]peer.ID, error) {
+	seen := map[peer.ID]bool{}
+	var ids []peer.ID
+	prev := -1
+	deadline := time.Now().Add(discoveryTimeout)
+	for time.Now().Before(deadline) {
+		fctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		infos, err := disc.FindNodes(fctx, 0)
+		cancel()
+		if err == nil {
+			for _, pi := range infos {
+				if seen[pi.ID] {
+					continue
+				}
+				cctx, c := context.WithTimeout(ctx, dialTimeout)
+				connErr := net.Connect(cctx, h, pi)
+				c()
+				if connErr == nil {
+					seen[pi.ID] = true
+					ids = append(ids, pi.ID)
+				}
+			}
+		}
+		// Once we have at least one node and a round added nothing new, the
+		// reachable set has settled — stop waiting for stragglers.
+		if len(ids) > 0 && len(ids) == prev {
+			return ids, nil
+		}
+		prev = len(ids)
+		time.Sleep(1500 * time.Millisecond)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no storage nodes discovered via the DHT (is a node running, advertising, and reachable?)")
+	}
+	return ids, nil
 }
 
 // runStore stores the file at path into s and returns its manifest. Split out

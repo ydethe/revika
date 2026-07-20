@@ -4,17 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**The offline core loop, the networked Node role, and a User-side client CLI
-(store/retrieve/share) are implemented; the background User daemon and
+**The offline core loop, the networked Node role, a User-side client CLI
+(store/retrieve/share), and the Kademlia DHT (WAN discovery + provider records +
+multi-node placement) are implemented; the background User daemon and
 manifests-as-network-blobs are not.** Build-order steps 1–3 pass `go test -race`
 (offline pipeline: chunk → encrypt → erasure-code → store → retrieve → **repair**;
-plus the libp2p network layer with a runnable `revika-node` daemon), and a first cut
-of step 5 (**sharing** via capability wrapping) ships in the `revika-ctl` client.
-There is as yet **no background User daemon (`revika-daemon`), no DHT provider
-records, no sync engine, and no directories/mutable root pointer**. Manifests are
-persisted by the client as local JSON files (the interim read-cap), not yet as
-encrypted network blobs. Verify against the actual tree before relying on any path or
-type not listed as implemented, and update this file as more lands.
+plus the libp2p network layer with a runnable `revika-node` daemon), the DHT layer
+lets a client place a file's shards across several discovered nodes and retrieve
+them by provider discovery **with no explicit node and no central server**, and a
+first cut of step 5 (**sharing** via capability wrapping) ships in `revika-ctl`.
+There is as yet **no background User daemon (`revika-daemon`), no sync engine, no
+IPNS-like mutable root pointer, and no directories**. Node-selection policy is a
+first cut (round-robin placement); reputation/diversity domains are future work.
+Manifests are persisted by the client as local JSON files (the interim read-cap),
+not yet as encrypted network blobs. Verify against the actual tree before relying on
+any path or type not listed as implemented, and update this file as more lands.
 
 Implemented packages (see [Architecture.md](Architecture.md) for detail):
 
@@ -26,10 +30,10 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
 | `internal/chunk`   | fixed-size chunker (`iter.Seq2`); CDC is a planned upgrade |
 | `internal/pipeline`| `StoreFile`/`LoadFile` + `FileManifest`; wires the four above |
 | `internal/repair`  | `Check` (probe) + `Repair` (regenerate missing shards) |
-| `internal/net`     | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` (Node) + `NetStore` (a `store.Store` over the wire) |
+| `internal/net`     | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` (Node) + `NetStore` (a `store.Store` over the wire); **`Discovery`** (Kademlia DHT: bootstrap, provider records, node-service advertise/find) + **`DHTStore`**/**`PlacementStore`** (`store.Store`s that discover providers and spread shards across nodes) |
 | `internal/cap`     | capability wrapping: X25519 identities + `Wrap`/`Unwrap` (NaCl box anonymous seal) for sharing a read-cap to a recipient key |
-| `cmd/revika-node`  | headless Node daemon: serves shards from a `DiskStore`, persistent libp2p identity, mDNS |
-| `cmd/revika-ctl`   | User client CLI: `keygen`/`put`/`get`/`share` — drives the pipeline over `NetStore`, manifests as local JSON |
+| `cmd/revika-node`  | headless Node daemon: serves shards from a `DiskStore`, persistent libp2p identity, mDNS, DHT server (announces held shards, advertises as a storage node, periodic reprovide) |
+| `cmd/revika-ctl`   | User client CLI: `keygen`/`put`/`get`/`share` — drives the pipeline over a single node (`-node`) or DHT-discovered nodes (`-bootstrap`/`-mdns`), manifests as local JSON |
 
 ### Toolchain & key decisions made during implementation
 
@@ -46,6 +50,17 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
 - **Repair needs no decryption key** — it operates on ciphertext shards and relies on
   `erasure.Encode` being deterministic, so regenerated shards reproduce their original
   content addresses and the manifest never changes.
+- **DHT = `go-libp2p-kad-dht` with a `/revika` protocol prefix**, so revika runs its
+  *own* private Kademlia network (protocol `/revika/kad/1.0.0`), isolated from the
+  public IPFS DHT. Provider records key `shardID → holders` via a CIDv1 (raw codec)
+  wrapping the shard's SHA-256; nodes advertise themselves under the `revika/storage`
+  rendezvous namespace so clients can discover storage nodes with no registry.
+- **Placement = round-robin across discovered nodes** (`net.PlacementStore`), so a
+  chunk's `k+m` shards land on distinct nodes when enough are available. This is the
+  first cut of the planned placement layer; it currently lives in `internal/net`.
+- **DHT queries must wait for routing-table readiness** (`Discovery.WaitReady`)
+  before the first lookup — the table fills asynchronously after bootstrap, so
+  querying immediately races an empty table and finds nothing.
 
 ## What revika is
 
@@ -153,8 +168,18 @@ go test ./...             # run all tests
 go test ./path/to/pkg     # test a single package
 go test -run TestName ./path/to/pkg   # run a single test
 go vet ./...              # static checks
-go run ./cmd/revika-node  # run the Node daemon (flags: -data, -listen, -mdns, -v)
+go run ./cmd/revika-node  # Node daemon (flags: -data, -listen, -mdns, -dht, -bootstrap, -advertise, -v)
 go run ./cmd/revika-ctl   # User client: keygen | put | get | share (see -h)
+```
+
+Multi-node DHT run (no central server; the client never names a node):
+
+```bash
+go run ./cmd/revika-node -listen /ip4/127.0.0.1/tcp/4001            # seed; note its /p2p/ multiaddr => $A
+go run ./cmd/revika-node -listen /ip4/127.0.0.1/tcp/4002 -bootstrap $A
+go run ./cmd/revika-node -listen /ip4/127.0.0.1/tcp/4003 -bootstrap $A
+go run ./cmd/revika-ctl put -bootstrap $A -manifest f.json file.bin  # shards spread across discovered nodes
+go run ./cmd/revika-ctl get -bootstrap $A -manifest f.json -o out.bin # providers found via the DHT
 ```
 
 Runtime state is written under `.revika/` and is git-ignored. Compiled binaries
@@ -173,11 +198,13 @@ internal/
   chunk/     ✓ fixed-size chunking (CDC planned)
   pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory manifest for now)
   repair/    ✓ availability probes + shard regeneration
-  net/       ✓ libp2p host, protocol IDs, shard/probe stream handlers, NetStore client
-             (DHT provider records still TBD)
+  net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client,
+             Kademlia DHT (Discovery), DHTStore + PlacementStore
   cap/       ✓ X25519 capability wrapping (Wrap/Unwrap) for sharing read-caps
   manifest/    on-disk/on-wire manifest + capabilities      (planned)
-  placement/   node selection & redundancy policy           (planned)
+  placement/   node selection & redundancy policy — first cut (round-robin) lives
+               in internal/net for now; a richer policy (reputation, diversity
+               domains) is still planned here
   ledger/      per-user index/accounting, root pointer       (planned)
   sync/        daemon folder-watch + reconcile (daemon only) (planned)
 ```
@@ -191,13 +218,17 @@ values; `cmd/revika-ctl` serializes them to local JSON (the interim read-cap, he
 ## Open questions (decide before/while implementing)
 
 Resolved so far: module path (`revika`), AEAD (AES-256-GCM), chunking for v1 (fixed-size),
-default erasure params (`k=4`, `m=2`). Still open:
+default erasure params (`k=4`, `m=2`), DHT = `go-libp2p-kad-dht` on a private `/revika`
+prefix, provider-record key = CIDv1(raw, sha256(shard)), placement v1 = round-robin.
+Still open:
 
 - Content-defined chunking parameters, if/when CDC replaces fixed-size.
 - How User identity keys relate to libp2p peer identity keys.
 - Concrete cap/manifest serialization format (and where `FileManifest` finally lives).
 - Whether `k`/`m` and shard sizing should vary by file size / durability target.
-- Node selection policy details (diversity, reputation) and repair thresholds/cadence.
-- Lease durations and node-side garbage collection.
+- Node selection policy beyond round-robin (diversity domains, reputation), where the
+  placement code finally lives, and repair thresholds/cadence + repair onto fresh nodes.
+- Lease durations and node-side garbage collection; provider-record reprovide cadence.
+- Bootstrap-peer distribution (no hardcoded public list yet) and NAT/relay tuning.
 
 See [Architecture.md](Architecture.md) for the reasoning behind each.

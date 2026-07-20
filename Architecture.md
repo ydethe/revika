@@ -146,12 +146,16 @@ to the erasure margin) → erasure-decode → decrypt → reassemble.
 
 ### 3.4 Placement / repair layer
 
-**Placement — [planned].** Choose `n = k + m` distinct nodes per encoded chunk,
-optimizing for *diversity* (spread across independent nodes / network / operator domains
-so correlated failures don't drop below `k`), *reliability* (uptime/reputation), and
-*proximity/cost* (secondary). After placement, announce **provider records** to the DHT:
-`shardID → {peers holding it}`. None of this exists yet — the current pipeline stores
-every shard into one local `Store`.
+**Placement — [partial]** (`internal/net`, `PlacementStore`). Shards are spread across
+`n = k + m` nodes discovered on the DHT: a first-cut **round-robin** policy sends a
+chunk's consecutive shards to distinct nodes, so no single node holds enough of a file to
+matter (the `revika-ctl put -bootstrap …` path). Each holding node announces a
+**provider record** to the DHT (`shardID → {peers holding it}`) on receipt, keyed by a
+CIDv1(raw codec) wrapping the shard's SHA-256; a client's `get` resolves those records to
+fetch shards it has no prior knowledge of. Still **[planned]**: richer node selection —
+*diversity* (independent operator/network domains so correlated failures don't drop below
+`k`), *reliability* (uptime/reputation), *proximity/cost* — and graduating the policy from
+`internal/net` into a dedicated `internal/placement`.
 
 **Repair — [implemented]** (`internal/repair`), against the mock/local store.
 `Check(ctx, store, manifest)` probes shard availability per chunk (via `Store.Has`) and
@@ -285,8 +289,13 @@ Versioned stream protocols (semantic-versioned IDs so upgrades are negotiable):
 
 DHT usage:
 
-- **Provider records:** `shardID → peers` (who holds a given shard).
-- **Mutable records:** `user-pubkey → signed root pointer` (IPNS-like).
+- **Provider records — [implemented]:** `shardID → peers` (who holds a given shard),
+  via `go-libp2p-kad-dht` on a private `/revika` protocol prefix (so revika runs its own
+  Kademlia network — protocol `/revika/kad/1.0.0` — not a corner of the public IPFS DHT).
+  Nodes also advertise themselves under the `revika/storage/1.0.0` rendezvous namespace so
+  clients discover storage nodes with no central registry. See `internal/net/dht.go`
+  (`Discovery`) and `placement.go` (`DHTStore`/`PlacementStore`).
+- **Mutable records — [planned]:** `user-pubkey → signed root pointer` (IPNS-like).
 
 ## 7. Repo layout (`✓` = implemented, rest planned)
 
@@ -302,10 +311,13 @@ internal/
   chunk/     ✓ fixed-size chunking (CDC planned)
   pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory)
   repair/    ✓ availability probes + shard regeneration (local store)
-  net/       ✓ libp2p host, protocol IDs, shard/probe stream handlers, NetStore client
+  net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client,
+             Kademlia DHT (Discovery: bootstrap/provider records/node advertise),
+             DHTStore + PlacementStore (discovery-backed store.Store's)
   cap/       ✓ X25519 capability wrapping (Wrap/Unwrap) for sharing read-caps
   manifest/    # file/dir manifest & capability types + serialization     (planned)
-  placement/   # node selection & redundancy policy                       (planned)
+  placement/   # richer node selection & redundancy policy (v1 round-robin
+               # lives in internal/net for now)                            (planned)
   ledger/      # per-user index/accounting, root-pointer management        (planned)
   sync/        # daemon folder-watch + reconcile (daemon only)            (planned)
 ```
@@ -320,13 +332,13 @@ Currently in `go.mod`:
 | Symmetric AEAD | stdlib `crypto/aes` + `crypto/cipher` (AES-256-GCM) | in use |
 | Hashing        | stdlib `crypto/sha256` (content addresses) | in use |
 | P2P / transport / discovery | `github.com/libp2p/go-libp2p` (TCP+QUIC, Noise/TLS, mDNS) | in use |
+| DHT discovery / provider records | `github.com/libp2p/go-libp2p-kad-dht` (`/revika` prefix) | in use |
 | Cap wrapping   | `golang.org/x/crypto/nacl/box` + `curve25519` (X25519 anonymous seal) | in use |
 
 Planned as later layers land:
 
 | Concern            | Library |
 |--------------------|---------|
-| DHT discovery / provider records | `go-libp2p-kad-dht` |
 | Signing / KDF | `crypto/ed25519` (root pointers), `golang.org/x/crypto/hkdf` |
 | Local metadata DB  | `go.etcd.io/bbolt` (or SQLite) |
 | Filesystem watching (daemon) | `github.com/fsnotify/fsnotify` |
@@ -344,12 +356,17 @@ Prove the core loop before adding breadth. Each phase is independently testable.
    Round-trips and any-`k`-of-`n` reconstruction verified on both stores.
 2. ✅ **Repair loop, still on the mock store.** Delete shards, confirm `Check` detects the
    deficit and `Repair` restores redundancy (with address-stable regeneration).
-3. 🟡 **Real network** (in progress). `internal/net` puts the shard store on libp2p:
-   a `Server` serving the `/revika/shard` + `/revika/probe` stream protocols, and a
-   `NetStore` client that *is* a `store.Store` — so §3.2's seam holds and the encode
-   and repair stacks run unchanged over the wire (proven by `TestPipelineOverNetwork`).
-   The `revika-node` daemon (`cmd/revika-node`) is runnable. **Still open:** DHT
-   provider records / multi-node placement, and repairing onto *fresh* nodes.
+3. ✅ **Real network.** `internal/net` puts the shard store on libp2p: a `Server`
+   serving the `/revika/shard` + `/revika/probe` stream protocols, and a `NetStore`
+   client that *is* a `store.Store` — so §3.2's seam holds and the encode and repair
+   stacks run unchanged over the wire (proven by `TestPipelineOverNetwork`). The
+   `revika-node` daemon is runnable. The **Kademlia DHT** (`Discovery`) adds serverless
+   WAN discovery: nodes announce provider records for the shards they hold and advertise
+   themselves as storage nodes; a client places a file's shards across several
+   DHT-discovered nodes (`PlacementStore`) and retrieves them by provider discovery
+   (`DHTStore`) with no explicit `-node` — verified end-to-end across a 3-node DHT and by
+   `TestPlacementEndToEnd`. **Still open:** richer placement policy and repairing onto
+   *fresh* nodes.
 4. ⬜ **Metadata + mutable root.** Serialize/encrypt manifests, encrypted directories,
    signed root pointers.
 5. 🟡 **Sharing** (in progress). Cap *delivery* is implemented (`internal/cap`:

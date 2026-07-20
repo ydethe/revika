@@ -24,8 +24,17 @@ const serverStreamTimeout = 60 * time.Second
 // untrusted — the Server never decrypts, interprets, or trusts payloads; it
 // only moves opaque, self-verifying blobs in and out of its store.
 type Server struct {
-	store store.Store
-	log   *slog.Logger
+	store     store.Store
+	log       *slog.Logger
+	announcer Announcer
+}
+
+// Announcer publishes a DHT provider record announcing that this node holds a
+// shard. *Discovery satisfies it. When a Server has an announcer set (via
+// SetAnnouncer), it announces every shard it accepts on Put, so stored shards
+// become discoverable across the network.
+type Announcer interface {
+	Announce(ctx context.Context, id store.ShardID) error
 }
 
 // NewServer builds a Server over s. If log is nil, logging is discarded.
@@ -35,6 +44,11 @@ func NewServer(s store.Store, log *slog.Logger) *Server {
 	}
 	return &Server{store: s, log: log}
 }
+
+// SetAnnouncer attaches a DHT announcer so accepted shards are advertised as
+// provider records. Call before Register; safe to leave unset for a node that
+// does not participate in the DHT.
+func (srv *Server) SetAnnouncer(a Announcer) { srv.announcer = a }
 
 // Register installs the Server's stream handlers on h. After this the host will
 // serve /revika/shard and /revika/probe to any peer that dials them.
@@ -89,11 +103,31 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 		return
 	}
 	srv.log.Debug("shard put", "peer", peer, "id", id, "bytes", len(data))
+	srv.announce(id)
 	// OK + the content address the caller can verify against its own hash.
 	if err := writeByte(s, byte(statusOK)); err != nil {
 		return
 	}
 	_ = writeID(s, id)
+}
+
+// announce advertises a freshly stored shard as a DHT provider record, if an
+// announcer is configured. It runs in the background with its own timeout so it
+// never blocks the Put response and survives the request stream closing (a
+// Provide fan-out can outlast the client's request).
+func (srv *Server) announce(id store.ShardID) {
+	if srv.announcer == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), provideTimeout)
+		defer cancel()
+		if err := srv.announcer.Announce(ctx, id); err != nil {
+			srv.log.Debug("announce failed", "id", id, "err", err)
+		} else {
+			srv.log.Debug("announced shard", "id", id)
+		}
+	}()
 }
 
 func (srv *Server) handleGet(ctx context.Context, s network.Stream, peer any) {

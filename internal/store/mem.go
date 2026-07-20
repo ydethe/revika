@@ -60,3 +60,16 @@ func (m *MemStore) Delete(_ context.Context, id ShardID) error {
 	delete(m.blobs, id)
 	return nil
 }
+
+var _ Lister = (*MemStore)(nil)
+
+// List returns the IDs of every shard currently held.
+func (m *MemStore) List(_ context.Context) ([]ShardID, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]ShardID, 0, len(m.blobs))
+	for id := range m.blobs {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}

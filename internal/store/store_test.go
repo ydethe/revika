@@ -105,6 +105,41 @@ func runStoreSuite(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("List", func(t *testing.T) {
+		s := newStore(t)
+		lister, ok := s.(Lister)
+		if !ok {
+			t.Skip("store does not implement Lister")
+		}
+		if ids, err := lister.List(ctx); err != nil || len(ids) != 0 {
+			t.Fatalf("empty store List = %v, %v; want 0, nil", ids, err)
+		}
+		want := map[ShardID]bool{}
+		for _, blob := range [][]byte{[]byte("a"), []byte("bb"), []byte("ccc")} {
+			id, err := s.Put(ctx, blob)
+			if err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			want[id] = true
+		}
+		ids, err := lister.List(ctx)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(ids) != len(want) {
+			t.Fatalf("List returned %d ids, want %d", len(ids), len(want))
+		}
+		for _, id := range ids {
+			if !want[id] {
+				t.Fatalf("List returned unexpected id %s", id)
+			}
+			delete(want, id)
+		}
+		if len(want) != 0 {
+			t.Fatalf("List omitted %d stored ids", len(want))
+		}
+	})
+
 	t.Run("ConcurrentAccess", func(t *testing.T) {
 		s := newStore(t)
 		const n = 64

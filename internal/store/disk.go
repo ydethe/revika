@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DiskStore persists shards as files under a root directory, fanned out by the
@@ -98,4 +100,43 @@ func (d *DiskStore) Delete(_ context.Context, id ShardID) error {
 		return fmt.Errorf("store: remove: %w", err)
 	}
 	return nil
+}
+
+var _ Lister = (*DiskStore)(nil)
+
+// List walks the fan-out directories under the root and returns the ID of every
+// shard file found. Entries that are not valid shard filenames (temp files, a
+// stray directory) are skipped rather than erroring, so a partially-written or
+// externally-touched store still enumerates cleanly.
+func (d *DiskStore) List(_ context.Context) ([]ShardID, error) {
+	dirs, err := os.ReadDir(d.root)
+	if err != nil {
+		return nil, fmt.Errorf("store: read root: %w", err)
+	}
+	var ids []ShardID
+	for _, dir := range dirs {
+		// Shards fan out into two-hex-char subdirectories (…/root/ab/abcd…).
+		if !dir.IsDir() || len(dir.Name()) != 2 {
+			continue
+		}
+		sub := filepath.Join(d.root, dir.Name())
+		files, err := os.ReadDir(sub)
+		if err != nil {
+			return nil, fmt.Errorf("store: read %s: %w", sub, err)
+		}
+		for _, f := range files {
+			name := f.Name()
+			if f.IsDir() || strings.HasPrefix(name, ".tmp-") {
+				continue
+			}
+			raw, err := hex.DecodeString(name)
+			if err != nil || len(raw) != len(ShardID{}) {
+				continue
+			}
+			var id ShardID
+			copy(id[:], raw)
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }

@@ -45,3 +45,12 @@ type Store interface {
 	// Delete removes id. Deleting an absent shard returns ErrNotFound.
 	Delete(ctx context.Context, id ShardID) error
 }
+
+// Lister is an optional capability a Store may implement: enumerate the IDs of
+// every shard it currently holds. It is deliberately kept off the core Store
+// interface (not every backend can cheaply enumerate) — callers type-assert for
+// it. A Node uses this to re-announce its DHT provider records on startup and on
+// a periodic reprovide cadence.
+type Lister interface {
+	List(ctx context.Context) ([]ShardID, error)
+}
