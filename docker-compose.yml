@@ -1,0 +1,66 @@
+# A local revika DHT network: one seed node plus two peers that bootstrap
+# through it. Because a node's Peer ID is derived from an identity key it
+# generates on first start, bootstrapping is a two-step dance:
+#
+#   1. Start the seed and read its Peer ID from the logs:
+#        docker compose up -d seed
+#        docker compose logs seed        # copy the "Peer ID:" value
+#
+#   2. Put the seed's in-network multiaddr in .env, then start the peers:
+#        echo 'SEED_ADDR=/dns4/seed/tcp/4001/p2p/<PeerID-from-step-1>' > .env
+#        docker compose up -d node2 node3
+#
+# The seed's on-disk identity lives on the named volume, so its Peer ID (and
+# thus SEED_ADDR) stays stable across restarts. Nodes reach each other by
+# service name on the compose network; only the seed is published to the host.
+#
+# A client then uses the *host-published* seed address as its bootstrap peer:
+#   go run ./cmd/revika-ctl put -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/<PeerID> file.bin
+
+services:
+  seed:
+    build: .
+    image: revika-node
+    # No -bootstrap: the seed is the entry point others join through.
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -mdns=false
+    volumes:
+      - seed-data:/data
+    ports:
+      - "4001:4001"       # TCP, published so host-side clients can bootstrap
+      - "4001:4001/udp"   # QUIC
+    restart: unless-stopped
+
+  node2:
+    image: revika-node
+    depends_on: [seed]
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -mdns=false
+      - -bootstrap=${SEED_ADDR:?set SEED_ADDR in .env to the seed multiaddr (see docker-compose.yml header)}
+    volumes:
+      - node2-data:/data
+    restart: unless-stopped
+
+  node3:
+    image: revika-node
+    depends_on: [seed]
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -mdns=false
+      - -bootstrap=${SEED_ADDR:?set SEED_ADDR in .env to the seed multiaddr (see docker-compose.yml header)}
+    volumes:
+      - node3-data:/data
+    restart: unless-stopped
+
+volumes:
+  seed-data:
+  node2-data:
+  node3-data:

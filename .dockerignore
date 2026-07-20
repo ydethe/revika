@@ -1,0 +1,30 @@
+# Keep the build context small and reproducible: only source + module files are
+# needed. Everything below is either runtime state, local tooling, VCS metadata,
+# or build output that must never leak into the image.
+
+.git
+.gitignore
+
+# revika runtime state (shards, identity keys, ledger, mock store)
+.revika/
+
+# Compiled binaries (built inside the image instead)
+/revika
+/revika-node
+/revika-ctl
+/revika-daemon
+
+# Docker / compose files — not needed inside the build
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Editor / OS cruft and test artifacts
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+.env
+.idea/
+.vscode/
