@@ -29,11 +29,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go mod download
 
-# Build the node. -trimpath drops local paths; -s -w strips debug info.
+# Build both binaries. -trimpath drops local paths; -s -w strips debug info.
+# revika-ctl is the User client, used by the `client` stage below to exercise a
+# running network (put/get) from inside compose.
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -ldflags='-s -w' -o /out/revika-node ./cmd/revika-node
+    go build -trimpath -ldflags='-s -w' -o /out/revika-node ./cmd/revika-node && \
+    go build -trimpath -ldflags='-s -w' -o /out/revika-ctl  ./cmd/revika-ctl
 
 # A pre-owned data dir so the named/anonymous volume inherits nonroot ownership
 # (distroless has no shell to chown at runtime).
@@ -64,3 +67,18 @@ CMD ["-data", "/data", \
      "-listen", "/ip4/0.0.0.0/tcp/4001", \
      "-listen", "/ip4/0.0.0.0/udp/4001/quic-v1", \
      "-mdns=false"]
+
+# ---- client stage ----------------------------------------------------------
+# A shell-capable image bundling the User client (revika-ctl) plus the
+# end-to-end verify script. Unlike the distroless node it needs a shell and
+# coreutils (cmp, find) to drive put/get and assert results, so it is based on
+# debian-slim. Used by the `client` service in docker-compose.yml.
+FROM debian:bookworm-slim AS client
+LABEL org.opencontainers.image.title="revika-ctl" \
+      org.opencontainers.image.description="revika User client + multi-node verify harness"
+
+COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
+COPY deploy/verify.sh /usr/local/bin/verify.sh
+RUN chmod +x /usr/local/bin/verify.sh
+
+ENTRYPOINT ["/usr/local/bin/verify.sh"]
