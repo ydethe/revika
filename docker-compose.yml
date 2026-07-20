@@ -18,21 +18,21 @@
 #   go run ./cmd/revika-ctl put -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/<PeerID> file.bin
 
 services:
-  seed:
-    build: .
-    image: revika-node
-    # No -bootstrap: the seed is the entry point others join through.
-    command:
-      - -data=/data
-      - -listen=/ip4/0.0.0.0/tcp/4001
-      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
-      - -mdns=false
-    volumes:
-      - seed-data:/data
-    ports:
-      - "4001:4001"       # TCP, published so host-side clients can bootstrap
-      - "4001:4001/udp"   # QUIC
-    restart: unless-stopped
+  # seed:
+  #   build: .
+  #   image: revika-node
+  #   # No -bootstrap: the seed is the entry point others join through.
+  #   command:
+  #     - -data=/data
+  #     - -listen=/ip4/0.0.0.0/tcp/4001
+  #     - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+  #     - -mdns=false
+  #   volumes:
+  #     - seed-data:/data
+  #   ports:
+  #     - "4001:4001"       # TCP, published so host-side clients can bootstrap
+  #     - "4001:4001/udp"   # QUIC
+  #   restart: unless-stopped
 
   node2:
     image: revika-node
