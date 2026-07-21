@@ -18,9 +18,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# docker compose needs SEED_ADDR for variable substitution; template.env carries
-# the value matching the committed dev seed key (deploy/seed.key).
-[ -f .env ] || cp template.env .env
+# SEED_ADDR is baked into docker-compose.yml (a YAML anchor), so no .env is
+# needed — the network is self-contained.
 
 # The node to take down. Must NOT be `seed`: the client bootstraps through the
 # seed, so stopping it would break DHT access rather than test shard durability.

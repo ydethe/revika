@@ -41,6 +41,14 @@
 # WARNING: deploy/seed.key is a well-known key checked into the repo purely so
 # this local setup is reproducible. Never use it for a real deployment.
 
+# The seed's dial address, referenced ONCE here (a YAML anchor) and taken from
+# the SEED_ADDR environment variable — never hardcoded and never from a .env
+# file. In CI it is injected from the `SEED_ADDR` GitHub Actions secret; for a
+# local run, export it first (its Peer ID is derived from the committed dev-only
+# key deploy/seed.key and printed by the seed on startup, `docker compose logs
+# seed`). Peers reference it as `*seed_addr`.
+x-seed-addr: &seed_addr "${SEED_ADDR:?SEED_ADDR must be set (CI: the SEED_ADDR secret; local: export it)}"
+
 services:
   # Entry point of the network: no -bootstrap, others join through it. Its
   # identity is pinned by the bind-mounted key so its Peer ID is stable and
@@ -75,7 +83,8 @@ services:
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -mdns=false
-      - -bootstrap=${SEED_ADDR}
+      - -bootstrap
+      - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
     volumes:
       - node2-data:/data
@@ -91,7 +100,8 @@ services:
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -mdns=false
-      - -bootstrap=${SEED_ADDR}
+      - -bootstrap
+      - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
     volumes:
       - node3-data:/data
@@ -112,7 +122,8 @@ services:
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -mdns=false
-      - -bootstrap=${SEED_ADDR}
+      - -bootstrap
+      - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
     volumes:
       - node4-data:/data
@@ -129,7 +140,8 @@ services:
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -mdns=false
-      - -bootstrap=${SEED_ADDR}
+      - -bootstrap
+      - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
     volumes:
       - node5-data:/data
@@ -145,7 +157,7 @@ services:
     image: revika-ctl
     depends_on: [seed, node2, node3]
     environment:
-      SEED_ADDR: ${SEED_ADDR}
+      SEED_ADDR: *seed_addr
     volumes:
       - seed-data:/nodes/seed:ro
       - node2-data:/nodes/node2:ro
@@ -179,7 +191,7 @@ services:
       client:
         condition: service_completed_successfully
     environment:
-      SEED_ADDR: ${SEED_ADDR}
+      SEED_ADDR: *seed_addr
     volumes:
       - seed-data:/nodes/seed:ro
       - node2-data:/nodes/node2:ro
@@ -209,7 +221,7 @@ services:
       node3:
         condition: service_started
     environment:
-      SEED_ADDR: ${SEED_ADDR}
+      SEED_ADDR: *seed_addr
     restart: "no"
 
   # --- node-down resilience scenario (profile: resilience) -------------------
@@ -237,7 +249,7 @@ services:
       node3:
         condition: service_started
     environment:
-      SEED_ADDR: ${SEED_ADDR}
+      SEED_ADDR: *seed_addr
     volumes:
       - handoff:/handoff
     restart: "no"
@@ -258,7 +270,7 @@ services:
       seed:
         condition: service_started
     environment:
-      SEED_ADDR: ${SEED_ADDR}
+      SEED_ADDR: *seed_addr
     volumes:
       - handoff:/handoff:ro
     restart: "no"
@@ -289,7 +301,7 @@ services:
       node3:
         condition: service_started
     environment:
-      SEED_ADDR: ${SEED_ADDR}
+      SEED_ADDR: *seed_addr
       DOWN_NODE: ${DOWN_NODE:-node3}
     volumes:
       - seed-data:/nodes/seed:ro
@@ -315,7 +327,7 @@ services:
       seed:
         condition: service_started
     environment:
-      SEED_ADDR: ${SEED_ADDR}
+      SEED_ADDR: *seed_addr
       DOWN_NODE: ${DOWN_NODE:-node3}
     volumes:
       - seed-data:/nodes/seed:ro

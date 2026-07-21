@@ -23,9 +23,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# docker compose needs SEED_ADDR for variable substitution; template.env carries
-# the value matching the committed dev seed key (deploy/seed.key).
-[ -f .env ] || cp template.env .env
+# SEED_ADDR is baked into docker-compose.yml (a YAML anchor), so no .env is
+# needed — the network is self-contained.
 
 DOWN_NODE="${DOWN_NODE:-node3}"
 if [ "$DOWN_NODE" = "seed" ]; then

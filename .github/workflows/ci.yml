@@ -46,13 +46,13 @@ jobs:
     name: multi-node end-to-end (compose)
     runs-on: ubuntu-latest
     needs: test
+    # docker compose reads SEED_ADDR from the environment (no .env file); it is
+    # supplied from the SEED_ADDR secret, which must match the committed dev seed
+    # key deploy/seed.key (Peer ID printed by `docker compose logs seed`).
+    env:
+      SEED_ADDR: ${{ secrets.SEED_ADDR }}
     steps:
       - uses: actions/checkout@v4
-
-      # docker compose reads SEED_ADDR for variable substitution; template.env
-      # holds the value matching the committed dev seed key (deploy/seed.key).
-      - name: Provision compose env
-        run: cp template.env .env
 
       # Authorized client: stores a file, asserts every node received shards,
       # retrieves it, and checks it is byte-identical. Its exit code is the run's.
@@ -81,12 +81,14 @@ jobs:
     name: node-down resilience (compose)
     runs-on: ubuntu-latest
     needs: test
+    env:
+      SEED_ADDR: ${{ secrets.SEED_ADDR }}
     steps:
       - uses: actions/checkout@v4
 
       # Stores a file across all 3 nodes, stops one node, then proves the file
       # is still retrieved byte-identically from the surviving k=4 of 6 shards.
-      # The script provisions .env, drives compose, and cleans up after itself.
+      # The script drives compose and cleans up after itself.
       - name: Store, drop a node, retrieve
         run: ./deploy/resilience.sh
 
@@ -94,6 +96,8 @@ jobs:
     name: autonomous repair (compose)
     runs-on: ubuntu-latest
     needs: test
+    env:
+      SEED_ADDR: ${{ secrets.SEED_ADDR }}
     steps:
       - uses: actions/checkout@v4
 
