@@ -43,8 +43,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo ">> [1/6] building images and starting the 3-node network (repair-interval=$REPAIR_INTERVAL)"
-docker compose up -d --build seed node2 node3 || exit 1
+echo ">> [1/6] building images and starting the 5-node network (repair-interval=$REPAIR_INTERVAL)"
+docker compose up -d --build seed node2 node3 node4 node5 || exit 1
 
 echo ">> [2/6] storing a file across the nodes (each shard carries a stripe descriptor + grant)"
 docker compose run --rm --build repair-pre store || { echo "store step failed"; exit 1; }

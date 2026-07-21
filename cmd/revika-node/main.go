@@ -151,7 +151,7 @@ func run() error {
 		// Repair needs the DHT to find sibling shards and place regenerated ones,
 		// so it only runs when the node participates in the DHT.
 		if *repairOn {
-			go repairLoop(ctx, h, disc, led, log, *repairEvery)
+			go repairLoop(ctx, h, blobs, disc, led, log, *repairEvery)
 		}
 	}
 
@@ -230,7 +230,7 @@ func reprovideLoop(ctx context.Context, disc *net.Discovery, blobs store.Store, 
 // first (and stores nothing when a sibling already reappeared) makes duplicate work
 // rare and always harmless — content-addressed Put and per-owner AddOwner are
 // idempotent.
-func repairLoop(ctx context.Context, h host.Host, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
+func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -238,7 +238,7 @@ func repairLoop(ctx context.Context, h host.Host, disc *net.Discovery, led *ledg
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runRepair(ctx, h, disc, led, log, interval)
+			runRepair(ctx, h, blobs, disc, led, log, interval)
 		}
 	}
 }
@@ -246,7 +246,7 @@ func repairLoop(ctx context.Context, h host.Host, disc *net.Discovery, led *ledg
 // runRepair performs one repair cycle. Stripe rows that describe the same stripe
 // (a node may hold several of a stripe's shards) are deduplicated so each stripe
 // is checked once.
-func runRepair(ctx context.Context, h host.Host, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
+func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
 	rows, err := led.Stripes()
 	if err != nil {
 		log.Warn("repair: list stripes", "err", err)
@@ -269,7 +269,7 @@ func runRepair(ctx context.Context, h host.Host, disc *net.Discovery, led *ledge
 			seen[key] = true
 		}
 
-		rs := net.NewRepairStore(h, disc, desc, row.Grant)
+		rs := net.NewRepairStore(h, blobs, disc, desc, row.Grant)
 		man := pipeline.FileManifest{
 			Params: pipeline.Config{Params: erasure.Params{K: row.K, M: row.M}},
 			Chunks: []pipeline.ChunkRef{{Shards: desc.Shards}},

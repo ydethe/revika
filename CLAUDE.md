@@ -108,6 +108,16 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
   Regeneration reuses `internal/repair` unchanged (it operates on ciphertext and
   never touches `ChunkRef.Key`; `erasure.Encode` is deterministic so regenerated
   shards reproduce their content addresses).
+- **A repairing node reads survival from its own store first, then the DHT**
+  (`net.RepairStore` wraps `DHTStore` with the node's local `blobs`). The DHT's
+  `FindProviders` deliberately excludes the querying host, so a node cannot discover
+  its *own* shards over the DHT; a repairer that only asked the DHT would count
+  every shard it holds locally as missing and wrongly declare an
+  otherwise-recoverable stripe unrecoverable (present < K) — so no repair would ever
+  fire on the very nodes best placed to run it. `RepairStore.Has`/`Get` consult the
+  local store first to close that blind spot; `Put` still places regenerated shards
+  on *remote* fresh nodes and now tries every fresh candidate (skipping stale
+  adverts for peers that have gone away) rather than a single round-robin pick.
 - **No repair coordinator election (v1).** Every holder of a degraded stripe may
   regenerate; a small per-stripe jitter plus the fact that `repair.Repair`
   re-fetches survivors first (and stores nothing when a sibling has reappeared)

@@ -1,6 +1,7 @@
 package net
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"testing"
@@ -44,6 +45,47 @@ func newDHTLedgerNode(t *testing.T, backing store.Store, bootstrap ...string) (*
 	return disc, led
 }
 
+// TestRepairStoreCountsLocalShards is the regression guard for the repair blind
+// spot that broke the autonomous-repair e2e: the DHT's FindProviders excludes the
+// querying host, so a node cannot discover its *own* shards over the DHT. A
+// RepairStore must consult its local store first — otherwise a repairer counts
+// every shard it holds locally as missing and wrongly declares an
+// otherwise-recoverable stripe unrecoverable, so no repair ever fires.
+func TestRepairStoreCountsLocalShards(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A shard the repairing node holds locally (and never reachable via the DHT's
+	// self-excluding provider lookup).
+	local := store.NewMemStore()
+	data := []byte("a shard this node holds locally")
+	id, err := local.Put(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A lone DHT node with no bootstrap peers: any DHT query would find nothing, so
+	// only the local store can surface this shard.
+	node := newDHTNode(t, DHTModeServer, store.NewMemStore())
+	rs := NewRepairStore(node.h, local, node, descFor(id), nil)
+
+	ok, err := rs.Has(ctx, id)
+	if err != nil {
+		t.Fatalf("Has: %v", err)
+	}
+	if !ok {
+		t.Fatal("RepairStore.Has reported a locally-held shard as missing (DHT blind spot not covered)")
+	}
+
+	got, err := rs.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("RepairStore.Get returned wrong bytes for a locally-held shard")
+	}
+}
+
 // TestRepairStorePlacesOnFreshNode is the RepairStore contract over a real DHT:
 // given a shard already held (and announced) by one node, a RepairStore places a
 // regenerated copy on a *different* discovered node — authorized purely by the
@@ -85,7 +127,8 @@ func TestRepairStorePlacesOnFreshNode(t *testing.T) {
 	waitProviders(t, repairer, id)
 
 	// Repair: place a regenerated copy. It must avoid the holder and land on fresh.
-	rs := NewRepairStore(repairer.h, repairer, desc, grant)
+	// The repairer holds nothing locally here, so it reads purely over the DHT.
+	rs := NewRepairStore(repairer.h, nil, repairer, desc, grant)
 	got, err := rs.Put(ctx, data)
 	if err != nil {
 		t.Fatalf("RepairStore.Put: %v", err)

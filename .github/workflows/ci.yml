@@ -97,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Stores a file across all 3 nodes (each shard carrying a stripe descriptor
+      # Stores a file across the nodes (each shard carrying a stripe descriptor
       # + repair grant), stops one node, waits for a surviving node's repair loop,
       # and proves a lost shard is regenerated onto a survivor that lacked it with
       # no client online — then retrieves the file. Self-contained; cleans up.

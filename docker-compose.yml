@@ -96,6 +96,44 @@ services:
     volumes:
       - node3-data:/data
 
+  # Spare nodes for the autonomous-repair scenario (profile: repair). They give a
+  # survivor an obviously-fresh target to re-place a downed node's shards onto and
+  # cut colocation, so k+m=6 shards spread across more failure domains. Gated
+  # behind the repair profile so the other scenarios keep their 3-node topology.
+  node4:
+    profiles: ["repair"]
+    build:
+      context: .
+      target: node
+    image: revika-node
+    depends_on: [seed]
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -mdns=false
+      - -bootstrap=${SEED_ADDR}
+      - -repair-interval=${REPAIR_INTERVAL:-1h}
+    volumes:
+      - node4-data:/data
+
+  node5:
+    profiles: ["repair"]
+    build:
+      context: .
+      target: node
+    image: revika-node
+    depends_on: [seed]
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -mdns=false
+      - -bootstrap=${SEED_ADDR}
+      - -repair-interval=${REPAIR_INTERVAL:-1h}
+    volumes:
+      - node5-data:/data
+
   # One-shot User client: joins the DHT through the seed, stores a file (shards
   # spread across the nodes), verifies every node got shards, and retrieves it.
   # The node data volumes are mounted read-only so the script can count each
@@ -257,6 +295,8 @@ services:
       - seed-data:/nodes/seed:ro
       - node2-data:/nodes/node2:ro
       - node3-data:/nodes/node3:ro
+      - node4-data:/nodes/node4:ro
+      - node5-data:/nodes/node5:ro
       - handoff:/handoff
     restart: "no"
 
@@ -281,6 +321,8 @@ services:
       - seed-data:/nodes/seed:ro
       - node2-data:/nodes/node2:ro
       - node3-data:/nodes/node3:ro
+      - node4-data:/nodes/node4:ro
+      - node5-data:/nodes/node5:ro
       - handoff:/handoff
     restart: "no"
 
@@ -288,4 +330,6 @@ volumes:
   seed-data:
   node2-data:
   node3-data:
+  node4-data:
+  node5-data:
   handoff:

@@ -29,8 +29,9 @@ MANIFEST=/handoff/repair.rvk.json
 SIGNKEY=/handoff/repair-user.sign.key
 
 # The node data volumes are mounted read-only here; the DOWN node is passed so
-# verify knows which survivors to inspect.
-NODES=(seed node2 node3)
+# verify knows which survivors to inspect. node4/node5 are spares in the repair
+# scenario (they give repair an obviously-fresh target and cut colocation).
+NODES=(seed node2 node3 node4 node5)
 DOWN_NODE="${DOWN_NODE:-node3}"
 
 # list_shards <node> prints the shard-ID (hash) set a node holds, one per line.
