@@ -18,7 +18,13 @@
 # Pinned to the module's Go version; GOTOOLCHAIN=auto still fetches an exact
 # match if this base ever drifts. CGO is off so the binary is fully static and
 # runs on the distroless "static" runtime below.
-FROM golang:1.26-bookworm AS build
+# Pinned to the BUILD platform so cross-compilation for other target arches
+# (linux/arm64 etc.) runs natively via Go's own GOOS/GOARCH rather than under
+# slow QEMU emulation. buildx populates TARGETOS/TARGETARCH per requested
+# platform; for a plain `docker build` they default to the host's, so behaviour
+# is unchanged for single-arch local builds.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+ARG TARGETOS TARGETARCH
 ENV CGO_ENABLED=0 GOTOOLCHAIN=auto GOFLAGS=-mod=mod
 WORKDIR /src
 
@@ -35,8 +41,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -ldflags='-s -w' -o /out/revika-node ./cmd/revika-node && \
-    go build -trimpath -ldflags='-s -w' -o /out/revika-ctl  ./cmd/revika-ctl
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/revika-node ./cmd/revika-node && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/revika-ctl  ./cmd/revika-ctl
 
 # A pre-owned data dir so the named/anonymous volume inherits nonroot ownership
 # (distroless has no shell to chown at runtime).
@@ -76,8 +82,8 @@ CMD ["-data", "/data", \
 # entrypoint) and the `attacker` service (unauthorized-access checks, attack.sh,
 # selected via an entrypoint override) in docker-compose.yml.
 FROM debian:bookworm-slim AS client
-LABEL org.opencontainers.image.title="revika-ctl" \
-      org.opencontainers.image.description="revika User client + multi-node verify/attack harness"
+LABEL org.opencontainers.image.title="revika-ctl-testharness" \
+      org.opencontainers.image.description="revika multi-node verify/attack harness (test-only, not published)"
 
 COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
 COPY deploy/verify.sh /usr/local/bin/verify.sh
@@ -85,3 +91,19 @@ COPY deploy/attack.sh /usr/local/bin/attack.sh
 RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh
 
 ENTRYPOINT ["/usr/local/bin/verify.sh"]
+
+# ---- ctl stage (published client image) ------------------------------------
+# The plain User client: just the revika-ctl binary on the same minimal
+# distroless static runtime as the node (the binary is a static, CGO-free
+# executable, so it needs no shell). This is the image published as revika-ctl;
+# the `client` stage above is the test harness and is not published. Run e.g.:
+#
+#   docker run --rm -v "$PWD:/work" -w /work ghcr.io/ydethe/revika-ctl \
+#     put -bootstrap <multiaddr> -manifest f.json file.bin
+FROM gcr.io/distroless/static-debian12:nonroot AS ctl
+LABEL org.opencontainers.image.title="revika-ctl" \
+      org.opencontainers.image.description="revika User client (keygen/put/get/share)"
+
+COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/revika-ctl"]

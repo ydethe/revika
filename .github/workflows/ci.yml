@@ -1,0 +1,72 @@
+name: CI
+
+# Test the solution: static checks + race-enabled unit tests, then a full
+# multi-node end-to-end run in containers (authorized round-trip + the
+# unauthorized-access checks) via docker compose.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: vet, build & test (-race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Reads the `go 1.26` directive from go.mod so CI tracks the module.
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+  e2e:
+    name: multi-node end-to-end (compose)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker compose reads SEED_ADDR for variable substitution; template.env
+      # holds the value matching the committed dev seed key (deploy/seed.key).
+      - name: Provision compose env
+        run: cp template.env .env
+
+      # Authorized client: stores a file, asserts every node received shards,
+      # retrieves it, and checks it is byte-identical. Its exit code is the run's.
+      - name: Authorized round-trip
+        run: docker compose up --build --abort-on-container-exit --exit-code-from client
+
+      - name: Reset network state
+        run: docker compose down -v
+
+      # Unauthorized client: separate client that must be denied on every path
+      # (no capability, a cap wrapped for a third party, raw shards on disk). It
+      # pulls in the nodes and waits for `client` to finish, then asserts denial.
+      - name: Unauthorized-access checks
+        run: docker compose run --build --rm attacker
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

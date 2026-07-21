@@ -1,0 +1,80 @@
+name: Publish images
+
+# Build and push the revika container images to the GitHub Container Registry
+# (GHCR). Runs on version tags (v1.2.3), on pushes to main (as the `edge` tag),
+# and on demand. Pull requests build only (no push) so image builds are still
+# validated without publishing.
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: node   # headless storage Node
+            image: revika-node
+          - target: ctl    # User client CLI
+            image: revika-ctl
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU + buildx enable multi-arch builds; the Dockerfile cross-compiles
+      # the Go binary per target arch, so this stays fast (no emulated builds).
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Push only for real refs (branch/tag pushes, manual runs) — never for PRs.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=branch
+            type=edge,branch=main
+            type=sha
+          # latest=auto tags `latest` on a semver tag only, never on a branch push.
+          flavor: |
+            latest=auto
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
