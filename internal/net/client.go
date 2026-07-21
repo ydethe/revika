@@ -14,6 +14,7 @@ import (
 
 	"revika/internal/cap"
 	"revika/internal/store"
+	"revika/internal/stripe"
 )
 
 // connectTimeout bounds a single dial to a peer.
@@ -34,6 +35,10 @@ type NetStore struct {
 	// signer, when non-nil, is the User's Ed25519 signing key used to attach an
 	// authorization token to PUT/DELETE. Reads (Get/Has/Probe) never sign.
 	signer *cap.SignKey
+	// grantExpiry is the unix-timestamp expiry stamped into repair grants built
+	// by PutStripe. 0 (the default) means the grant never expires — repair must
+	// work with no User online.
+	grantExpiry int64
 }
 
 // NewNetStore returns a store backed by the node identified by peer, dialed
@@ -94,6 +99,50 @@ func readResp(s network.Stream) error {
 }
 
 func (n *NetStore) Put(ctx context.Context, data []byte) (store.ShardID, error) {
+	return n.putRaw(ctx, data, n.authToken(opPut, store.HashOf(data)), nil, nil)
+}
+
+// PutStripe stores data and, alongside it, the stripe Descriptor and a freshly
+// built repair grant, so the receiving Node records the erasure context and can
+// later regenerate the stripe. It authorizes the write with the usual signed
+// owner token (a signer is required). This is the write the pipeline uses so
+// every shard it stores carries its repair metadata.
+func (n *NetStore) PutStripe(ctx context.Context, data []byte, d stripe.Descriptor) (store.ShardID, error) {
+	// Without a signer we cannot build a repair grant, so there is no way to
+	// authorize the stripe metadata — degrade to a plain, unauthenticated Put.
+	// (The receiving node records no stripe row for this shard; a signer-less
+	// client is a read/legacy path, not a repair participant.)
+	if n.signer == nil {
+		return n.Put(ctx, data)
+	}
+	stripeBytes, err := d.MarshalBinary()
+	if err != nil {
+		return store.ShardID{}, err
+	}
+	grant, err := stripe.BuildGrant(*n.signer, d, n.grantExpiry)
+	if err != nil {
+		return store.ShardID{}, err
+	}
+	return n.putRaw(ctx, data, n.authToken(opPut, store.HashOf(data)), stripeBytes, grant)
+}
+
+// putGrant stores a regenerated shard authorized by a repair grant rather than an
+// owner token (the repairing node does not hold the User's signing key). The
+// descriptor and grant are replayed exactly as distributed at store time; the
+// receiving node verifies the grant names this shard before accepting it under
+// the granting User's ownership. Used by RepairStore.
+func (n *NetStore) putGrant(ctx context.Context, data []byte, d stripe.Descriptor, grant []byte) (store.ShardID, error) {
+	stripeBytes, err := d.MarshalBinary()
+	if err != nil {
+		return store.ShardID{}, err
+	}
+	return n.putRaw(ctx, data, nil, stripeBytes, grant)
+}
+
+// putRaw sends one PUT with the full 1.1.0 frame: data, then the three trailing
+// blobs (token, stripe descriptor, grant), any of which may be empty. It verifies
+// the node echoed the shard's true content address.
+func (n *NetStore) putRaw(ctx context.Context, data, token, stripeBytes, grant []byte) (store.ShardID, error) {
 	s, err := n.openStream(ctx)
 	if err != nil {
 		return store.ShardID{}, err
@@ -104,13 +153,11 @@ func (n *NetStore) Put(ctx context.Context, data []byte) (store.ShardID, error) 
 		_ = s.Reset()
 		return store.ShardID{}, err
 	}
-	if err := writeBlob(s, data); err != nil {
-		_ = s.Reset()
-		return store.ShardID{}, err
-	}
-	if err := writeBlob(s, n.authToken(opPut, store.HashOf(data))); err != nil {
-		_ = s.Reset()
-		return store.ShardID{}, err
+	for _, blob := range [][]byte{data, token, stripeBytes, grant} {
+		if err := writeBlob(s, blob); err != nil {
+			_ = s.Reset()
+			return store.ShardID{}, err
+		}
 	}
 	if err := readResp(s); err != nil {
 		return store.ShardID{}, err

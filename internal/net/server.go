@@ -14,6 +14,7 @@ import (
 
 	"revika/internal/ledger"
 	"revika/internal/store"
+	"revika/internal/stripe"
 )
 
 // serverStreamTimeout bounds how long a single request/response exchange may
@@ -106,22 +107,66 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 		_ = s.Reset()
 		return
 	}
-	// The auth token always follows the blob on the wire (empty when the client
-	// has no signer); it is only interpreted when a ledger is configured.
+	// Three length-prefixed blobs always follow the data (empty when unused), so
+	// the frame is uniform: the auth token, then the stripe descriptor and repair
+	// grant that let this node take part in repairing the shard later. They are
+	// only interpreted when a ledger is configured.
 	token, err := readBlob(s, authTokenSize)
 	if err != nil {
 		srv.log.Debug("shard put: read token", "peer", peer, "err", err)
 		_ = s.Reset()
 		return
 	}
+	stripeBytes, err := readBlob(s, maxStripeBlob)
+	if err != nil {
+		srv.log.Debug("shard put: read stripe", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	grant, err := readBlob(s, stripe.GrantSize)
+	if err != nil {
+		srv.log.Debug("shard put: read grant", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
 	id := store.HashOf(data)
+
+	// Parse and validate any accompanying stripe descriptor + grant once. desc is
+	// only usable (recordable, or usable as authorization) when the grant validly
+	// signs it and it actually names this shard. A bad descriptor never blocks a
+	// token-authorized PUT — it is simply not recorded.
+	now := time.Now()
+	var (
+		desc       stripe.Descriptor
+		grantOwner []byte
+		stripeOK   bool
+	)
+	if len(stripeBytes) > 0 && len(grant) > 0 {
+		if d, derr := stripe.UnmarshalDescriptor(stripeBytes); derr == nil {
+			if o, gerr := stripe.VerifyGrant(grant, d, now); gerr == nil && d.Contains(id) {
+				desc, grantOwner, stripeOK = d, o, true
+			}
+		}
+	}
 
 	var owner []byte
 	if srv.ledger != nil {
-		owner, err = verifyToken(token, opPut, id, s.Conn().LocalPeer(), time.Now())
-		if err != nil {
-			srv.log.Debug("shard put: unauthorized", "peer", peer, "id", id, "err", err)
-			srv.replyErr(s, err)
+		// Authorization: a signed owner token takes precedence; failing that, a
+		// valid repair grant naming this shard authorizes a regenerated copy
+		// under the granting User's ownership.
+		switch {
+		case len(token) > 0:
+			owner, err = verifyToken(token, opPut, id, s.Conn().LocalPeer(), now)
+			if err != nil {
+				srv.log.Debug("shard put: unauthorized", "peer", peer, "id", id, "err", err)
+				srv.replyErr(s, err)
+				return
+			}
+		case stripeOK:
+			owner = grantOwner
+		default:
+			srv.log.Debug("shard put: unauthorized (no token or valid grant)", "peer", peer, "id", id)
+			srv.replyErr(s, ErrUnauthorized)
 			return
 		}
 	}
@@ -134,7 +179,7 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 		return
 	}
 	if srv.ledger != nil {
-		added, err := srv.ledger.AddOwner(id, owner, int64(len(data)), time.Now())
+		added, err := srv.ledger.AddOwner(id, owner, int64(len(data)), now)
 		if err != nil {
 			// Quota exceeded (or a ledger error): the blob just written is now an
 			// unowned orphan, left for GC to reclaim. Do not announce it.
@@ -143,12 +188,19 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 			return
 		}
 		if added {
+			// Record the erasure context so this node can help repair the stripe.
+			// The FK ties the row to the shard, so it cascades away on GC/delete.
+			if stripeOK {
+				if err := srv.ledger.PutStripe(id, desc.K, desc.M, desc.Shards, grant); err != nil {
+					srv.log.Warn("shard put: record stripe", "peer", peer, "id", id, "err", err)
+				}
+			}
 			srv.announce(id)
 		}
 	} else {
 		srv.announce(id)
 	}
-	srv.log.Debug("shard put", "peer", peer, "id", id, "bytes", len(data))
+	srv.log.Debug("shard put", "peer", peer, "id", id, "bytes", len(data), "stripe", stripeOK)
 	// OK + the content address the caller can verify against its own hash.
 	if err := writeByte(s, byte(statusOK)); err != nil {
 		return

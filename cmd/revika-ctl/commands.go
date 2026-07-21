@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"revika/internal/cap"
 	"revika/internal/pipeline"
@@ -100,6 +101,7 @@ func cmdPut(args []string) error {
 	node := fs.String("node", "", "store on this single node multiaddr (with /p2p/<peerid>)")
 	manifestPath := fs.String("manifest", "", "where to write the file manifest (default <file>.rvk.json)")
 	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the store")
+	grantTTL := fs.Duration("grant-ttl", 0, "expiry of the repair grants attached to shards (0 = never expire)")
 	var bootstrap multiFlag
 	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); spreads shards across discovered nodes")
 	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
@@ -121,8 +123,12 @@ func cmdPut(args []string) error {
 	}
 
 	cfg := pipeline.DefaultConfig()
+	var grantExpiry int64
+	if *grantTTL > 0 {
+		grantExpiry = time.Now().Add(*grantTTL).Unix()
+	}
 	ctx := context.Background()
-	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, cfg, signer)
+	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, cfg, signer, grantExpiry)
 	if err != nil {
 		return err
 	}
@@ -155,7 +161,7 @@ func cmdPut(args []string) error {
 // PlacementStore spreading shards across discovered nodes, warning if fewer than
 // k+m nodes are available (shards will then colocate, weakening the erasure
 // guarantee).
-func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool, cfg pipeline.Config, signer cap.SignKey) (store.Store, func(), error) {
+func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool, cfg pipeline.Config, signer cap.SignKey, grantExpiry int64) (store.Store, func(), error) {
 	switch {
 	case node != "":
 		return dialSigned(ctx, node, signer)
@@ -164,6 +170,7 @@ func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool,
 		if err != nil {
 			return nil, nil, err
 		}
+		ps.SetGrantExpiry(grantExpiry)
 		if n := cfg.Params.N(); len(ps.Nodes()) < n {
 			fmt.Fprintf(os.Stderr, "warning: only %d storage node(s) discovered for k+m=%d shards per chunk; shards will colocate, reducing failure-domain diversity\n", len(ps.Nodes()), n)
 		} else {
@@ -267,7 +274,8 @@ func cmdDelete(args []string) error {
 	}
 
 	ctx := context.Background()
-	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, m.Params, signer)
+	// Delete attaches no repair grants, so the grant-expiry argument is unused.
+	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, m.Params, signer, 0)
 	if err != nil {
 		return err
 	}

@@ -10,6 +10,11 @@
 // It loads (or creates) a stable libp2p identity, opens an on-disk shard store,
 // starts a libp2p host serving /revika/shard and /revika/probe, prints its
 // dialable addresses, and runs until interrupted (SIGINT/SIGTERM).
+//
+// When it participates in the DHT it also runs a repair loop: it probes the
+// stripes it holds and regenerates missing shards onto fresh nodes while at least
+// K survive, using only the non-confidential stripe descriptor and a User-signed
+// repair grant recorded at store time (never the encryption key).
 package main
 
 import (
@@ -18,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	mrand "math/rand/v2"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,9 +31,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
+
+	"revika/internal/erasure"
 	"revika/internal/ledger"
 	"revika/internal/net"
+	"revika/internal/pipeline"
+	"revika/internal/repair"
 	"revika/internal/store"
+	"revika/internal/stripe"
 )
 
 // reprovideInterval is how often a node re-announces the shards it holds to the
@@ -59,6 +71,8 @@ func run() error {
 		leaseTTL    = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
 		gcInterval  = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
 		gcExpired   = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
+		repairOn    = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
+		repairEvery = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
 		listen      multiFlag
 		bootstrap   multiFlag
 	)
@@ -134,6 +148,11 @@ func run() error {
 			disc.AdvertiseLoop(ctx)
 		}
 		go reprovideLoop(ctx, disc, blobs, log)
+		// Repair needs the DHT to find sibling shards and place regenerated ones,
+		// so it only runs when the node participates in the DHT.
+		if *repairOn {
+			go repairLoop(ctx, h, disc, led, log, *repairEvery)
+		}
 	}
 
 	srv.Register(h)
@@ -148,6 +167,7 @@ func run() error {
 		"mdns", *mdnsOn,
 		"dht", *dhtOn,
 		"bootstrap", len(bootstrap),
+		"repair", *dhtOn && *repairOn,
 	)
 	fmt.Println("Peer ID:", h.ID())
 	fmt.Println("Listening on:")
@@ -190,6 +210,119 @@ func reprovideLoop(ctx context.Context, disc *net.Discovery, blobs store.Store, 
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// repairLoop is the node-side repair maintenance loop. On each cycle it walks the
+// stripes this node participates in (recorded on PUT), probes each stripe's shard
+// availability across the network, and — for any stripe that has lost shards but
+// still has at least K — regenerates the missing shards onto fresh nodes.
+//
+// It embodies the "repair is mandatory" principle without breaking the dumb-node
+// model: the node holds only the non-confidential stripe descriptor (K, M, sibling
+// IDs) and a User-signed repair grant, never the encryption key. Regeneration runs
+// purely on ciphertext (erasure.Encode is deterministic, so regenerated shards
+// reproduce their exact content addresses) and the grant authorizes re-placing
+// them under the owning User's identity with no User online.
+//
+// There is no coordinator election: every holder of a degraded stripe may act, but
+// a small per-stripe jitter plus the fact that regeneration re-fetches survivors
+// first (and stores nothing when a sibling already reappeared) makes duplicate work
+// rare and always harmless — content-addressed Put and per-owner AddOwner are
+// idempotent.
+func repairLoop(ctx context.Context, h host.Host, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runRepair(ctx, h, disc, led, log, interval)
+		}
+	}
+}
+
+// runRepair performs one repair cycle. Stripe rows that describe the same stripe
+// (a node may hold several of a stripe's shards) are deduplicated so each stripe
+// is checked once.
+func runRepair(ctx context.Context, h host.Host, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
+	rows, err := led.Stripes()
+	if err != nil {
+		log.Warn("repair: list stripes", "err", err)
+		return
+	}
+	seen := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return
+		}
+		desc := stripe.Descriptor{K: row.K, M: row.M, Shards: row.Siblings}
+		descBytes, err := desc.MarshalBinary()
+		if err != nil {
+			log.Warn("repair: bad stripe descriptor", "shard", row.ShardID, "err", err)
+			continue
+		}
+		if key := string(descBytes); seen[key] {
+			continue
+		} else {
+			seen[key] = true
+		}
+
+		rs := net.NewRepairStore(h, disc, desc, row.Grant)
+		man := pipeline.FileManifest{
+			Params: pipeline.Config{Params: erasure.Params{K: row.K, M: row.M}},
+			Chunks: []pipeline.ChunkRef{{Shards: desc.Shards}},
+		}
+
+		rep, err := repair.Check(ctx, rs, man)
+		if err != nil {
+			log.Warn("repair: check", "err", err)
+			continue
+		}
+		if rep.Healthy() {
+			continue
+		}
+		st := rep.Chunks[0]
+		if !st.Recoverable(row.K) {
+			log.Warn("repair: stripe unrecoverable", "present", st.Present, "total", st.Total, "need", row.K)
+			continue
+		}
+		log.Info("repair: degraded stripe", "present", st.Present, "total", st.Total, "missing", len(st.Missing))
+
+		// Jitter before acting so multiple holders of the same degraded stripe are
+		// unlikely to regenerate simultaneously (any that do are harmless).
+		if !sleepJitter(ctx, interval) {
+			return
+		}
+		fixed, err := repair.Repair(ctx, rs, man)
+		if err != nil {
+			log.Warn("repair: regenerate", "err", err)
+		}
+		if fixed.Healthy() {
+			log.Info("repair: stripe restored", "total", st.Total)
+		} else {
+			log.Info("repair: stripe partially repaired", "still_missing", fixed.MissingShards())
+		}
+	}
+}
+
+// sleepJitter sleeps a random duration in [0, min(interval, maxJitter)] to
+// decorrelate concurrent repairers, returning false if ctx is cancelled first.
+func sleepJitter(ctx context.Context, interval time.Duration) bool {
+	const maxJitter = 5 * time.Second
+	max := min(interval, maxJitter)
+	if max <= 0 {
+		return ctx.Err() == nil
+	}
+	d := time.Duration(mrand.Int64N(int64(max)))
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 

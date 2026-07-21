@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **The offline core loop, the networked Node role, a User-side client CLI
 (store/retrieve/share), and the Kademlia DHT (WAN discovery + provider records +
-multi-node placement) are implemented; the background User daemon and
-manifests-as-network-blobs are not.** Build-order steps 1–3 pass `go test -race`
+multi-node placement + autonomous node-side repair) are implemented; the
+background User daemon and manifests-as-network-blobs are not.** Build-order steps 1–3 pass `go test -race`
 (offline pipeline: chunk → encrypt → erasure-code → store → retrieve → **repair**;
 plus the libp2p network layer with a runnable `revika-node` daemon), the DHT layer
 lets a client place a file's shards across several discovered nodes and retrieve
@@ -18,8 +18,14 @@ collection**: a per-node SQLite **ledger** (`internal/ledger`) tracks who owns
 each shard, PUT/DELETE carry a signed **auth token** (User Ed25519 key), DELETE
 only drops the caller's own claim (a blob is freed once its last owner leaves),
 per-owner **quotas** are enforced, and a GC loop reclaims unowned shards.
-There is as yet **no background User daemon (`revika-daemon`), no sync engine, no
-IPNS-like mutable root pointer, and no directories**. Node-selection policy is a
+**Autonomous node-side repair** is now implemented: at store time each shard
+carries a non-confidential **stripe descriptor** (K/M + sibling shard IDs, no key)
+and a User-signed **repair grant**, both recorded in the node ledger; a background
+repair loop on each node probes the stripes it holds over the DHT and, when a
+stripe has lost shards but still has ≥K, regenerates the missing shards onto fresh
+nodes with no User online — authorized by the grant, operating purely on
+ciphertext. There is as yet **no background User daemon (`revika-daemon`), no sync
+engine, no IPNS-like mutable root pointer, and no directories**. Node-selection policy is a
 first cut (round-robin placement); reputation/diversity domains are future work.
 Manifests are persisted by the client as local JSON files (the interim read-cap),
 not yet as encrypted network blobs. Lease expiry is advisory (own-until-delete);
@@ -37,10 +43,11 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
 | `internal/chunk`   | fixed-size chunker (`iter.Seq2`); CDC is a planned upgrade |
 | `internal/pipeline`| `StoreFile`/`LoadFile` + `FileManifest`; wires the four above |
 | `internal/repair`  | `Check` (probe) + `Repair` (regenerate missing shards) |
-| `internal/net`     | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` (Node, ledger-gated PUT/DELETE) + `NetStore`/`NewNetStoreSigned` (a `store.Store` over the wire, optionally signing writes); signed **auth tokens** (`auth.go`); **`Discovery`** (Kademlia DHT: bootstrap, provider records, node-service advertise/find) + **`DHTStore`**/**`PlacementStore`** (`store.Store`s that discover providers and spread shards across nodes) |
+| `internal/net`     | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` (Node, ledger-gated PUT/DELETE) + `NetStore`/`NewNetStoreSigned` (a `store.Store` over the wire, optionally signing writes); signed **auth tokens** (`auth.go`); **`Discovery`** (Kademlia DHT: bootstrap, provider records, node-service advertise/find) + **`DHTStore`**/**`PlacementStore`** (`store.Store`s that discover providers and spread shards across nodes) + **`RepairStore`** (a per-stripe store that reads via the DHT and places regenerated shards on fresh nodes, authorized by a repair grant) |
 | `internal/cap`     | User identity: X25519 `Wrap`/`Unwrap` (NaCl box anonymous seal) for sharing a read-cap, **plus Ed25519 `SignKey`/`SignPubKey`** (`signing.go`) — the signing identity that authorizes storing/deleting shards |
-| `internal/ledger`  | per-node SQLite index (`modernc.org/sqlite`): shard ownership (refcount by owner), leases, per-owner quotas; `AddOwner`/`RemoveOwner`/`CollectRecord`/`Collectible`/`Reconcile` |
-| `cmd/revika-node`  | headless Node daemon: serves shards from a `DiskStore` gated by the ledger, persistent libp2p identity, mDNS, DHT server (announces held shards, advertises as a storage node, periodic reprovide), quota/lease flags + GC loop |
+| `internal/stripe`  | non-confidential erasure metadata for repair: `Descriptor` (K/M + ordered sibling shard IDs, **no key**) with `MarshalBinary`/`UnmarshalDescriptor`/`Contains`; signed **repair grant** `BuildGrant`/`VerifyGrant`; `Putter` optional store interface |
+| `internal/ledger`  | per-node SQLite index (`modernc.org/sqlite`): shard ownership (refcount by owner), leases, per-owner quotas, **stripe descriptors + repair grants** (FK-cascaded to the shard); `AddOwner`/`RemoveOwner`/`CollectRecord`/`Collectible`/`Reconcile`/`PutStripe`/`Stripes` |
+| `cmd/revika-node`  | headless Node daemon: serves shards from a `DiskStore` gated by the ledger, persistent libp2p identity, mDNS, DHT server (announces held shards, advertises as a storage node, periodic reprovide), quota/lease flags + GC loop + **repair loop** (probes held stripes, regenerates missing shards onto fresh nodes) |
 | `cmd/revika-ctl`   | User client CLI: `keygen`/`put`/`get`/`delete`/`share` — drives the pipeline over a single node (`-node`) or DHT-discovered nodes (`-bootstrap`/`-mdns`), signs writes with the User signing key (`-signkey`), manifests as local JSON |
 
 ### Toolchain & key decisions made during implementation
@@ -88,6 +95,34 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
 - **DHT queries must wait for routing-table readiness** (`Discovery.WaitReady`)
   before the first lookup — the table fills asynchronously after bootstrap, so
   querying immediately races an empty table and finds nothing.
+- **Repair is node-side, enabled by a non-confidential stripe descriptor +
+  repair grant distributed at store time.** A dumb node can't repair what it can't
+  reason about, so each shard is stored with its `stripe.Descriptor` (K/M + the
+  ordered sibling shard IDs — deliberately *not* the encryption key, so it leaks no
+  plaintext) and a User-signed `stripe` **repair grant**. The grant authorizes
+  storing *any shard whose content address is in this stripe*, attributed to the
+  granting User; content addressing bounds it to exactly the stripe's bytes, so it
+  can't be used to store arbitrary data. Both are recorded in the node ledger
+  (FK-cascaded to the shard) and replayed when a regenerated shard is placed on a
+  fresh node — so repair works **with no User online** and no User key on the node.
+  Regeneration reuses `internal/repair` unchanged (it operates on ciphertext and
+  never touches `ChunkRef.Key`; `erasure.Encode` is deterministic so regenerated
+  shards reproduce their content addresses).
+- **No repair coordinator election (v1).** Every holder of a degraded stripe may
+  regenerate; a small per-stripe jitter plus the fact that `repair.Repair`
+  re-fetches survivors first (and stores nothing when a sibling has reappeared)
+  makes duplicate work rare and always harmless — content-addressed `Put` and
+  per-owner `AddOwner` are idempotent. Min-position election is a planned
+  optimization.
+- **Grant tradeoff (v1):** a repair grant is a *standing* owner-write capability
+  for its stripe (a malicious holder could re-PUT the stripe's own bytes, e.g.
+  resurrect a deleted shard, re-charging the owner — bounded to those exact bytes).
+  A reserved `expiry` field ships now (`-grant-ttl`, default 0 = never); full
+  revocation is a follow-up.
+- **Shard protocol bumped to `/revika/shard/1.1.0`.** The PUT frame gained two
+  trailing length-prefixed blobs after the auth token — the stripe descriptor and
+  repair grant (empty when unused) — so the framing stays uniform. Cross-version
+  peers fail cleanly at multistream negotiation rather than deadlocking.
 
 ## What revika is
 
@@ -199,7 +234,8 @@ go test ./path/to/pkg     # test a single package
 go test -run TestName ./path/to/pkg   # run a single test
 go vet ./...              # static checks
 go run ./cmd/revika-node  # Node daemon (flags: -data, -listen, -mdns, -dht, -bootstrap, -advertise,
-                          #   -quota, -lease-ttl, -gc-interval, -gc-expired-leases, -v)
+                          #   -quota, -lease-ttl, -gc-interval, -gc-expired-leases,
+                          #   -repair, -repair-interval, -v)
 go run ./cmd/revika-ctl   # User client: keygen | put | get | delete | share (see -h)
 ```
 
@@ -232,13 +268,14 @@ internal/
   crypto/    ✓ AES-256-GCM AEAD; key derivation TBD
   erasure/   ✓ Reed–Solomon encode/decode
   chunk/     ✓ fixed-size chunking (CDC planned)
+  stripe/    ✓ non-confidential erasure metadata (Descriptor) + signed repair grant
   pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory manifest for now)
   repair/    ✓ availability probes + shard regeneration
   net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client
-             (signed writes + auth tokens), ledger-gated Server, Kademlia DHT
-             (Discovery), DHTStore + PlacementStore
+             (signed writes + auth tokens + stripe/grant PUT), ledger-gated Server,
+             Kademlia DHT (Discovery), DHTStore + PlacementStore + RepairStore
   cap/       ✓ X25519 cap wrapping (Wrap/Unwrap) + Ed25519 signing identity
-  ledger/    ✓ per-node SQLite ownership/lease/quota index (node-side)
+  ledger/    ✓ per-node SQLite ownership/lease/quota + stripe index (node-side)
   manifest/    on-disk/on-wire manifest + capabilities      (planned)
   placement/   node selection & redundancy policy — first cut (round-robin) lives
                in internal/net for now; a richer policy (reputation, diversity
@@ -271,7 +308,12 @@ Still open:
 - Concrete cap/manifest serialization format (and where `FileManifest` finally lives).
 - Whether `k`/`m` and shard sizing should vary by file size / durability target.
 - Node selection policy beyond round-robin (diversity domains, reputation), where the
-  placement code finally lives, and repair thresholds/cadence + repair onto fresh nodes.
+  placement code finally lives, and repair-diversity (spreading regenerated shards
+  across failure domains). Repair onto fresh nodes is implemented; a repair
+  *coordinator election* and threshold-driven scheduling (repair only near K, batched
+  probes) are still open.
+- Repair-grant hardening: revocation / rotation beyond the reserved `expiry`, so a
+  compromised grant can't indefinitely resurrect deleted shards.
 - Lease renewal once a User daemon exists (then expiry-driven GC can default on);
   GC grace-window tuning; provider-record reprovide cadence; proactive un-provide on GC.
 - Token replay hardening beyond the ±5 min window (server-side nonce cache) if needed.

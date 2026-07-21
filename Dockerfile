@@ -91,8 +91,10 @@ COPY deploy/verify.sh /usr/local/bin/verify.sh
 COPY deploy/attack.sh /usr/local/bin/attack.sh
 COPY deploy/delete-protection.sh /usr/local/bin/delete-protection.sh
 COPY deploy/resilience-client.sh /usr/local/bin/resilience-client.sh
+COPY deploy/repair-client.sh /usr/local/bin/repair-client.sh
 RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh \
-      /usr/local/bin/delete-protection.sh /usr/local/bin/resilience-client.sh
+      /usr/local/bin/delete-protection.sh /usr/local/bin/resilience-client.sh \
+      /usr/local/bin/repair-client.sh
 
 ENTRYPOINT ["/usr/local/bin/verify.sh"]
 

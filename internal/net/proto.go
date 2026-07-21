@@ -4,7 +4,7 @@
 //
 // It defines two versioned stream protocols from the architecture doc:
 //
-//	/revika/shard/1.0.0 — PUT / GET / HAS / DELETE a shard by content address.
+//	/revika/shard/1.1.0 — PUT / GET / HAS / DELETE a shard by content address.
 //	/revika/probe/1.0.0 — proof-of-possession challenge/response for repair.
 //
 // The design keeps nodes dumb and untrusted: every byte on the wire is an
@@ -33,7 +33,13 @@ import (
 // Protocol IDs. Semantic-versioned so upgrades are negotiable via libp2p's
 // multistream muxer.
 const (
-	ShardProtocol protocol.ID = "/revika/shard/1.0.0"
+	// ShardProtocol is at 1.1.0: the PUT request frame gained two trailing blobs
+	// (stripe descriptor + repair grant) after the auth token, so a Node can
+	// record the erasure context of a shard and later regenerate it. Every
+	// NetStore PUT writes all four blobs (empty ones as a zero-length blob), so
+	// the framing is uniform; a 1.0.0 peer negotiates a clean multistream
+	// failure rather than deadlocking on a missing blob.
+	ShardProtocol protocol.ID = "/revika/shard/1.1.0"
 	ProbeProtocol protocol.ID = "/revika/probe/1.0.0"
 )
 
@@ -51,11 +57,11 @@ const (
 type status byte
 
 const (
-	statusOK           status = 0 // request succeeded
-	statusNotFound     status = 1 // shard absent (maps to store.ErrNotFound)
-	statusCorrupt      status = 2 // stored bytes failed their hash (store.ErrCorrupt)
-	statusError        status = 3 // server-side error; a message blob follows
-	statusUnauthorized status = 4 // missing/invalid auth token, or not the shard's owner
+	statusOK            status = 0 // request succeeded
+	statusNotFound      status = 1 // shard absent (maps to store.ErrNotFound)
+	statusCorrupt       status = 2 // stored bytes failed their hash (store.ErrCorrupt)
+	statusError         status = 3 // server-side error; a message blob follows
+	statusUnauthorized  status = 4 // missing/invalid auth token, or not the shard's owner
 	statusQuotaExceeded status = 5 // owner is over their storage quota
 )
 
@@ -67,6 +73,11 @@ const MaxShardSize = 64 << 20
 
 // NonceSize is the length of a probe challenge nonce.
 const NonceSize = 32
+
+// maxStripeBlob caps the serialized stripe descriptor accepted on a PUT. A
+// descriptor is 6 bytes + N*32; 64 KiB allows N up to ~2000 shards, far beyond
+// any sane erasure configuration while bounding the allocation.
+const maxStripeBlob = 1 << 16
 
 // ErrRemote is returned to a client when the server reported statusError.
 type ErrRemote struct{ Msg string }

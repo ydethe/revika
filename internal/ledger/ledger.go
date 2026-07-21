@@ -73,6 +73,13 @@ CREATE TABLE IF NOT EXISTS accounts (
 	owner       BLOB PRIMARY KEY,
 	bytes_used  INTEGER NOT NULL,
 	shard_count INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stripes (
+	shard_id BLOB PRIMARY KEY REFERENCES shards(id) ON DELETE CASCADE,
+	k        INTEGER NOT NULL,
+	m        INTEGER NOT NULL,
+	siblings BLOB NOT NULL,
+	grant    BLOB NOT NULL
 );`
 
 // Open opens (creating if needed) a ledger database at path. Pass ":memory:" for
@@ -326,6 +333,72 @@ func (l *Ledger) Account(owner []byte) (bytesUsed int64, shardCount int, err err
 		return 0, 0, nil
 	}
 	return bytesUsed, shardCount, err
+}
+
+// StripeRow is the erasure context a node records for one shard it holds: the
+// stripe's K/M, its sibling shard IDs (in erasure-position order), and the signed
+// repair grant that authorizes regenerating and re-placing the stripe's shards.
+// The repair loop enumerates these to decide what to probe and repair.
+type StripeRow struct {
+	ShardID  store.ShardID
+	K, M     int
+	Siblings []store.ShardID
+	Grant    []byte
+}
+
+// PutStripe records (or replaces) the stripe context for a shard this node holds.
+// The shard must already have a row in `shards` (i.e. AddOwner ran first); the
+// foreign key ties the stripe row's lifetime to the blob, so when the last owner
+// leaves and the shard row is dropped, the stripe row cascades away too. siblings
+// is stored in position order as a flat 32-byte-per-id blob.
+func (l *Ledger) PutStripe(id store.ShardID, k, m int, siblings []store.ShardID, grant []byte) error {
+	if len(grant) == 0 {
+		return fmt.Errorf("ledger: PutStripe requires a non-empty grant")
+	}
+	blob := make([]byte, 0, len(siblings)*len(store.ShardID{}))
+	for _, s := range siblings {
+		blob = append(blob, s[:]...)
+	}
+	_, err := l.db.Exec(`INSERT OR REPLACE INTO stripes (shard_id, k, m, siblings, grant) VALUES (?, ?, ?, ?, ?)`,
+		id[:], k, m, blob, grant)
+	return err
+}
+
+// Stripes returns every stripe context this node currently holds. The repair
+// loop deduplicates by sibling set (several rows can describe the same stripe
+// when a node holds more than one of its shards).
+func (l *Ledger) Stripes() ([]StripeRow, error) {
+	rows, err := l.db.Query(`SELECT shard_id, k, m, siblings, grant FROM stripes`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	idLen := len(store.ShardID{})
+	var out []StripeRow
+	for rows.Next() {
+		var (
+			idRaw    []byte
+			sr       StripeRow
+			siblings []byte
+		)
+		if err := rows.Scan(&idRaw, &sr.K, &sr.M, &siblings, &sr.Grant); err != nil {
+			return nil, err
+		}
+		if len(idRaw) != idLen {
+			return nil, fmt.Errorf("ledger: stripe shard_id is %d bytes, want %d", len(idRaw), idLen)
+		}
+		copy(sr.ShardID[:], idRaw)
+		if len(siblings)%idLen != 0 {
+			return nil, fmt.Errorf("ledger: stripe siblings blob is %d bytes, not a multiple of %d", len(siblings), idLen)
+		}
+		sr.Siblings = make([]store.ShardID, len(siblings)/idLen)
+		for i := range sr.Siblings {
+			copy(sr.Siblings[i][:], siblings[i*idLen:(i+1)*idLen])
+		}
+		out = append(out, sr)
+	}
+	return out, rows.Err()
 }
 
 // ReconcileReport summarises what a Reconcile pass found and did.

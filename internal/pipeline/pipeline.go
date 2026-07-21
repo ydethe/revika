@@ -20,6 +20,7 @@ import (
 	"revika/internal/crypto"
 	"revika/internal/erasure"
 	"revika/internal/store"
+	"revika/internal/stripe"
 )
 
 // Config controls how a file is encoded.
@@ -81,13 +82,34 @@ func storeChunk(ctx context.Context, s store.Store, p erasure.Params, plain []by
 	if err != nil {
 		return ChunkRef{}, err
 	}
+
+	// Erasure.Encode returns all N shards at once, so every shard's content
+	// address is known before the first Put — which lets us build the stripe
+	// Descriptor (the non-confidential erasure context: K, M, and the ordered
+	// shard IDs) and hand it to the store. A store that implements stripe.Putter
+	// (a networked PlacementStore) records the descriptor on each node so it can
+	// later repair the stripe; a plain store (mock/in-memory) just gets Put.
 	ids := make([]store.ShardID, len(shards))
 	for i, sh := range shards {
-		id, err := s.Put(ctx, sh)
+		ids[i] = store.HashOf(sh)
+	}
+	desc := stripe.Descriptor{K: p.K, M: p.M, Shards: ids}
+
+	sp, stripeAware := s.(stripe.Putter)
+	for i, sh := range shards {
+		var id store.ShardID
+		var err error
+		if stripeAware {
+			id, err = sp.PutStripe(ctx, sh, desc)
+		} else {
+			id, err = s.Put(ctx, sh)
+		}
 		if err != nil {
 			return ChunkRef{}, fmt.Errorf("pipeline: put shard %d: %w", i, err)
 		}
-		ids[i] = id
+		if id != ids[i] {
+			return ChunkRef{}, fmt.Errorf("pipeline: shard %d stored as %s, want %s", i, id, ids[i])
+		}
 	}
 	return ChunkRef{Key: key, Shards: ids}, nil
 }

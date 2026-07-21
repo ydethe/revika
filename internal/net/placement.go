@@ -12,6 +12,7 @@ import (
 
 	"revika/internal/cap"
 	"revika/internal/store"
+	"revika/internal/stripe"
 )
 
 // defaultMaxProviders bounds how many providers we ask the DHT for per shard.
@@ -123,12 +124,19 @@ type PlacementStore struct {
 	*DHTStore
 	nodes  []peer.ID
 	signer cap.SignKey
+	// grantExpiry is stamped into the repair grants attached to each PutStripe
+	// (0 = never expire). Set via SetGrantExpiry.
+	grantExpiry int64
 
 	mu   sync.Mutex
 	next int
 }
 
-var _ store.Store = (*PlacementStore)(nil)
+var (
+	_ store.Store   = (*PlacementStore)(nil)
+	_ stripe.Putter = (*PlacementStore)(nil)
+	_ stripe.Putter = (*NetStore)(nil)
+)
 
 // NewPlacementStore returns a store that places shards across the given
 // candidate nodes (h should already be connected to them). disc backs the read
@@ -144,14 +152,39 @@ func NewPlacementStore(h host.Host, disc *Discovery, nodes []peer.ID, signer cap
 // Nodes returns the candidate node set (for diagnostics/logging).
 func (p *PlacementStore) Nodes() []peer.ID { return p.nodes }
 
+// SetGrantExpiry sets the unix-timestamp expiry stamped into the repair grants
+// attached by PutStripe (0 = never expire, the default). Call before storing.
+func (p *PlacementStore) SetGrantExpiry(ts int64) { p.grantExpiry = ts }
+
+// nextTarget picks the next node in round-robin order.
+func (p *PlacementStore) nextTarget() peer.ID {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	target := p.nodes[p.next%len(p.nodes)]
+	p.next++
+	return target
+}
+
+// signedTo returns a signed NetStore for target carrying the placement's grant
+// expiry.
+func (p *PlacementStore) signedTo(target peer.ID) *NetStore {
+	ns := NewNetStoreSigned(p.h, target, p.signer)
+	ns.grantExpiry = p.grantExpiry
+	return ns
+}
+
 // Put sends data to the next node in round-robin order and returns its content
 // address. The chosen node stores the shard and announces its provider record.
 func (p *PlacementStore) Put(ctx context.Context, data []byte) (store.ShardID, error) {
-	p.mu.Lock()
-	target := p.nodes[p.next%len(p.nodes)]
-	p.next++
-	p.mu.Unlock()
-	return NewNetStoreSigned(p.h, target, p.signer).Put(ctx, data)
+	return p.signedTo(p.nextTarget()).Put(ctx, data)
+}
+
+// PutStripe places data like Put, but attaches the stripe descriptor and a repair
+// grant so the receiving node records the erasure context and can help repair the
+// stripe. The pipeline calls this (via the stripe.Putter interface) so every
+// stored shard carries its repair metadata.
+func (p *PlacementStore) PutStripe(ctx context.Context, data []byte, d stripe.Descriptor) (store.ShardID, error) {
+	return p.signedTo(p.nextTarget()).PutStripe(ctx, data, d)
 }
 
 // Delete removes the caller's ownership claim on the shard from every node the

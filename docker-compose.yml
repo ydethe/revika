@@ -55,6 +55,8 @@ services:
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -mdns=false
+      # Repair cadence; shortened by deploy/repair.sh via REPAIR_INTERVAL, else 1h.
+      - -repair-interval=${REPAIR_INTERVAL:-1h}
     volumes:
       - ./deploy/seed.key:/data/keys/node.key:ro
       - seed-data:/data
@@ -74,6 +76,7 @@ services:
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -mdns=false
       - -bootstrap=${SEED_ADDR}
+      - -repair-interval=${REPAIR_INTERVAL:-1h}
     volumes:
       - node2-data:/data
 
@@ -89,6 +92,7 @@ services:
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -mdns=false
       - -bootstrap=${SEED_ADDR}
+      - -repair-interval=${REPAIR_INTERVAL:-1h}
     volumes:
       - node3-data:/data
 
@@ -219,6 +223,65 @@ services:
       SEED_ADDR: ${SEED_ADDR}
     volumes:
       - handoff:/handoff:ro
+    restart: "no"
+
+  # --- autonomous repair scenario (profile: repair) --------------------------
+  # Two one-shot clients driven by deploy/repair.sh, which stops a node between
+  # them to prove node-side repair: `store` spreads shards (each carrying a stripe
+  # descriptor + repair grant), a node is taken down, a *surviving* node
+  # regenerates the lost shards onto a node that lacked them with no client
+  # online, and `get` rebuilds the file. Do not run these directly — run:
+  #   ./deploy/repair.sh
+
+  # Pre-failure step: stores the file and snapshots each node's shard set. Mounts
+  # every node's data read-only so it can record the baseline shard sets; depends
+  # on all nodes (they must be up to receive shards).
+  repair-pre:
+    profiles: ["repair"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/repair-client.sh"]
+    depends_on:
+      seed:
+        condition: service_started
+      node2:
+        condition: service_started
+      node3:
+        condition: service_started
+    environment:
+      SEED_ADDR: ${SEED_ADDR}
+      DOWN_NODE: ${DOWN_NODE:-node3}
+    volumes:
+      - seed-data:/nodes/seed:ro
+      - node2-data:/nodes/node2:ro
+      - node3-data:/nodes/node3:ro
+      - handoff:/handoff
+    restart: "no"
+
+  # Post-failure step: verifies a lost shard was regenerated onto a survivor, then
+  # retrieves the file. Depends ONLY on the seed (its bootstrap) so running it does
+  # NOT restart the node the orchestrator just stopped; it still mounts every
+  # node's data read-only to inspect the survivors' current shard sets.
+  repair-post:
+    profiles: ["repair"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/repair-client.sh"]
+    depends_on:
+      seed:
+        condition: service_started
+    environment:
+      SEED_ADDR: ${SEED_ADDR}
+      DOWN_NODE: ${DOWN_NODE:-node3}
+    volumes:
+      - seed-data:/nodes/seed:ro
+      - node2-data:/nodes/node2:ro
+      - node3-data:/nodes/node3:ro
+      - handoff:/handoff
     restart: "no"
 
 volumes:
