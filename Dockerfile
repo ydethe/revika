@@ -88,7 +88,8 @@ LABEL org.opencontainers.image.title="revika-ctl-testharness" \
 COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
 COPY deploy/verify.sh /usr/local/bin/verify.sh
 COPY deploy/attack.sh /usr/local/bin/attack.sh
-RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh
+COPY deploy/resilience-client.sh /usr/local/bin/resilience-client.sh
+RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh /usr/local/bin/resilience-client.sh
 
 ENTRYPOINT ["/usr/local/bin/verify.sh"]
 

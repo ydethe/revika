@@ -139,6 +139,57 @@ services:
       - handoff:/handoff:ro
     restart: "no"
 
+  # --- node-down resilience scenario (profile: resilience) -------------------
+  # Two one-shot clients driven by deploy/resilience.sh, which stops a node
+  # between them to prove erasure-coded durability: store spreads 6 shards
+  # 2-per-node, one node is taken down, and get still rebuilds the file from the
+  # surviving k=4 shards. Do not run these directly — run the orchestrator:
+  #   ./deploy/resilience.sh
+  # (it brings the nodes up, runs `store`, stops a node, then runs `retrieve`).
+
+  # Stores the file and leaves the source + manifest on the handoff volume.
+  store:
+    profiles: ["resilience"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/resilience-client.sh"]
+    command: ["store"]
+    depends_on:
+      seed:
+        condition: service_started
+      node2:
+        condition: service_started
+      node3:
+        condition: service_started
+    environment:
+      SEED_ADDR: ${SEED_ADDR}
+    volumes:
+      - handoff:/handoff
+    restart: "no"
+
+  # Retrieves the file from the handoff manifest while a node is down. It depends
+  # ONLY on the seed (its bootstrap) — deliberately NOT on node2/node3, so that
+  # `docker compose run retrieve` does not restart the node the orchestrator just
+  # stopped.
+  retrieve:
+    profiles: ["resilience"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/resilience-client.sh"]
+    command: ["get"]
+    depends_on:
+      seed:
+        condition: service_started
+    environment:
+      SEED_ADDR: ${SEED_ADDR}
+    volumes:
+      - handoff:/handoff:ro
+    restart: "no"
+
 volumes:
   seed-data:
   node2-data:

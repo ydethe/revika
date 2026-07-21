@@ -67,7 +67,13 @@ func (s *DHTStore) Get(ctx context.Context, id store.ShardID) ([]byte, error) {
 		}
 		return data, nil
 	}
-	return nil, lastErr
+	// Every known provider failed — the shard is a miss, a dead node holding a
+	// stale provider record, or an unreachable one. From the store's point of
+	// view the shard is simply unavailable, so map it to ErrNotFound: callers
+	// like the pipeline's erasure decode then treat it as one lost shard and
+	// rebuild from the survivors (any k of k+m) instead of aborting the whole
+	// read. The concrete cause is wrapped in for diagnostics.
+	return nil, fmt.Errorf("revika/net: shard %s unavailable from %d provider(s) (%v): %w", id, len(providers), lastErr, store.ErrNotFound)
 }
 
 func (s *DHTStore) Has(ctx context.Context, id store.ShardID) (bool, error) {
