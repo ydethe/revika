@@ -170,6 +170,7 @@ no single node holds a whole file and the system tolerates node loss.
 
 These are settled; treat them as constraints unless the maintainer changes them.
 
+- **Cryptography** : All crypto algorithms shall be PQC-class
 - **Sudo commands** : if you need a sudo command, ask me to run. I will run it in a separate terminal and provide the output.
 - **Redundancy = erasure coding**, not plain replication. Files are split into `k`
   data shards + `m` parity shards; any `k` of the `k+m` shards reconstruct the file
