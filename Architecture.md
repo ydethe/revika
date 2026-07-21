@@ -216,6 +216,65 @@ DEM. For the remaining planned pieces, use `hkdf` for key derivation and stdlib
 `crypto/ed25519` for signatures. (Both chunk encryption and the cap DEM use stdlib
 AES-256-GCM, and the KEM is stdlib too, so no direct `x/crypto` dependency exists.)
 
+#### Why not proxy re-encryption (PRE / IB-CPRE) for sharing? — **[rejected for v1]**
+
+A recurring suggestion is to share via **proxy re-encryption** — and specifically
+**identity-based conditional proxy re-encryption (IB-CPRE)** — instead of wrapping and
+handing over a read-cap. In a PRE scheme the owner gives a *re-encryption key* to a proxy
+(here, a node); the proxy transforms ciphertext-under-Alice into ciphertext-under-Bob
+without learning the plaintext, Bob decrypts with his own key, and the *conditional*
+variant scopes a re-encryption key to ciphertexts matching a tag/condition while the
+*identity-based* variant lets you re-encrypt to an identity string rather than a fetched
+public key. It is an appealing model, but it fights three of revika's settled constraints,
+so it is **not adopted for v1**.
+
+First, a **layering** point that decides where PRE could even sit. Shard bytes are
+*already* AES-256-GCM ciphertext under a per-chunk random key, and *then* erasure-coded
+(§3.3). The confidentiality boundary is the small set of per-chunk keys — the thing worth
+sharing is the ~tens-of-bytes read-cap/manifest, not the megabyte shards. So there are two
+very different places PRE could apply, and "re-encrypt the shards" is the one that breaks
+the most:
+
+1. **Shard-level PRE breaks content addressing and repair.** `shardID = hash(shard)`
+   (§3.2). If a node re-encrypts a shard for a recipient, the output is different bytes →
+   different hash → the manifest's shard IDs no longer resolve, dedup dies, and **repair
+   breaks**: repair depends on `erasure.Encode` being deterministic so regenerated shards
+   reproduce their content address and the manifest never changes (§3.4). Recipient-specific
+   ciphertext destroys that invariant. It also turns a node from a *dumb, untrusted blob
+   store* (§2) into an active crypto participant holding re-encryption keys, and
+   proxy-plus-recipient collusion is a live concern in several PRE schemes — a real
+   departure from the Tahoe-LAFS trust model.
+
+2. **The "identity-based" part needs a trusted authority.** IBE-family schemes require a
+   **Private Key Generator** that can derive *any* user's private key — inherent key escrow
+   via a central authority. That directly contradicts revika's *no central server* goal
+   (§1), independent of the crypto involved.
+
+3. **PQC rules it out today regardless.** revika's settled constraint is that *all crypto
+   must be PQC-class*. Essentially every mature, analyzed PRE / IB-PRE / conditional-PRE
+   scheme is **pairing-based** (bilinear maps) and only classically secure. Lattice-based
+   PRE (LWE/NTRU) exists in the literature but is research-grade: no FIPS standard, not in
+   the Go stdlib, large ciphertexts, and noise growth that bounds the number of
+   re-encryption hops. Adopting it means an experimental external crypto dependency or
+   hand-rolling — against both the PQC requirement and the deliberate stdlib/FIPS stance
+   that gave us ML-KEM-768 (FIPS 203) and Ed25519.
+
+The idea does point at a **genuine weakness** in the current model: a read-cap hands over
+raw chunk keys, which is *coarse* (whole-manifest granularity) and *irrevocable* (once a
+recipient has the keys, they can never be taken back). The valuable properties PRE offers —
+delegation without disclosing the master key, conditions, and revocation — are better
+obtained here at the **cap layer**, PQC-safely and without a proxy or a PKG:
+
+- **Revocation** via key rotation + indirection: put per-file/per-directory keys behind a
+  small key-holder blob the User re-wraps; revoking future reads = rotating that blob.
+- **Conditions / least privilege** via the existing **write-cap → read-cap → verify-cap**
+  derivation chain (§3.5): mint narrow read-caps per subtree instead of one master cap.
+- **Delivery** stays the ML-KEM-768 `Wrap`/`Unwrap` already implemented.
+
+PRE is therefore **parked**, not pursued: revisit only if a standardized, stdlib-grade
+lattice PRE appears *and* a variant exists that avoids a trusted PKG and can operate at the
+cap layer rather than on content-addressed shards. Tracked in §10.
+
 ### 3.6 Filesystem / metadata layer — **[partial]**
 
 - **File manifest** — **[partial]**. `pipeline.FileManifest` exists today as an in-memory
@@ -406,3 +465,8 @@ Still open:
 - Lease durations and garbage-collection policy on nodes.
 - How multi-device access for a single User shares the signing key (or delegates via
   additional caps).
+- Fine-grained / revocable sharing beyond handing over a read-cap. **Proxy re-encryption
+  (incl. IB-CPRE) is rejected for v1** (§3.5: breaks content-addressing/repair, needs a
+  trusted PKG, and has no PQC-class standardized scheme); the near-term path is revocation
+  via key rotation + the read-cap/verify-cap derivation chain. Revisit PRE only if a
+  stdlib-grade lattice PRE without a trusted authority appears.
