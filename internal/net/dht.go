@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -76,6 +77,12 @@ type Discovery struct {
 	dht *dht.IpfsDHT
 	rd  *drouting.RoutingDiscovery
 	log *slog.Logger
+
+	// seen tracks peer IDs already reported by noteDiscovered so each node is
+	// logged only the first time this Discovery hears about it — DHT lookups are
+	// polled and repeatedly return the same peers.
+	mu   sync.Mutex
+	seen map[peer.ID]struct{}
 }
 
 // NewDiscovery builds the DHT over h, connects to the configured bootstrap
@@ -90,7 +97,7 @@ func NewDiscovery(ctx context.Context, h host.Host, cfg DiscoveryConfig) (*Disco
 	if err != nil {
 		return nil, fmt.Errorf("revika/net: new dht: %w", err)
 	}
-	d := &Discovery{h: h, dht: kad, rd: drouting.NewRoutingDiscovery(kad), log: log}
+	d := &Discovery{h: h, dht: kad, rd: drouting.NewRoutingDiscovery(kad), log: log, seen: map[peer.ID]struct{}{}}
 	if err := d.Bootstrap(ctx, cfg.Bootstrap); err != nil {
 		_ = kad.Close()
 		return nil, err
@@ -168,6 +175,22 @@ func (d *Discovery) ProvideAll(ctx context.Context, ids []store.ShardID) {
 	}
 }
 
+// noteDiscovered logs each peer in pis the first time this Discovery encounters
+// it, tagged with the channel (via) it was found through. Repeated sightings —
+// every polled lookup returns the same peers — are silent, so the log carries
+// exactly one line per genuinely new node.
+func (d *Discovery) noteDiscovered(pis []peer.AddrInfo, via string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, pi := range pis {
+		if _, ok := d.seen[pi.ID]; ok {
+			continue
+		}
+		d.seen[pi.ID] = struct{}{}
+		d.log.Info("discovered node", "peer", pi.ID, "via", via, "addrs", pi.Addrs)
+	}
+}
+
 // FindProviders returns peers that have announced a provider record for id,
 // capped at max (a default is used if max <= 0). The local host is excluded.
 func (d *Discovery) FindProviders(ctx context.Context, id store.ShardID, max int) ([]peer.AddrInfo, error) {
@@ -185,6 +208,7 @@ func (d *Discovery) FindProviders(ctx context.Context, id store.ShardID, max int
 		}
 		out = append(out, pi)
 	}
+	d.noteDiscovered(out, "dht/provider")
 	return out, nil
 }
 
@@ -213,6 +237,7 @@ func (d *Discovery) FindNodes(ctx context.Context, limit int) ([]peer.AddrInfo, 
 		}
 		out = append(out, pi)
 	}
+	d.noteDiscovered(out, "dht/storage")
 	return out, nil
 }
 

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -31,6 +32,11 @@ import (
 	"revika/internal/pipeline"
 	"revika/internal/store"
 )
+
+// ctlLog is the client's logger. It reports discovery activity (each new storage
+// node found via the DHT or mDNS) to stderr so the User can see the network
+// forming under put/get/nodes.
+var ctlLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 func main() {
 	if len(os.Args) < 2 {
@@ -50,6 +56,8 @@ func main() {
 		err = cmdDelete(args)
 	case "share":
 		err = cmdShare(args)
+	case "nodes":
+		err = cmdNodes(args)
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -94,6 +102,11 @@ Commands:
   share -manifest <path> -to <recipient-pubkey|@file> [-o <path>]
         Wrap a manifest (read-capability) to a recipient's public key so only they
         can open it. Writes <path>.cap by default. No node contact.
+
+  nodes (-bootstrap <ma>... | -mdns)
+        List the storage nodes the client can discover on the DHT — the nodes it
+        is aware of and could place shards on. Reports each node's peer ID,
+        reachability, and advertised addresses. No file contact.
 
 A <multiaddr> includes the node's peer ID, e.g.
   /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW...
@@ -169,13 +182,13 @@ func joinDHT(ctx context.Context, bootstrap []string, mdns bool) (host.Host, *ne
 	if len(bootstrap) == 0 && !mdns {
 		return nil, nil, nil, fmt.Errorf("DHT mode needs -bootstrap <multiaddr> (or -mdns on a LAN)")
 	}
-	h, err := net.NewHost(net.HostConfig{EnableMDNS: mdns})
+	h, err := net.NewHost(net.HostConfig{EnableMDNS: mdns, Log: ctlLog})
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
-	disc, err := net.NewDiscovery(dctx, h, net.DiscoveryConfig{Mode: net.DHTModeClient, Bootstrap: bootstrap})
+	disc, err := net.NewDiscovery(dctx, h, net.DiscoveryConfig{Mode: net.DHTModeClient, Bootstrap: bootstrap, Log: ctlLog})
 	if err != nil {
 		h.Close()
 		return nil, nil, nil, err
@@ -265,6 +278,63 @@ func discoverNodes(ctx context.Context, h host.Host, disc *net.Discovery) ([]pee
 		return nil, fmt.Errorf("no storage nodes discovered via the DHT (is a node running, advertising, and reachable?)")
 	}
 	return ids, nil
+}
+
+// nodeInfo pairs a discovered storage node with whether we could reach it.
+type nodeInfo struct {
+	Info      peer.AddrInfo
+	Reachable bool
+}
+
+// discoverNodeInfos polls the DHT for advertised storage nodes so `nodes` can
+// report what the client is aware of. Like discoverNodes it polls (DHT
+// discovery is eventually consistent) and attempts to connect to each so it can
+// report reachability, but it keeps every node it hears about — reachable or
+// not — along with the addresses it advertised. It returns once a round turns up
+// no new node and no newly-reachable node (the view has settled) or the timeout
+// hits; unlike discoverNodes it never errors on an empty result — "no nodes" is
+// a valid thing to report.
+func discoverNodeInfos(ctx context.Context, h host.Host, disc *net.Discovery) []nodeInfo {
+	idx := map[peer.ID]int{} // peer.ID -> position in out
+	var out []nodeInfo
+	prevSeen, prevReachable := -1, -1
+	deadline := time.Now().Add(discoveryTimeout)
+	for time.Now().Before(deadline) {
+		fctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		infos, err := disc.FindNodes(fctx, 0)
+		cancel()
+		if err == nil {
+			for _, pi := range infos {
+				i, ok := idx[pi.ID]
+				if !ok {
+					i = len(out)
+					idx[pi.ID] = i
+					out = append(out, nodeInfo{Info: pi})
+				} else if len(out[i].Info.Addrs) == 0 {
+					out[i].Info.Addrs = pi.Addrs // fill in addrs a later round supplied
+				}
+				if !out[i].Reachable {
+					cctx, c := context.WithTimeout(ctx, dialTimeout)
+					connErr := net.Connect(cctx, h, pi)
+					c()
+					out[i].Reachable = connErr == nil
+				}
+			}
+		}
+		reachable := 0
+		for _, n := range out {
+			if n.Reachable {
+				reachable++
+			}
+		}
+		// Settle once a round added no node and flipped none to reachable.
+		if len(out) == prevSeen && reachable == prevReachable {
+			break
+		}
+		prevSeen, prevReachable = len(out), reachable
+		time.Sleep(1500 * time.Millisecond)
+	}
+	return out
 }
 
 // runStore stores the file at path into s and returns its manifest. Split out

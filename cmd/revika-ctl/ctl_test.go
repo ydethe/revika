@@ -181,6 +181,89 @@ func TestResolveRecipientFromFile(t *testing.T) {
 	}
 }
 
+// startStorageNode spins up a server-role storage node on a private in-process
+// revika DHT: a libp2p host with the shard handlers registered, a DHT joined to
+// the given bootstrap peer (empty for the seed), and the storage-node
+// advertisement running so clients can discover it. It returns a dialable
+// bootstrap multiaddr (with /p2p/<id>) and the node's peer ID.
+func startStorageNode(t *testing.T, ctx context.Context, bootstrap string) (string, peer.ID) {
+	t.Helper()
+	h, err := net.NewHost(net.HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
+	if err != nil {
+		t.Fatalf("node host: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+
+	var boots []string
+	if bootstrap != "" {
+		boots = []string{bootstrap}
+	}
+	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	disc, err := net.NewDiscovery(dctx, h, net.DiscoveryConfig{Mode: net.DHTModeServer, Bootstrap: boots})
+	if err != nil {
+		t.Fatalf("node discovery: %v", err)
+	}
+	// Registered after the host so cleanup (LIFO) closes the DHT before the host.
+	t.Cleanup(func() { disc.Close() })
+
+	net.NewServer(store.NewMemStore(), nil).Register(h)
+	disc.AdvertiseLoop(ctx) // advertise as a storage node so clients can find us
+
+	var addr string
+	for _, a := range h.Addrs() {
+		addr = a.String() + "/p2p/" + h.ID().String()
+		break
+	}
+	if addr == "" {
+		t.Fatal("node has no listen address")
+	}
+	return addr, h.ID()
+}
+
+// TestDiscoverNodeInfos exercises the discovery behind the `nodes` command: two
+// storage nodes advertise themselves on a private DHT, and a client that joins
+// through the seed must become aware of both and report them reachable.
+func TestDiscoverNodeInfos(t *testing.T) {
+	ctx := t.Context() // canceled at test end, stopping the advertise loops
+
+	// Two storage nodes; the second bootstraps off the first (the seed).
+	seedAddr, seedID := startStorageNode(t, ctx, "")
+	_, node2ID := startStorageNode(t, ctx, seedAddr)
+
+	// The client joins the DHT via the seed — exactly as `nodes -bootstrap` does.
+	h, disc, closer, err := joinDHT(ctx, []string{seedAddr}, false)
+	if err != nil {
+		t.Fatalf("joinDHT: %v", err)
+	}
+	defer closer()
+
+	nodes := discoverNodeInfos(ctx, h, disc)
+
+	// Both advertised nodes should be discovered, reachable, and carry addresses.
+	reachable := map[peer.ID]nodeInfo{}
+	for _, n := range nodes {
+		if n.Reachable {
+			reachable[n.Info.ID] = n
+		}
+	}
+	for _, want := range []peer.ID{seedID, node2ID} {
+		n, ok := reachable[want]
+		if !ok {
+			t.Fatalf("node %s not discovered as reachable; got %+v", want, nodes)
+		}
+		if len(n.Info.Addrs) == 0 {
+			t.Fatalf("node %s discovered with no advertised addresses", want)
+		}
+	}
+	// The client itself never advertised as a storage node, so it must not appear.
+	for _, n := range nodes {
+		if n.Info.ID == h.ID() {
+			t.Fatalf("client host %s listed itself as a storage node", h.ID())
+		}
+	}
+}
+
 // --- small test helpers ---
 
 func crypto32(b byte) (k crypto.Key) {

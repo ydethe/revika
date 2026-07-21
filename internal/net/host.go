@@ -3,8 +3,10 @@ package net
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/libp2p/go-libp2p"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
@@ -29,6 +31,9 @@ type HostConfig struct {
 	// EnableMDNS turns on mDNS LAN peer discovery (auto-dial peers found on the
 	// local network). Useful for development and single-LAN deployments.
 	EnableMDNS bool
+	// Log receives a line for each new peer discovered via mDNS. If nil, discovery
+	// logging is discarded.
+	Log *slog.Logger
 }
 
 func defaultListenAddrs() []string {
@@ -58,7 +63,11 @@ func NewHost(cfg HostConfig) (host.Host, error) {
 		return nil, fmt.Errorf("revika/net: new host: %w", err)
 	}
 	if cfg.EnableMDNS {
-		if err := startMDNS(h); err != nil {
+		log := cfg.Log
+		if log == nil {
+			log = slog.New(slog.DiscardHandler)
+		}
+		if err := startMDNS(h, log); err != nil {
 			h.Close()
 			return nil, err
 		}
@@ -107,14 +116,29 @@ func loadOrCreateIdentity(path string) (libp2pcrypto.PrivKey, error) {
 	return priv, nil
 }
 
-// mdnsNotifee dials peers discovered on the LAN.
+// mdnsNotifee dials peers discovered on the LAN and logs each new one.
 type mdnsNotifee struct {
-	h host.Host
+	h   host.Host
+	log *slog.Logger
+
+	// seen dedups repeated mDNS announcements so each node is logged only the
+	// first time it is found on the LAN.
+	mu   sync.Mutex
+	seen map[peer.ID]struct{}
 }
 
 func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	if pi.ID == n.h.ID() {
 		return // ourselves
+	}
+	n.mu.Lock()
+	_, known := n.seen[pi.ID]
+	if !known {
+		n.seen[pi.ID] = struct{}{}
+	}
+	n.mu.Unlock()
+	if !known {
+		n.log.Info("discovered node", "peer", pi.ID, "via", "mdns", "addrs", pi.Addrs)
 	}
 	// Best-effort connect; failures are transient and left to libp2p to retry.
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
@@ -122,8 +146,8 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	_ = n.h.Connect(ctx, pi)
 }
 
-func startMDNS(h host.Host) error {
-	svc := mdns.NewMdnsService(h, mdnsServiceTag, &mdnsNotifee{h: h})
+func startMDNS(h host.Host, log *slog.Logger) error {
+	svc := mdns.NewMdnsService(h, mdnsServiceTag, &mdnsNotifee{h: h, log: log, seen: map[peer.ID]struct{}{}})
 	if err := svc.Start(); err != nil {
 		return fmt.Errorf("revika/net: start mdns: %w", err)
 	}

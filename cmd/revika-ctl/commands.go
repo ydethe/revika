@@ -302,6 +302,53 @@ func cmdDelete(args []string) error {
 	return nil
 }
 
+// cmdNodes lists the storage nodes the client can discover on the DHT — the
+// nodes it is "aware of" and could place shards on. It joins the network via
+// -bootstrap/-mdns exactly like put/get, then reports each advertised node with
+// its peer ID, whether we could reach it, and its advertised addresses.
+func cmdNodes(args []string) error {
+	fs := flag.NewFlagSet("nodes", flag.ExitOnError)
+	var bootstrap multiFlag
+	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable)")
+	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	h, disc, closer, err := joinDHT(ctx, bootstrap, *mdns)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	nodes := discoverNodeInfos(ctx, h, disc)
+	if len(nodes) == 0 {
+		fmt.Println("No storage nodes discovered via the DHT.")
+		return nil
+	}
+
+	reachable := 0
+	for _, n := range nodes {
+		if n.Reachable {
+			reachable++
+		}
+	}
+	fmt.Printf("Discovered %d storage node(s) via the DHT (%d reachable):\n", len(nodes), reachable)
+	for _, n := range nodes {
+		status := "unreachable"
+		if n.Reachable {
+			status = "reachable"
+		}
+		addrs := make([]string, 0, len(n.Info.Addrs))
+		for _, a := range n.Info.Addrs {
+			addrs = append(addrs, a.String())
+		}
+		fmt.Printf("  %s  %-11s  %s\n", n.Info.ID, status, strings.Join(addrs, ", "))
+	}
+	return nil
+}
+
 // resolveManifest loads a manifest from either a plaintext manifest file or a
 // wrapped cap file (which is unwrapped with the given private key). Exactly one
 // source must be provided.

@@ -119,6 +119,7 @@ func run() error {
 		ListenAddrs:  listen,
 		IdentityPath: filepath.Join(*dataDir, "keys", "node.key"),
 		EnableMDNS:   *mdnsOn,
+		Log:          log,
 	})
 	if err != nil {
 		return err
