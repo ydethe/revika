@@ -77,7 +77,7 @@ func usage() {
 
 Commands:
   keygen [-key <prefix>]
-        Generate the User identity: an X25519 keypair for receiving shared files
+        Generate the User identity: an ML-KEM-768 (FIPS 203) keypair for receiving shared files
         (<prefix>.key/.pub) and an Ed25519 signing keypair that is your storage
         owner identity (<prefix>.sign.key/.sign.pub). Default prefix:
         .revika/keys/user

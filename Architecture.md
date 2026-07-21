@@ -184,8 +184,9 @@ nodes rather than back into the same store, and the repair *cadence*/threshold p
 
 **Implemented:** symmetric authenticated encryption — `NewKey`, `Seal`, `Open`
 (AES-256-GCM, `internal/crypto`), used by the pipeline for per-chunk encryption; and a
-first cut of **cap delivery** (`internal/cap`): X25519 recipient identities with
-`Wrap`/`Unwrap` (NaCl box anonymous seal), which `revika-ctl share` uses to encrypt a
+first cut of **cap delivery** (`internal/cap`): ML-KEM-768 recipient identities
+(NIST FIPS 203, `crypto/mlkem`) with `Wrap`/`Unwrap` (a KEM-DEM: ML-KEM encapsulation
+keying an AES-256-GCM seal), which `revika-ctl share` uses to encrypt a
 file's read-cap (its serialized manifest) to a recipient's public key. **Still
 planned:** the derivation chain (write-cap → read-cap → verify-cap), signing keys for
 mutable root pointers, and a compact string form for caps.
@@ -206,14 +207,14 @@ The **capability** ("cap") is how access is named and delegated, following Tahoe
 **Key material:**
 
 - per-chunk/per-object symmetric keys (random),
-- per-User asymmetric identity keys (X25519 for cap delivery, Ed25519 for signing root
+- per-User asymmetric identity keys (ML-KEM-768 for cap delivery, Ed25519 for signing root
   pointers) — kept in `.revika/keys/`,
 - libp2p peer keys for network identity.
 
-For the planned pieces, use `crypto/ecdh` (X25519) or `golang.org/x/crypto/nacl/box` for
-wrapping caps to recipients, `hkdf` for key derivation, and stdlib `crypto/ed25519` for
-signatures. (Chunk encryption already uses stdlib AES-256-GCM, so no `x/crypto`
-dependency exists yet.)
+Cap wrapping uses the stdlib `crypto/mlkem` (ML-KEM-768, FIPS 203) keying an AES-256-GCM
+DEM. For the remaining planned pieces, use `hkdf` for key derivation and stdlib
+`crypto/ed25519` for signatures. (Both chunk encryption and the cap DEM use stdlib
+AES-256-GCM, and the KEM is stdlib too, so no direct `x/crypto` dependency exists.)
 
 ### 3.6 Filesystem / metadata layer — **[partial]**
 
@@ -314,7 +315,7 @@ internal/
   net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client,
              Kademlia DHT (Discovery: bootstrap/provider records/node advertise),
              DHTStore + PlacementStore (discovery-backed store.Store's)
-  cap/       ✓ X25519 capability wrapping (Wrap/Unwrap) for sharing read-caps
+  cap/       ✓ ML-KEM-768 capability wrapping (Wrap/Unwrap, FIPS 203) for sharing read-caps
   manifest/    # file/dir manifest & capability types + serialization     (planned)
   placement/   # richer node selection & redundancy policy (v1 round-robin
                # lives in internal/net for now)                            (planned)
@@ -333,7 +334,7 @@ Currently in `go.mod`:
 | Hashing        | stdlib `crypto/sha256` (content addresses) | in use |
 | P2P / transport / discovery | `github.com/libp2p/go-libp2p` (TCP+QUIC, Noise/TLS, mDNS) | in use |
 | DHT discovery / provider records | `github.com/libp2p/go-libp2p-kad-dht` (`/revika` prefix) | in use |
-| Cap wrapping   | `golang.org/x/crypto/nacl/box` + `curve25519` (X25519 anonymous seal) | in use |
+| Cap wrapping   | stdlib `crypto/mlkem` (ML-KEM-768, FIPS 203) + AES-256-GCM DEM | in use |
 
 Planned as later layers land:
 
@@ -370,7 +371,7 @@ Prove the core loop before adding breadth. Each phase is independently testable.
 4. ⬜ **Metadata + mutable root.** Serialize/encrypt manifests, encrypted directories,
    signed root pointers.
 5. 🟡 **Sharing** (in progress). Cap *delivery* is implemented (`internal/cap`:
-   `Wrap`/`Unwrap` to a recipient's X25519 key) and driven by `revika-ctl share` /
+   `Wrap`/`Unwrap` to a recipient's ML-KEM-768 key) and driven by `revika-ctl share` /
    `get -cap`. **Still open:** the write-cap → read-cap → verify-cap derivation chain
    and signing keys for mutable objects.
 6. ⬜ **Sync daemon.** Folder watching, reconcile, conflict handling; optional embedded
