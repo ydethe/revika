@@ -6,7 +6,7 @@ require (
 	github.com/ipfs/go-cid v0.6.2
 	github.com/klauspost/reedsolomon v1.14.1
 	github.com/libp2p/go-libp2p v0.48.0
-	github.com/libp2p/go-libp2p-kad-dht v0.42.0
+	github.com/libp2p/go-libp2p-kad-dht v0.42.1
 	github.com/multiformats/go-multihash v0.2.3
 	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.54.0
