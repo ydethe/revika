@@ -19,6 +19,19 @@
 #
 #   docker compose up --build --abort-on-container-exit --exit-code-from client
 #
+# The `attacker` service is a SEPARATE client that verifies the security model:
+# holding only what a real adversary could get (full DHT access, read access to
+# every node's raw shards, and a capability wrapped for someone ELSE), it must be
+# denied on every path. It is gated behind the `attack` compose profile so the
+# authorized run above does not start it. Run it after — it pulls in the nodes
+# and waits for `client` to finish storing (which hands it the artifacts):
+#
+#   docker compose run --build --rm attacker
+#
+# Both runs share one seed/nodes network; tear it down with:
+#
+#   docker compose down -v
+#
 # WARNING: deploy/seed.key is a well-known key checked into the repo purely so
 # this local setup is reproducible. Never use it for a real deployment.
 
@@ -89,9 +102,45 @@ services:
       - seed-data:/nodes/seed:ro
       - node2-data:/nodes/node2:ro
       - node3-data:/nodes/node3:ro
+      # rw: after the round-trip, verify.sh drops artifacts here for the attacker
+      # (a cap wrapped for a third party + the plaintext canary — never the keys).
+      - handoff:/handoff
+    restart: "no"
+
+  # A separate, unauthorized client. It reuses the same image (target: client)
+  # but runs attack.sh instead of verify.sh. It waits for `client` to finish
+  # storing, then holds exactly what a real attacker could obtain — DHT access,
+  # read-only view of every node's shards, and a cap wrapped for a THIRD party —
+  # and asserts it is denied on every path (exits 0 only if all attempts fail).
+  # Gated behind the `attack` profile so plain `up` skips it; start it with
+  # `docker compose run --build --rm attacker`.
+  attacker:
+    profiles: ["attack"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/attack.sh"]
+    depends_on:
+      seed:
+        condition: service_started
+      node2:
+        condition: service_started
+      node3:
+        condition: service_started
+      client:
+        condition: service_completed_successfully
+    environment:
+      SEED_ADDR: ${SEED_ADDR}
+    volumes:
+      - seed-data:/nodes/seed:ro
+      - node2-data:/nodes/node2:ro
+      - node3-data:/nodes/node3:ro
+      - handoff:/handoff:ro
     restart: "no"
 
 volumes:
   seed-data:
   node2-data:
   node3-data:
+  handoff:

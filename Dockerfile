@@ -69,16 +69,19 @@ CMD ["-data", "/data", \
      "-mdns=false"]
 
 # ---- client stage ----------------------------------------------------------
-# A shell-capable image bundling the User client (revika-ctl) plus the
-# end-to-end verify script. Unlike the distroless node it needs a shell and
-# coreutils (cmp, find) to drive put/get and assert results, so it is based on
-# debian-slim. Used by the `client` service in docker-compose.yml.
+# A shell-capable image bundling the User client (revika-ctl) plus two harness
+# scripts. Unlike the distroless node it needs a shell and coreutils (cmp, find,
+# grep) to drive put/get and assert results, so it is based on debian-slim. Used
+# by both the `client` service (authorized round-trip, verify.sh — the default
+# entrypoint) and the `attacker` service (unauthorized-access checks, attack.sh,
+# selected via an entrypoint override) in docker-compose.yml.
 FROM debian:bookworm-slim AS client
 LABEL org.opencontainers.image.title="revika-ctl" \
-      org.opencontainers.image.description="revika User client + multi-node verify harness"
+      org.opencontainers.image.description="revika User client + multi-node verify/attack harness"
 
 COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
 COPY deploy/verify.sh /usr/local/bin/verify.sh
-RUN chmod +x /usr/local/bin/verify.sh
+COPY deploy/attack.sh /usr/local/bin/attack.sh
+RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh
 
 ENTRYPOINT ["/usr/local/bin/verify.sh"]

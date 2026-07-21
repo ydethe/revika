@@ -27,10 +27,17 @@ SRC="$WORK/testfile.bin"
 OUT="$WORK/roundtrip.bin"
 MANIFEST="$WORK/testfile.rvk.json"
 
-# A 1 MiB random payload: one 4 MiB-max chunk => k=4 data + m=2 parity = 6
-# shards, which round-robin across 3 nodes as 2 shards each.
-echo ">> generating 1 MiB random test file"
-head -c 1048576 /dev/urandom >"$SRC"
+# A distinctive plaintext canary we embed at the start of the payload. The
+# unauthorized-access client (deploy/attack.sh) later hunts for it in the raw
+# shards on the nodes: it must NOT appear there, proving nodes hold only
+# ciphertext. Long and unique enough that a chance hit in random data is nil.
+MARKER="REVIKA-PLAINTEXT-CANARY-DO-NOT-LEAK-cf83e1357eefb8bd"
+
+# ~1 MiB payload: canary line + random bytes => one 4 MiB-max chunk => k=4 data +
+# m=2 parity = 6 shards, which round-robin across 3 nodes as 2 shards each.
+echo ">> generating ~1 MiB test file with a plaintext canary"
+printf '%s\n' "$MARKER" >"$SRC"
+head -c 1048576 /dev/urandom >>"$SRC"
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
@@ -90,6 +97,23 @@ if cmp -s "$SRC" "$OUT"; then
 else
   echo "FAIL: retrieved file differs from the original"
   exit 1
+fi
+
+# --- hand off artifacts for the unauthorized-access client (deploy/attack.sh) --
+# A separate `attacker` client will try, and must fail, to read this data. We
+# give it only what a real adversary could plausibly obtain — never the manifest
+# (our read-capability) nor any private key:
+#   * secret.cap  — the manifest wrapped for a THIRD party (not the attacker), as
+#                   if the attacker intercepted a share meant for someone else;
+#   * marker.txt  — the plaintext canary, so it knows what to hunt for in shards.
+# /handoff is a shared volume, present only under compose (skipped when this
+# script is run standalone).
+if [ -d /handoff ]; then
+  echo ">> preparing handoff for the unauthorized-access client"
+  revika-ctl keygen -key "$WORK/thirdparty" >/dev/null
+  revika-ctl share -manifest "$MANIFEST" -to "@$WORK/thirdparty.pub" -o /handoff/secret.cap >/dev/null
+  printf '%s' "$MARKER" >/handoff/marker.txt
+  echo "   wrote /handoff/secret.cap (wrapped for a third party) and /handoff/marker.txt"
 fi
 
 echo
