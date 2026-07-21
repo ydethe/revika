@@ -47,6 +47,18 @@ import (
 // refreshed well within that window or the shards become undiscoverable.
 const reprovideInterval = 12 * time.Hour
 
+// discoveryInterval is how often a node actively scans the DHT for other
+// advertised storage nodes, and discoveryScanTimeout bounds one such scan.
+// Without this a node at rest — mDNS off, holding no shards, so its repair loop
+// makes no DHT queries — never emits a "discovered node" line even though
+// bootstrap succeeded and the routing tables interconnect. The scan also warms
+// each node's view of its peers rather than only learning them lazily on the
+// first client or repair query.
+const (
+	discoveryInterval    = time.Minute
+	discoveryScanTimeout = 30 * time.Second
+)
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "revika-node:", err)
@@ -149,6 +161,8 @@ func run() error {
 			disc.AdvertiseLoop(ctx)
 		}
 		go reprovideLoop(ctx, disc, blobs, log)
+		// Actively (and observably) discover peer storage nodes over the DHT.
+		go discoveryLoop(ctx, disc, log)
 		// Repair needs the DHT to find sibling shards and place regenerated ones,
 		// so it only runs when the node participates in the DHT.
 		if *repairOn {
@@ -205,6 +219,37 @@ func reprovideLoop(ctx context.Context, disc *net.Discovery, blobs store.Store, 
 		} else if len(ids) > 0 {
 			log.Debug("dht: reproviding shards", "count", len(ids))
 			disc.ProvideAll(ctx, ids)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// discoveryLoop waits for the DHT routing table to become ready, then periodically
+// asks the DHT for other advertised storage nodes. Newly seen peers are logged by
+// the Discovery layer (Discovery.noteDiscovered emits one "discovered node" line
+// per genuinely new peer); at debug level each scan also reports the storage-node
+// count and routing-table size so a resting network's health is visible. It runs
+// until ctx is cancelled.
+func discoveryLoop(ctx context.Context, disc *net.Discovery, log *slog.Logger) {
+	if err := disc.WaitReady(ctx); err != nil {
+		return // ctx cancelled before the routing table filled
+	}
+	ticker := time.NewTicker(discoveryInterval)
+	defer ticker.Stop()
+	for {
+		sctx, cancel := context.WithTimeout(ctx, discoveryScanTimeout)
+		nodes, err := disc.FindNodes(sctx, 0)
+		cancel()
+		if err != nil {
+			log.Debug("discovery: find nodes", "err", err)
+		} else {
+			log.Debug("discovery: scan complete",
+				"storage_nodes", len(nodes),
+				"routing_table", disc.RoutingTableSize())
 		}
 		select {
 		case <-ctx.Done():
