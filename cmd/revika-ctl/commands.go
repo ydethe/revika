@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -29,7 +30,19 @@ func cmdKeygen(args []string) error {
 		return err
 	}
 
+	signPrivPath := *prefix + ".sign.key"
+	signPubPath := *prefix + ".sign.pub"
+	if _, err := os.Stat(signPrivPath); err == nil {
+		return fmt.Errorf("refusing to overwrite existing signing key %s", signPrivPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	priv, pub, err := cap.GenerateIdentity()
+	if err != nil {
+		return err
+	}
+	signKey, signPub, err := cap.GenerateSigningKey()
 	if err != nil {
 		return err
 	}
@@ -42,11 +55,41 @@ func cmdKeygen(args []string) error {
 	if err := os.WriteFile(pubPath, []byte(pub.String()+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write public key: %w", err)
 	}
+	if err := os.WriteFile(signPrivPath, []byte(signKey.String()+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write signing key: %w", err)
+	}
+	if err := os.WriteFile(signPubPath, []byte(signPub.String()+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write signing public key: %w", err)
+	}
 
-	fmt.Printf("Identity written:\n  private: %s (keep secret)\n  public:  %s\n\n", privPath, pubPath)
+	fmt.Printf("Identity written:\n")
+	fmt.Printf("  encryption private: %s (keep secret — unwraps files shared to you)\n", privPath)
+	fmt.Printf("  encryption public:  %s\n", pubPath)
+	fmt.Printf("  signing private:    %s (keep secret — authorizes storing/deleting your shards)\n", signPrivPath)
+	fmt.Printf("  signing public:     %s\n\n", signPubPath)
 	fmt.Println("Public key (share this so others can send you files):")
 	fmt.Println(pub.String())
+	fmt.Fprintln(os.Stderr, "note: the signing key is your storage owner identity — back it up. Lose it and you cannot delete or renew what you stored (the data is still retrievable via its manifest).")
 	return nil
+}
+
+// defaultSignKeyPath is where put/delete look for the User's signing key.
+const defaultSignKeyPath = ".revika/keys/user.sign.key"
+
+// loadSignKey reads the User's Ed25519 signing key from path.
+func loadSignKey(path string) (cap.SignKey, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cap.SignKey{}, fmt.Errorf("signing key %s not found; run `revika-ctl keygen` first (or pass -signkey)", path)
+		}
+		return cap.SignKey{}, err
+	}
+	k, err := cap.ParseSignKey(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return cap.SignKey{}, fmt.Errorf("parse signing key %s: %w", path, err)
+	}
+	return k, nil
 }
 
 // cmdPut stores a file and writes its manifest. It targets either a single node
@@ -56,6 +99,7 @@ func cmdPut(args []string) error {
 	fs := flag.NewFlagSet("put", flag.ExitOnError)
 	node := fs.String("node", "", "store on this single node multiaddr (with /p2p/<peerid>)")
 	manifestPath := fs.String("manifest", "", "where to write the file manifest (default <file>.rvk.json)")
+	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the store")
 	var bootstrap multiFlag
 	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); spreads shards across discovered nodes")
 	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
@@ -71,9 +115,14 @@ func cmdPut(args []string) error {
 		outManifest = file + ".rvk.json"
 	}
 
+	signer, err := loadSignKey(*signKeyPath)
+	if err != nil {
+		return err
+	}
+
 	cfg := pipeline.DefaultConfig()
 	ctx := context.Background()
-	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, cfg)
+	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, cfg, signer)
 	if err != nil {
 		return err
 	}
@@ -106,12 +155,12 @@ func cmdPut(args []string) error {
 // PlacementStore spreading shards across discovered nodes, warning if fewer than
 // k+m nodes are available (shards will then colocate, weakening the erasure
 // guarantee).
-func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool, cfg pipeline.Config) (store.Store, func(), error) {
+func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool, cfg pipeline.Config, signer cap.SignKey) (store.Store, func(), error) {
 	switch {
 	case node != "":
-		return dial(ctx, node)
+		return dialSigned(ctx, node, signer)
 	case len(bootstrap) > 0 || mdns:
-		ps, closer, err := dialPlacement(ctx, bootstrap, mdns)
+		ps, closer, err := dialPlacement(ctx, bootstrap, mdns, signer)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -184,6 +233,65 @@ func getBackend(ctx context.Context, node string, bootstrap []string, mdns bool)
 	default:
 		return nil, nil, fmt.Errorf("provide -node <ma> to fetch from one node, or -bootstrap/-mdns to discover providers via the DHT")
 	}
+}
+
+// cmdDelete removes the shards of a file this User stored. It drops only the
+// caller's ownership claim on each shard (a node frees the bytes once its last
+// owner leaves), so deleting never affects another User's copy of shared data.
+func cmdDelete(args []string) error {
+	fs := flag.NewFlagSet("delete", flag.ExitOnError)
+	node := fs.String("node", "", "delete from this single node multiaddr (with /p2p/<peerid>)")
+	manifestPath := fs.String("manifest", "", "manifest of the file to delete")
+	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the delete")
+	var bootstrap multiFlag
+	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); finds shard providers")
+	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS on the LAN")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *manifestPath == "" {
+		return fmt.Errorf("missing -manifest <path>")
+	}
+
+	data, err := os.ReadFile(*manifestPath)
+	if err != nil {
+		return err
+	}
+	m, err := decodeManifest(data)
+	if err != nil {
+		return err
+	}
+	signer, err := loadSignKey(*signKeyPath)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, m.Params, signer)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	var deleted, missing, failed int
+	for _, ch := range m.Chunks {
+		for _, id := range ch.Shards {
+			switch err := s.Delete(ctx, id); {
+			case err == nil:
+				deleted++
+			case errors.Is(err, store.ErrNotFound):
+				missing++
+			default:
+				failed++
+				fmt.Fprintf(os.Stderr, "delete %s: %v\n", id, err)
+			}
+		}
+	}
+	fmt.Printf("Deleted %d shard(s); %d already absent, %d failed\n", deleted, missing, failed)
+	if failed > 0 {
+		return fmt.Errorf("%d shard(s) could not be deleted", failed)
+	}
+	return nil
 }
 
 // resolveManifest loads a manifest from either a plaintext manifest file or a

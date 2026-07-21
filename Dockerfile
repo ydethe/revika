@@ -75,12 +75,13 @@ CMD ["-data", "/data", \
      "-mdns=false"]
 
 # ---- client stage ----------------------------------------------------------
-# A shell-capable image bundling the User client (revika-ctl) plus two harness
+# A shell-capable image bundling the User client (revika-ctl) plus the harness
 # scripts. Unlike the distroless node it needs a shell and coreutils (cmp, find,
 # grep) to drive put/get and assert results, so it is based on debian-slim. Used
-# by both the `client` service (authorized round-trip, verify.sh — the default
-# entrypoint) and the `attacker` service (unauthorized-access checks, attack.sh,
-# selected via an entrypoint override) in docker-compose.yml.
+# by the `client` service (authorized round-trip, verify.sh — the default
+# entrypoint), the `attacker` service (unauthorized-access checks, attack.sh),
+# and the `deleter` service (delete-protection checks, delete-protection.sh),
+# each selecting its script via an entrypoint override in docker-compose.yml.
 FROM debian:bookworm-slim AS client
 LABEL org.opencontainers.image.title="revika-ctl-testharness" \
       org.opencontainers.image.description="revika multi-node verify/attack harness (test-only, not published)"
@@ -88,8 +89,10 @@ LABEL org.opencontainers.image.title="revika-ctl-testharness" \
 COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
 COPY deploy/verify.sh /usr/local/bin/verify.sh
 COPY deploy/attack.sh /usr/local/bin/attack.sh
+COPY deploy/delete-protection.sh /usr/local/bin/delete-protection.sh
 COPY deploy/resilience-client.sh /usr/local/bin/resilience-client.sh
-RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh /usr/local/bin/resilience-client.sh
+RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh \
+      /usr/local/bin/delete-protection.sh /usr/local/bin/resilience-client.sh
 
 ENTRYPOINT ["/usr/local/bin/verify.sh"]
 
@@ -103,7 +106,7 @@ ENTRYPOINT ["/usr/local/bin/verify.sh"]
 #     put -bootstrap <multiaddr> -manifest f.json file.bin
 FROM gcr.io/distroless/static-debian12:nonroot AS ctl
 LABEL org.opencontainers.image.title="revika-ctl" \
-      org.opencontainers.image.description="revika User client (keygen/put/get/share)"
+      org.opencontainers.image.description="revika User client (keygen/put/get/delete/share)"
 
 COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
 USER nonroot:nonroot

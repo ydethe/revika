@@ -13,12 +13,19 @@ plus the libp2p network layer with a runnable `revika-node` daemon), the DHT lay
 lets a client place a file's shards across several discovered nodes and retrieve
 them by provider discovery **with no explicit node and no central server**, and a
 first cut of step 5 (**sharing** via capability wrapping) ships in `revika-ctl`.
+The Node also has a first cut of **authorization, leases/quotas, and garbage
+collection**: a per-node SQLite **ledger** (`internal/ledger`) tracks who owns
+each shard, PUT/DELETE carry a signed **auth token** (User Ed25519 key), DELETE
+only drops the caller's own claim (a blob is freed once its last owner leaves),
+per-owner **quotas** are enforced, and a GC loop reclaims unowned shards.
 There is as yet **no background User daemon (`revika-daemon`), no sync engine, no
 IPNS-like mutable root pointer, and no directories**. Node-selection policy is a
 first cut (round-robin placement); reputation/diversity domains are future work.
 Manifests are persisted by the client as local JSON files (the interim read-cap),
-not yet as encrypted network blobs. Verify against the actual tree before relying on
-any path or type not listed as implemented, and update this file as more lands.
+not yet as encrypted network blobs. Lease expiry is advisory (own-until-delete);
+expiry-driven GC is off by default until a daemon can renew. Verify against the
+actual tree before relying on any path or type not listed as implemented, and
+update this file as more lands.
 
 Implemented packages (see [Architecture.md](Architecture.md) for detail):
 
@@ -30,10 +37,11 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
 | `internal/chunk`   | fixed-size chunker (`iter.Seq2`); CDC is a planned upgrade |
 | `internal/pipeline`| `StoreFile`/`LoadFile` + `FileManifest`; wires the four above |
 | `internal/repair`  | `Check` (probe) + `Repair` (regenerate missing shards) |
-| `internal/net`     | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` (Node) + `NetStore` (a `store.Store` over the wire); **`Discovery`** (Kademlia DHT: bootstrap, provider records, node-service advertise/find) + **`DHTStore`**/**`PlacementStore`** (`store.Store`s that discover providers and spread shards across nodes) |
-| `internal/cap`     | capability wrapping: X25519 identities + `Wrap`/`Unwrap` (NaCl box anonymous seal) for sharing a read-cap to a recipient key |
-| `cmd/revika-node`  | headless Node daemon: serves shards from a `DiskStore`, persistent libp2p identity, mDNS, DHT server (announces held shards, advertises as a storage node, periodic reprovide) |
-| `cmd/revika-ctl`   | User client CLI: `keygen`/`put`/`get`/`share` — drives the pipeline over a single node (`-node`) or DHT-discovered nodes (`-bootstrap`/`-mdns`), manifests as local JSON |
+| `internal/net`     | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` (Node, ledger-gated PUT/DELETE) + `NetStore`/`NewNetStoreSigned` (a `store.Store` over the wire, optionally signing writes); signed **auth tokens** (`auth.go`); **`Discovery`** (Kademlia DHT: bootstrap, provider records, node-service advertise/find) + **`DHTStore`**/**`PlacementStore`** (`store.Store`s that discover providers and spread shards across nodes) |
+| `internal/cap`     | User identity: X25519 `Wrap`/`Unwrap` (NaCl box anonymous seal) for sharing a read-cap, **plus Ed25519 `SignKey`/`SignPubKey`** (`signing.go`) — the signing identity that authorizes storing/deleting shards |
+| `internal/ledger`  | per-node SQLite index (`modernc.org/sqlite`): shard ownership (refcount by owner), leases, per-owner quotas; `AddOwner`/`RemoveOwner`/`CollectRecord`/`Collectible`/`Reconcile` |
+| `cmd/revika-node`  | headless Node daemon: serves shards from a `DiskStore` gated by the ledger, persistent libp2p identity, mDNS, DHT server (announces held shards, advertises as a storage node, periodic reprovide), quota/lease flags + GC loop |
+| `cmd/revika-ctl`   | User client CLI: `keygen`/`put`/`get`/`delete`/`share` — drives the pipeline over a single node (`-node`) or DHT-discovered nodes (`-bootstrap`/`-mdns`), signs writes with the User signing key (`-signkey`), manifests as local JSON |
 
 ### Toolchain & key decisions made during implementation
 
@@ -58,6 +66,25 @@ Implemented packages (see [Architecture.md](Architecture.md) for detail):
 - **Placement = round-robin across discovered nodes** (`net.PlacementStore`), so a
   chunk's `k+m` shards land on distinct nodes when enough are available. This is the
   first cut of the planned placement layer; it currently lives in `internal/net`.
+- **Authorization = signed User-key tokens, verified at the Server; the Store stays
+  identity-free.** A User has an Ed25519 signing key (separate from the X25519 cap
+  key and from the libp2p peer identity). Each PUT/DELETE carries a token
+  `ownerPubKey ‖ timestamp ‖ sig`, signed over `op ‖ shardID ‖ nodePeerID ‖ ts`
+  (see `internal/net/auth.go`). Binding the node scopes a token to one Node and the
+  timestamp bounds replay (±5 min); replay is harmless because writes are
+  owner-scoped and idempotent. The wire always carries the token blob (empty when
+  the client has no signer), so a nil-ledger `Server` stays backward-compatible.
+- **Ownership = refcount by owner.** Content addressing dedups identical bytes, so a
+  shard has a *set* of owner keys; DELETE drops only the caller's claim and the blob
+  is physically removed only when the last owner leaves. Quotas charge each owner the
+  full shard size on their first claim (predictable; a re-PUT is a free renewal).
+- **Ledger = SQLite via `modernc.org/sqlite`** (pure Go, cgo-free — matches the
+  cgo-free stance). Blobs on disk are the source of truth for *bytes*; the ledger is
+  the source of truth for *ownership*. `Reconcile` on startup retains orphan blobs
+  (no data loss on upgrade) and drops records whose blob is gone.
+- **GC ordering** favours self-heal: a grace window (collectible two cycles running)
+  plus an atomic `CollectRecord` that drops a record only if still unowned, so a
+  racing re-PUT (which re-creates the content-addressed blob) is never clobbered.
 - **DHT queries must wait for routing-table readiness** (`Discovery.WaitReady`)
   before the first lookup — the table fills asynchronously after bootstrap, so
   querying immediately races an empty table and finds nothing.
@@ -87,6 +114,7 @@ no single node holds a whole file and the system tolerates node loss.
 
 These are settled; treat them as constraints unless the maintainer changes them.
 
+- **Sudo commands** : if you need a sudo command, ask me to run. I will run it in a separate terminal and provide the output.
 - **Redundancy = erasure coding**, not plain replication. Files are split into `k`
   data shards + `m` parity shards; any `k` of the `k+m` shards reconstruct the file
   ("RAID-5/6 over the internet"). Prefer a mature Go Reed–Solomon library
@@ -108,9 +136,11 @@ The `.gitignore` reserves `.revika/` for persisted runtime state: **node shares,
 ledger, keys, and a mock store**. Expected meanings:
 
 - **shard/share** — an erasure-coded, encrypted piece of a file stored on a Node.
-- **ledger** — per-user index/accounting of what is stored where (see mutable state
-  below); *not* a global blockchain.
-- **keys** — User encryption keys and node identity keys (libp2p peer identity).
+- **ledger** — *implemented as* the node-side SQLite ownership/lease/quota index
+  (`internal/ledger`, at `.revika/ledger/ledger.db`); *not* a global blockchain. A
+  separate per-user index / root pointer is still planned.
+- **keys** — User encryption keys (X25519), the User signing key (Ed25519, the
+  storage owner identity), and node identity keys (libp2p peer identity).
 - **mock store** — an in-development storage backend standing in for real distributed
   storage, so components can be built/tested before the network layer is complete.
 
@@ -168,9 +198,15 @@ go test ./...             # run all tests
 go test ./path/to/pkg     # test a single package
 go test -run TestName ./path/to/pkg   # run a single test
 go vet ./...              # static checks
-go run ./cmd/revika-node  # Node daemon (flags: -data, -listen, -mdns, -dht, -bootstrap, -advertise, -v)
-go run ./cmd/revika-ctl   # User client: keygen | put | get | share (see -h)
+go run ./cmd/revika-node  # Node daemon (flags: -data, -listen, -mdns, -dht, -bootstrap, -advertise,
+                          #   -quota, -lease-ttl, -gc-interval, -gc-expired-leases, -v)
+go run ./cmd/revika-ctl   # User client: keygen | put | get | delete | share (see -h)
 ```
+
+`keygen` now writes two keypairs: `<prefix>.key/.pub` (X25519, for receiving shares)
+and `<prefix>.sign.key/.sign.pub` (Ed25519, the storage owner identity). `put`/`delete`
+sign with `-signkey` (default `.revika/keys/user.sign.key`); only the signing-key holder
+can `delete` what they stored.
 
 Multi-node DHT run (no central server; the client never names a node):
 
@@ -190,24 +226,29 @@ names in `.gitignore` if the final binary names differ.
 
 ```
 cmd/revika-node/   ✓ headless Node daemon           cmd/revika-daemon/  (planned)
-cmd/revika-ctl/    ✓ User client CLI (keygen/put/get/share)
+cmd/revika-ctl/    ✓ User client CLI (keygen/put/get/delete/share)
 internal/
-  store/     ✓ content-addressed blob store (Mem + Disk); leases/quotas TBD
+  store/     ✓ content-addressed blob store (Mem + Disk)
   crypto/    ✓ AES-256-GCM AEAD; key derivation TBD
   erasure/   ✓ Reed–Solomon encode/decode
   chunk/     ✓ fixed-size chunking (CDC planned)
   pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory manifest for now)
   repair/    ✓ availability probes + shard regeneration
-  net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client,
-             Kademlia DHT (Discovery), DHTStore + PlacementStore
-  cap/       ✓ X25519 capability wrapping (Wrap/Unwrap) for sharing read-caps
+  net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client
+             (signed writes + auth tokens), ledger-gated Server, Kademlia DHT
+             (Discovery), DHTStore + PlacementStore
+  cap/       ✓ X25519 cap wrapping (Wrap/Unwrap) + Ed25519 signing identity
+  ledger/    ✓ per-node SQLite ownership/lease/quota index (node-side)
   manifest/    on-disk/on-wire manifest + capabilities      (planned)
   placement/   node selection & redundancy policy — first cut (round-robin) lives
                in internal/net for now; a richer policy (reputation, diversity
                domains) is still planned here
-  ledger/      per-user index/accounting, root pointer       (planned)
   sync/        daemon folder-watch + reconcile (daemon only) (planned)
 ```
+
+Note: the per-user index / root pointer originally sketched for `internal/ledger`
+is still planned; the `internal/ledger` that exists today is the *node-side*
+ownership/quota ledger.
 
 Note: `FileManifest`/`ChunkRef` currently live in `internal/pipeline` as in-memory
 values; `cmd/revika-ctl` serializes them to local JSON (the interim read-cap, hex keys
@@ -220,15 +261,20 @@ values; `cmd/revika-ctl` serializes them to local JSON (the interim read-cap, he
 Resolved so far: module path (`revika`), AEAD (AES-256-GCM), chunking for v1 (fixed-size),
 default erasure params (`k=4`, `m=2`), DHT = `go-libp2p-kad-dht` on a private `/revika`
 prefix, provider-record key = CIDv1(raw, sha256(shard)), placement v1 = round-robin.
+Also resolved: authorization = signed User-Ed25519-key tokens verified at the Server
+(the User signing key is a *separate* identity from the libp2p peer key); node ledger =
+SQLite (`modernc.org/sqlite`); ownership = refcount-by-owner; quotas enforced per-owner;
+lease policy = own-until-delete (expiry advisory, expiry-GC off by default).
 Still open:
 
 - Content-defined chunking parameters, if/when CDC replaces fixed-size.
-- How User identity keys relate to libp2p peer identity keys.
 - Concrete cap/manifest serialization format (and where `FileManifest` finally lives).
 - Whether `k`/`m` and shard sizing should vary by file size / durability target.
 - Node selection policy beyond round-robin (diversity domains, reputation), where the
   placement code finally lives, and repair thresholds/cadence + repair onto fresh nodes.
-- Lease durations and node-side garbage collection; provider-record reprovide cadence.
+- Lease renewal once a User daemon exists (then expiry-driven GC can default on);
+  GC grace-window tuning; provider-record reprovide cadence; proactive un-provide on GC.
+- Token replay hardening beyond the ±5 min window (server-side nonce cache) if needed.
 - Bootstrap-peer distribution (no hardcoded public list yet) and NAT/relay tuning.
 
 See [Architecture.md](Architecture.md) for the reasoning behind each.

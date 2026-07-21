@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"revika/internal/ledger"
 	"revika/internal/net"
 	"revika/internal/store"
 )
@@ -53,6 +55,10 @@ func run() error {
 		mdnsOn      = flag.Bool("mdns", true, "enable mDNS LAN peer discovery")
 		dhtOn       = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
 		advertiseOn = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
+		quota       = flag.Int64("quota", 0, "per-owner storage quota in bytes (0 = unlimited)")
+		leaseTTL    = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
+		gcInterval  = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
+		gcExpired   = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
 		listen      multiFlag
 		bootstrap   multiFlag
 	)
@@ -77,6 +83,24 @@ func run() error {
 		return fmt.Errorf("open shard store: %w", err)
 	}
 
+	// The ledger tracks who owns each shard and enforces quotas; it is the source
+	// of truth for ownership, while blobs on disk are the source of truth for
+	// bytes. Reconcile the two on startup before serving.
+	ledgerPath := filepath.Join(*dataDir, "ledger", "ledger.db")
+	if err := os.MkdirAll(filepath.Dir(ledgerPath), 0o700); err != nil {
+		return fmt.Errorf("create ledger dir: %w", err)
+	}
+	led, err := ledger.Open(ledgerPath, ledger.Options{QuotaBytes: *quota, LeaseTTL: *leaseTTL})
+	if err != nil {
+		return fmt.Errorf("open ledger: %w", err)
+	}
+	defer led.Close()
+	if rep, err := led.Reconcile(ctx, blobs); err != nil {
+		return fmt.Errorf("reconcile ledger: %w", err)
+	} else if rep.OrphanBlobs > 0 || rep.DroppedRecords > 0 {
+		log.Info("ledger reconciled", "orphan_blobs", rep.OrphanBlobs, "dropped_records", rep.DroppedRecords)
+	}
+
 	h, err := net.NewHost(net.HostConfig{
 		ListenAddrs:  listen,
 		IdentityPath: filepath.Join(*dataDir, "keys", "node.key"),
@@ -88,6 +112,7 @@ func run() error {
 	defer h.Close()
 
 	srv := net.NewServer(blobs, log)
+	srv.SetLedger(led)
 
 	// Join the DHT (server mode: a node stores routing state + provider records
 	// for others). Wiring the Discovery in as the Server's announcer means every
@@ -112,6 +137,10 @@ func run() error {
 	}
 
 	srv.Register(h)
+
+	// Garbage collector: reclaim shards no owner holds any longer (and, if
+	// enabled, expired leases), keeping disk and ledger aligned.
+	go gcLoop(ctx, blobs, led, log, *gcInterval, *gcExpired)
 
 	log.Info("revika-node started",
 		"peer", h.ID().String(),
@@ -162,4 +191,74 @@ func reprovideLoop(ctx context.Context, disc *net.Discovery, blobs store.Store, 
 		case <-ticker.C:
 		}
 	}
+}
+
+// gcLoop runs the garbage collector on a fixed cadence until ctx is cancelled.
+// Each cycle reclaims shards that are no longer owned (and, if expireLeases is
+// set, whose leases have all lapsed), then reconciles the ledger with disk.
+//
+// A grace window guards against races: a shard is only collected once it has
+// been collectible for two consecutive cycles, so a shard PUT or renewed moments
+// before a sweep is never swept. The atomic CollectRecord drop plus the fact
+// that a racing re-PUT re-creates the (content-addressed) blob make collection
+// non-destructive even at the edges.
+func gcLoop(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog.Logger, interval time.Duration, expireLeases bool) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	var prev map[store.ShardID]bool
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prev = runGC(ctx, blobs, led, log, expireLeases, prev)
+		}
+	}
+}
+
+// runGC performs one GC cycle and returns the set of shards seen collectible
+// this cycle (the next cycle's grace baseline).
+func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog.Logger, expireLeases bool, prev map[store.ShardID]bool) map[store.ShardID]bool {
+	ids, err := led.Collectible(time.Now(), expireLeases)
+	if err != nil {
+		log.Warn("gc: list collectible", "err", err)
+		return prev
+	}
+	curr := make(map[store.ShardID]bool, len(ids))
+	for _, id := range ids {
+		curr[id] = true
+	}
+	var freed int
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return curr
+		}
+		if !prev[id] {
+			continue // grace: must be collectible two cycles running
+		}
+		// Atomically drop the record only if still unowned, then delete the blob.
+		dropped, err := led.CollectRecord(id, time.Now(), expireLeases)
+		if err != nil {
+			log.Warn("gc: collect record", "id", id, "err", err)
+			continue
+		}
+		if !dropped {
+			continue // re-claimed since the snapshot
+		}
+		if err := blobs.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+			log.Warn("gc: delete blob", "id", id, "err", err)
+			continue
+		}
+		freed++
+	}
+	if freed > 0 {
+		log.Info("gc: reclaimed shards", "count", freed)
+	}
+	// Realign disk and ledger: drop records whose blob vanished, recompute quota.
+	if rep, err := led.Reconcile(ctx, blobs); err != nil {
+		log.Warn("gc: reconcile", "err", err)
+	} else if rep.DroppedRecords > 0 {
+		log.Info("gc: reconciled", "dropped_records", rep.DroppedRecords, "orphan_blobs", rep.OrphanBlobs)
+	}
+	return curr
 }

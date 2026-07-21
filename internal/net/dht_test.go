@@ -8,6 +8,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"revika/internal/cap"
 	"revika/internal/pipeline"
 	"revika/internal/store"
 )
@@ -247,7 +248,11 @@ func TestPlacementEndToEnd(t *testing.T) {
 	waitRoutingTable(t, writer)
 	nodeIDs := discoverAtLeast(t, writer, 3)
 
-	ps, err := NewPlacementStore(writer.h, writer, nodeIDs)
+	signer, _, err := cap.GenerateSigningKey()
+	if err != nil {
+		t.Fatalf("signing key: %v", err)
+	}
+	ps, err := NewPlacementStore(writer.h, writer, nodeIDs, signer)
 	if err != nil {
 		t.Fatalf("placement store: %v", err)
 	}

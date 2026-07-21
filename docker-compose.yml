@@ -28,7 +28,13 @@
 #
 #   docker compose run --build --rm attacker
 #
-# Both runs share one seed/nodes network; tear it down with:
+# The `deleter` service (profile `delete`) verifies the authorization model: a
+# user holding the read-cap but not the owner's signing key is refused when
+# deleting, while the owner succeeds. It is self-contained (needs only the nodes):
+#
+#   docker compose run --build --rm deleter
+#
+# These runs share one seed/nodes network; tear it down with:
 #
 #   docker compose down -v
 #
@@ -137,6 +143,31 @@ services:
       - node2-data:/nodes/node2:ro
       - node3-data:/nodes/node3:ro
       - handoff:/handoff:ro
+    restart: "no"
+
+  # Delete-protection client (profile: delete). A self-contained scenario driven
+  # by deploy/delete-protection.sh proving revika's authorization model: an
+  # "owner" stores a file, a DIFFERENT user holding the read-cap but not the
+  # owner's signing key is REFUSED when deleting it (and the file survives), and
+  # then the owner deletes successfully (and the file becomes unrecoverable). It
+  # only needs the nodes up; run it with:
+  #   docker compose run --build --rm deleter
+  deleter:
+    profiles: ["delete"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/delete-protection.sh"]
+    depends_on:
+      seed:
+        condition: service_started
+      node2:
+        condition: service_started
+      node3:
+        condition: service_started
+    environment:
+      SEED_ADDR: ${SEED_ADDR}
     restart: "no"
 
   # --- node-down resilience scenario (profile: resilience) -------------------

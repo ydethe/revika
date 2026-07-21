@@ -10,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"revika/internal/cap"
 	"revika/internal/store"
 )
 
@@ -120,7 +121,8 @@ func (s *DHTStore) ensureConnected(ctx context.Context, pi peer.AddrInfo) error 
 // decides where a shard goes, provider records record where it landed.
 type PlacementStore struct {
 	*DHTStore
-	nodes []peer.ID
+	nodes  []peer.ID
+	signer cap.SignKey
 
 	mu   sync.Mutex
 	next int
@@ -130,12 +132,13 @@ var _ store.Store = (*PlacementStore)(nil)
 
 // NewPlacementStore returns a store that places shards across the given
 // candidate nodes (h should already be connected to them). disc backs the read
-// side. It errors if the candidate set is empty.
-func NewPlacementStore(h host.Host, disc *Discovery, nodes []peer.ID) (*PlacementStore, error) {
+// side, and signer authorizes the PUT/DELETE it issues to each node. It errors
+// if the candidate set is empty.
+func NewPlacementStore(h host.Host, disc *Discovery, nodes []peer.ID, signer cap.SignKey) (*PlacementStore, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("revika/net: no storage nodes available to place shards on")
 	}
-	return &PlacementStore{DHTStore: NewDHTStore(h, disc), nodes: nodes}, nil
+	return &PlacementStore{DHTStore: NewDHTStore(h, disc), nodes: nodes, signer: signer}, nil
 }
 
 // Nodes returns the candidate node set (for diagnostics/logging).
@@ -148,10 +151,13 @@ func (p *PlacementStore) Put(ctx context.Context, data []byte) (store.ShardID, e
 	target := p.nodes[p.next%len(p.nodes)]
 	p.next++
 	p.mu.Unlock()
-	return NewNetStore(p.h, target).Put(ctx, data)
+	return NewNetStoreSigned(p.h, target, p.signer).Put(ctx, data)
 }
 
-// Delete removes the shard from every node the DHT says holds it (best-effort).
+// Delete removes the caller's ownership claim on the shard from every node the
+// DHT says holds it (best-effort). Each node drops only this owner's claim and
+// frees the blob only when its own last owner leaves, so a signed Delete never
+// affects another User's copy.
 func (p *PlacementStore) Delete(ctx context.Context, id store.ShardID) error {
 	providers, err := p.disc.FindProviders(ctx, id, p.max)
 	if err != nil {
@@ -167,7 +173,7 @@ func (p *PlacementStore) Delete(ctx context.Context, id store.ShardID) error {
 			lastErr = err
 			continue
 		}
-		if err := NewNetStore(p.h, pi.ID).Delete(ctx, id); err != nil {
+		if err := NewNetStoreSigned(p.h, pi.ID, p.signer).Delete(ctx, id); err != nil {
 			lastErr = err
 			continue
 		}

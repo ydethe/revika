@@ -1,8 +1,9 @@
 name: CI
 
 # Test the solution: static checks + race-enabled unit tests, then a full
-# multi-node end-to-end run in containers (authorized round-trip + the
-# unauthorized-access checks) via docker compose.
+# multi-node end-to-end run in containers (authorized round-trip, the
+# unauthorized-access checks, and the delete-protection checks) via docker
+# compose.
 on:
   push:
     branches: [main]
@@ -66,6 +67,11 @@ jobs:
       # pulls in the nodes and waits for `client` to finish, then asserts denial.
       - name: Unauthorized-access checks
         run: docker compose run --build --rm attacker
+
+      # Delete-protection: a non-owner holding the read-cap is refused when
+      # deleting (file survives); the owner then deletes successfully.
+      - name: Delete-protection checks
+        run: docker compose run --build --rm deleter
 
       - name: Tear down
         if: always()

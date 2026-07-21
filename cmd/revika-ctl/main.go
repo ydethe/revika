@@ -46,6 +46,8 @@ func main() {
 		err = cmdPut(args)
 	case "get":
 		err = cmdGet(args)
+	case "delete", "rm":
+		err = cmdDelete(args)
 	case "share":
 		err = cmdShare(args)
 	case "help", "-h", "--help":
@@ -67,20 +69,27 @@ func usage() {
 
 Commands:
   keygen [-key <prefix>]
-        Generate an X25519 identity for receiving shared files. Writes
-        <prefix>.key (private) and <prefix>.pub (public); prints the public key.
-        Default prefix: .revika/keys/user
+        Generate the User identity: an X25519 keypair for receiving shared files
+        (<prefix>.key/.pub) and an Ed25519 signing keypair that is your storage
+        owner identity (<prefix>.sign.key/.sign.pub). Default prefix:
+        .revika/keys/user
 
-  put (-node <ma> | -bootstrap <ma>... | -mdns) [-manifest <path>] <file>
+  put (-node <ma> | -bootstrap <ma>... | -mdns) [-manifest <path>] [-signkey <path>] <file>
         Chunk, encrypt, erasure-code and store <file>. With -node, store on that
         single node; with -bootstrap/-mdns, join the DHT and spread the shards
         across discovered storage nodes. Writes the file's manifest (its
-        read-capability) to <path> (default <file>.rvk.json).
+        read-capability) to <path> (default <file>.rvk.json). Signs the store
+        with your signing key so you (and only you) can later delete it.
 
   get (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
         Reconstruct a file. With -node, fetch from that node; with -bootstrap/-mdns,
         discover each shard's providers via the DHT. Read your own file with
         -manifest, or a shared file by unwrapping a -cap with your -key. Out: stdout.
+
+  delete (-node <ma> | -bootstrap <ma>... | -mdns) -manifest <path> [-signkey <path>]
+        Drop your ownership claim on every shard of the file. A node frees a
+        shard's bytes only once its last owner deletes, so this never affects
+        another User's copy of shared data. (Alias: rm)
 
   share -manifest <path> -to <recipient-pubkey|@file> [-o <path>]
         Wrap a manifest (read-capability) to a recipient's public key so only they
@@ -108,29 +117,48 @@ const dialTimeout = 30 * time.Second
 // shard's providers) before we give up.
 const discoveryTimeout = 30 * time.Second
 
-// dial builds an ephemeral client host (no persistent identity, no mDNS),
-// connects it to the node at nodeAddr, and returns a NetStore over that node
-// plus a closer for the host.
-func dial(ctx context.Context, nodeAddr string) (*net.NetStore, func(), error) {
+// dialHost builds an ephemeral client host (no persistent identity, no mDNS)
+// and connects it to the node at nodeAddr, returning the host, the node's peer
+// ID, and a closer.
+func dialHost(ctx context.Context, nodeAddr string) (host.Host, peer.ID, func(), error) {
 	if nodeAddr == "" {
-		return nil, nil, fmt.Errorf("missing -node <multiaddr>")
+		return nil, "", nil, fmt.Errorf("missing -node <multiaddr>")
 	}
 	info, err := peer.AddrInfoFromString(nodeAddr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid -node address %q: %w", nodeAddr, err)
+		return nil, "", nil, fmt.Errorf("invalid -node address %q: %w", nodeAddr, err)
 	}
 	h, err := net.NewHost(net.HostConfig{}) // ephemeral identity, random port, mDNS off
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 	cctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	if err := net.Connect(cctx, h, *info); err != nil {
 		h.Close()
+		return nil, "", nil, err
+	}
+	return h, info.ID, func() { h.Close() }, nil
+}
+
+// dial returns an unauthenticated NetStore over a single node — for reads, or a
+// node that runs no ledger.
+func dial(ctx context.Context, nodeAddr string) (*net.NetStore, func(), error) {
+	h, id, closer, err := dialHost(ctx, nodeAddr)
+	if err != nil {
 		return nil, nil, err
 	}
-	closer := func() { h.Close() }
-	return net.NewNetStore(h, info.ID), closer, nil
+	return net.NewNetStore(h, id), closer, nil
+}
+
+// dialSigned returns a NetStore over a single node whose PUT/DELETE carry an
+// authorization token signed by signer — for writes to a ledger-backed node.
+func dialSigned(ctx context.Context, nodeAddr string, signer cap.SignKey) (*net.NetStore, func(), error) {
+	h, id, closer, err := dialHost(ctx, nodeAddr)
+	if err != nil {
+		return nil, nil, err
+	}
+	return net.NewNetStoreSigned(h, id, signer), closer, nil
 }
 
 // joinDHT builds an ephemeral client-mode DHT host and joins the network via the
@@ -175,8 +203,9 @@ func dialDHT(ctx context.Context, bootstrap []string, mdns bool) (store.Store, f
 }
 
 // dialPlacement joins the DHT, discovers storage nodes, and returns a
-// PlacementStore that spreads shards across them. Used by `put`.
-func dialPlacement(ctx context.Context, bootstrap []string, mdns bool) (*net.PlacementStore, func(), error) {
+// PlacementStore that spreads shards across them, signing writes with signer.
+// Used by `put` and `delete`.
+func dialPlacement(ctx context.Context, bootstrap []string, mdns bool, signer cap.SignKey) (*net.PlacementStore, func(), error) {
 	h, disc, closer, err := joinDHT(ctx, bootstrap, mdns)
 	if err != nil {
 		return nil, nil, err
@@ -188,7 +217,7 @@ func dialPlacement(ctx context.Context, bootstrap []string, mdns bool) (*net.Pla
 		closer()
 		return nil, nil, err
 	}
-	ps, err := net.NewPlacementStore(h, disc, nodes)
+	ps, err := net.NewPlacementStore(h, disc, nodes, signer)
 	if err != nil {
 		closer()
 		return nil, nil, err

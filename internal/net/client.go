@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"revika/internal/cap"
 	"revika/internal/store"
 )
 
@@ -30,16 +31,36 @@ const connectTimeout = 30 * time.Second
 type NetStore struct {
 	h    host.Host
 	peer peer.ID
+	// signer, when non-nil, is the User's Ed25519 signing key used to attach an
+	// authorization token to PUT/DELETE. Reads (Get/Has/Probe) never sign.
+	signer *cap.SignKey
 }
 
 // NewNetStore returns a store backed by the node identified by peer, dialed
 // through h. The peer's addresses must already be known to h (via mDNS, the
-// DHT, or an explicit h.Connect / peerstore entry).
+// DHT, or an explicit h.Connect / peerstore entry). It signs no requests — use
+// it for reads, or against a node that runs no ledger.
 func NewNetStore(h host.Host, p peer.ID) *NetStore {
 	return &NetStore{h: h, peer: p}
 }
 
+// NewNetStoreSigned is NewNetStore plus a signing key: its PUT/DELETE requests
+// carry an authorization token proving ownership to a ledger-backed node.
+func NewNetStoreSigned(h host.Host, p peer.ID, signer cap.SignKey) *NetStore {
+	return &NetStore{h: h, peer: p, signer: &signer}
+}
+
 var _ store.Store = (*NetStore)(nil)
+
+// authToken builds the token blob for operation o on id: a signed token when a
+// signer is set, otherwise empty (the wire always carries the blob so framing
+// is identical whether or not the client signs).
+func (n *NetStore) authToken(o op, id store.ShardID) []byte {
+	if n.signer == nil {
+		return nil
+	}
+	return buildToken(*n.signer, o, id, n.peer, time.Now().Unix())
+}
 
 // openStream dials a fresh stream for one request and applies a deadline.
 func (n *NetStore) openStream(ctx context.Context) (network.Stream, error) {
@@ -84,6 +105,10 @@ func (n *NetStore) Put(ctx context.Context, data []byte) (store.ShardID, error) 
 		return store.ShardID{}, err
 	}
 	if err := writeBlob(s, data); err != nil {
+		_ = s.Reset()
+		return store.ShardID{}, err
+	}
+	if err := writeBlob(s, n.authToken(opPut, store.HashOf(data))); err != nil {
 		_ = s.Reset()
 		return store.ShardID{}, err
 	}
@@ -168,6 +193,10 @@ func (n *NetStore) Delete(ctx context.Context, id store.ShardID) error {
 		return err
 	}
 	if err := writeID(s, id); err != nil {
+		_ = s.Reset()
+		return err
+	}
+	if err := writeBlob(s, n.authToken(opDelete, id)); err != nil {
 		_ = s.Reset()
 		return err
 	}

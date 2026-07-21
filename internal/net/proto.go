@@ -26,6 +26,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/protocol"
 
+	"revika/internal/ledger"
 	"revika/internal/store"
 )
 
@@ -50,10 +51,12 @@ const (
 type status byte
 
 const (
-	statusOK       status = 0 // request succeeded
-	statusNotFound status = 1 // shard absent (maps to store.ErrNotFound)
-	statusCorrupt  status = 2 // stored bytes failed their hash (store.ErrCorrupt)
-	statusError    status = 3 // server-side error; a message blob follows
+	statusOK           status = 0 // request succeeded
+	statusNotFound     status = 1 // shard absent (maps to store.ErrNotFound)
+	statusCorrupt      status = 2 // stored bytes failed their hash (store.ErrCorrupt)
+	statusError        status = 3 // server-side error; a message blob follows
+	statusUnauthorized status = 4 // missing/invalid auth token, or not the shard's owner
+	statusQuotaExceeded status = 5 // owner is over their storage quota
 )
 
 // MaxShardSize caps the bytes accepted for a single shard, a guard against a
@@ -69,6 +72,14 @@ const NonceSize = 32
 type ErrRemote struct{ Msg string }
 
 func (e *ErrRemote) Error() string { return "revika/net: remote error: " + e.Msg }
+
+// ErrUnauthorized is surfaced to a client when a PUT/DELETE is rejected because
+// its auth token was missing/invalid or the caller does not own the shard.
+var ErrUnauthorized = errors.New("revika/net: unauthorized")
+
+// ErrQuotaExceeded is surfaced to a client when a PUT is rejected because the
+// owner is over their storage quota.
+var ErrQuotaExceeded = errors.New("revika/net: quota exceeded")
 
 // --- low-level framing helpers -------------------------------------------
 
@@ -148,6 +159,10 @@ func statusToErr(s status, msg string) error {
 		return store.ErrNotFound
 	case statusCorrupt:
 		return store.ErrCorrupt
+	case statusUnauthorized:
+		return ErrUnauthorized
+	case statusQuotaExceeded:
+		return ErrQuotaExceeded
 	case statusError:
 		return &ErrRemote{Msg: msg}
 	default:
@@ -155,7 +170,8 @@ func statusToErr(s status, msg string) error {
 	}
 }
 
-// errToStatus maps a store error to the status byte a server sends back.
+// errToStatus maps a store or ledger error to the status byte a server sends
+// back.
 func errToStatus(err error) status {
 	switch {
 	case err == nil:
@@ -164,6 +180,10 @@ func errToStatus(err error) status {
 		return statusNotFound
 	case errors.Is(err, store.ErrCorrupt):
 		return statusCorrupt
+	case errors.Is(err, ledger.ErrUnauthorized), errors.Is(err, ErrUnauthorized):
+		return statusUnauthorized
+	case errors.Is(err, ledger.ErrQuotaExceeded), errors.Is(err, ErrQuotaExceeded):
+		return statusQuotaExceeded
 	default:
 		return statusError
 	}

@@ -57,7 +57,7 @@ for a layer-by-layer `[implemented]`/`[partial]`/`[planned]` breakdown and
 | `internal/net`      | libp2p host + `/revika/shard` & `/revika/probe` protocols; `Server` + `NetStore` | ✓ |
 | `internal/cap`      | X25519 capability wrapping (`Wrap`/`Unwrap`, NaCl box) for sharing read-caps | ✓ |
 | `cmd/revika-node`   | headless Node daemon (serves shards from a `DiskStore`) | ✓ |
-| `cmd/revika-ctl`    | User client CLI: `keygen`/`put`/`get`/`share` | ✓ |
+| `cmd/revika-ctl`    | User client CLI: `keygen`/`put`/`get`/`delete`/`share` | ✓ |
 | `internal/{manifest,placement,ledger,sync}`, `cmd/revika-daemon` | metadata, placement, root pointer, sync daemon | planned |
 
 ## Requirements
@@ -90,7 +90,17 @@ go run ./cmd/revika-node
 Useful flags: `-data <dir>` (state root, default `.revika`), `-listen <multiaddr>`
 (repeatable), `-mdns=false` (disable LAN discovery), `-v` (debug logging).
 
-**2. Store a file** with the client, using the node's full multiaddr:
+**2. Create your identity.** `keygen` writes an X25519 keypair (for receiving shared
+files) and an Ed25519 signing keypair — your storage *owner* identity, which authorizes
+storing and deleting your shards:
+
+```bash
+go run ./cmd/revika-ctl keygen        # writes .revika/keys/user.key/.pub + user.sign.key/.pub
+```
+
+**3. Store a file** with the client, using the node's full multiaddr. The store is signed
+with your signing key (default `.revika/keys/user.sign.key`, override with `-signkey`), so
+only you can later delete it:
 
 ```bash
 NODE=/ip4/127.0.0.1/tcp/4001/p2p/12D3KooW…
@@ -98,13 +108,21 @@ go run ./cmd/revika-ctl put -node "$NODE" ./myfile.txt
 # writes ./myfile.txt.rvk.json — the manifest (its read-capability; keep it secret)
 ```
 
-**3. Retrieve it** from the manifest:
+**4. Retrieve it** from the manifest:
 
 ```bash
 go run ./cmd/revika-ctl get -node "$NODE" -manifest ./myfile.txt.rvk.json -o ./out.txt
 ```
 
-**4. Share it** end-to-end encrypted. The recipient generates an identity and gives you
+**5. Delete it** when you are done. Only the signing key that stored a shard can delete it;
+a node frees a shard's bytes only once its last owner deletes, so this never affects
+another user's copy of data you shared:
+
+```bash
+go run ./cmd/revika-ctl delete -node "$NODE" -manifest ./myfile.txt.rvk.json
+```
+
+**6. Share it** end-to-end encrypted. The recipient generates an identity and gives you
 their public key; you wrap the manifest to it:
 
 ```bash
@@ -154,7 +172,7 @@ derivation chain, the threat model, and the build order — is in
 ```
 cmd/
   revika-node/     ✓ headless Node server binary
-  revika-ctl/      ✓ User client CLI (keygen/put/get/share)
+  revika-ctl/      ✓ User client CLI (keygen/put/get/delete/share)
   revika-daemon/     background User daemon (planned)
 internal/
   store/     ✓ content-addressed blob store (Mem + Disk)

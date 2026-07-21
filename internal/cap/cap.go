@@ -80,8 +80,8 @@ func parseKey(s string, dst []byte) error {
 	if err != nil {
 		return err
 	}
-	if len(raw) != KeySize {
-		return fmt.Errorf("want %d bytes, got %d", KeySize, len(raw))
+	if len(raw) != len(dst) {
+		return fmt.Errorf("want %d bytes, got %d", len(dst), len(raw))
 	}
 	copy(dst, raw)
 	return nil

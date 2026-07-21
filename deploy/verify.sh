@@ -39,6 +39,13 @@ echo ">> generating ~1 MiB test file with a plaintext canary"
 printf '%s\n' "$MARKER" >"$SRC"
 head -c 1048576 /dev/urandom >>"$SRC"
 
+# Storing is now an authenticated write: the client signs each PUT with its
+# Ed25519 signing key (its storage owner identity), so generate one and pass it
+# to put/get via -signkey. This is also the key that authorizes a later delete.
+echo ">> generating the client's signing identity"
+revika-ctl keygen -key "$WORK/user" >/dev/null
+SIGNKEY="$WORK/user.sign.key"
+
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
 echo ">> shard counts BEFORE put:"
@@ -53,7 +60,7 @@ done
 echo ">> put via bootstrap $SEED_ADDR"
 put_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl put -bootstrap "$SEED_ADDR" -manifest "$MANIFEST" "$SRC"; then
+  if revika-ctl put -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -manifest "$MANIFEST" "$SRC"; then
     put_ok=1
     break
   fi
