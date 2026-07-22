@@ -47,6 +47,7 @@ func inProcessNode(t *testing.T) *net.NetStore {
 // TestManifestRoundTrip checks the JSON serialization preserves a manifest.
 func TestManifestRoundTrip(t *testing.T) {
 	orig := pipeline.FileManifest{
+		Name:   "photo.jpg",
 		Params: pipeline.DefaultConfig(),
 		Size:   4242,
 		Chunks: []pipeline.ChunkRef{
@@ -62,7 +63,7 @@ func TestManifestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Size != orig.Size || got.Params != orig.Params || len(got.Chunks) != len(orig.Chunks) {
+	if got.Name != orig.Name || got.Size != orig.Size || got.Params != orig.Params || len(got.Chunks) != len(orig.Chunks) {
 		t.Fatalf("header mismatch: %+v vs %+v", got, orig)
 	}
 	for i := range orig.Chunks {

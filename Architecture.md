@@ -278,8 +278,9 @@ cap layer rather than on content-addressed shards. Tracked in §10.
 ### 3.6 Filesystem / metadata layer — **[partial]**
 
 - **File manifest** — **[partial]**. `pipeline.FileManifest` exists today as an in-memory
-  value: ordered `ChunkRef`s (per-chunk key + ordered shard IDs), the `Config`, and total
-  size. Still **[planned]**: serializing it, encrypting it, storing it as an immutable
+  value: the original file name, ordered `ChunkRef`s (per-chunk key + ordered shard IDs),
+  the `Config`, and total size. The name lets `get` restore the file under its original
+  name without being told it. Still **[planned]**: encrypting it, storing it as an immutable
   blob whose read-cap is the file's read-cap, provider hints, and moving the type into
   `internal/manifest`.
 - **Directory** — **[planned]**. An encrypted map of names → child caps (files or

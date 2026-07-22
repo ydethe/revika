@@ -12,8 +12,9 @@ import (
 )
 
 // manifestVersion tags the on-disk format so a future reader can detect and
-// migrate older files.
-const manifestVersion = 1
+// migrate older files. v2 added the original file name; v1 manifests (no name)
+// still decode.
+const manifestVersion = 2
 
 // jsonManifest is the serialized form of a pipeline.FileManifest. It IS the
 // file's read-capability: the per-chunk keys plus the ordered shard content
@@ -25,6 +26,7 @@ const manifestVersion = 1
 // (encrypted, immutable, cap-addressed) it supersedes this.
 type jsonManifest struct {
 	Version   int         `json:"version"`
+	Name      string      `json:"name,omitempty"` // original file name (v2+); may be empty
 	ChunkSize int         `json:"chunk_size"`
 	K         int         `json:"k"`
 	M         int         `json:"m"`
@@ -41,6 +43,7 @@ type jsonChunk struct {
 func encodeManifest(m pipeline.FileManifest) ([]byte, error) {
 	jm := jsonManifest{
 		Version:   manifestVersion,
+		Name:      m.Name,
 		ChunkSize: m.Params.ChunkSize,
 		K:         m.Params.Params.K,
 		M:         m.Params.Params.M,
@@ -67,10 +70,11 @@ func decodeManifest(data []byte) (pipeline.FileManifest, error) {
 	if err := json.Unmarshal(data, &jm); err != nil {
 		return pipeline.FileManifest{}, fmt.Errorf("parse manifest: %w", err)
 	}
-	if jm.Version != manifestVersion {
-		return pipeline.FileManifest{}, fmt.Errorf("unsupported manifest version %d (want %d)", jm.Version, manifestVersion)
+	if jm.Version < 1 || jm.Version > manifestVersion {
+		return pipeline.FileManifest{}, fmt.Errorf("unsupported manifest version %d (want 1..%d)", jm.Version, manifestVersion)
 	}
 	m := pipeline.FileManifest{
+		Name: jm.Name, // empty for v1 manifests, which carried no name
 		Params: pipeline.Config{
 			ChunkSize: jm.ChunkSize,
 			Params:    erasure.Params{K: jm.K, M: jm.M},

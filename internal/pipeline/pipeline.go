@@ -43,8 +43,12 @@ type ChunkRef struct {
 }
 
 // FileManifest is the ordered list of chunk recipes plus the encoding
-// parameters and original size.
+// parameters, original size, and the file's original name. StoreFile takes an
+// io.Reader and cannot know the name, so the caller sets Name after storing
+// (see revika-ctl's runStore); it lets a reader restore the file under its
+// original name without being told it out of band.
 type FileManifest struct {
+	Name   string
 	Params Config
 	Size   int64
 	Chunks []ChunkRef

@@ -8,6 +8,9 @@
 *.so
 *.dylib
 .env
+manifest.json
+*.key
+*.pub
 
 # Test binary, built with `go test -c`
 *.test

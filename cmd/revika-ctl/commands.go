@@ -191,7 +191,7 @@ func cmdGet(args []string) error {
 	manifestPath := fs.String("manifest", "", "manifest file to read (your own file)")
 	capPath := fs.String("cap", "", "wrapped cap file to read (a shared file); requires -key")
 	keyPath := fs.String("key", "", "your private key file, to unwrap -cap")
-	out := fs.String("o", "", "output file (default stdout)")
+	out := fs.String("o", "", "output file (default: the file's original name from the manifest, or stdout if it carries none)")
 	var bootstrap multiFlag
 	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); discovers shard providers")
 	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS on the LAN")
@@ -211,9 +211,18 @@ func cmdGet(args []string) error {
 	}
 	defer closer()
 
+	// Choose the output path: an explicit -o wins; otherwise fall back to the
+	// original file name recorded in the manifest, using just its base so a
+	// manifest can't steer the write outside the current directory. Only when
+	// neither is available do we stream to stdout.
+	outPath := *out
+	if outPath == "" && m.Name != "" {
+		outPath = filepath.Base(m.Name)
+	}
+
 	w := os.Stdout
-	if *out != "" {
-		f, err := os.Create(*out)
+	if outPath != "" {
+		f, err := os.Create(outPath)
 		if err != nil {
 			return err
 		}
@@ -223,8 +232,8 @@ func cmdGet(args []string) error {
 	if err := runLoad(ctx, s, m, w); err != nil {
 		return fmt.Errorf("retrieve: %w", err)
 	}
-	if *out != "" {
-		fmt.Fprintf(os.Stderr, "Wrote %s (%d bytes)\n", *out, m.Size)
+	if outPath != "" {
+		fmt.Fprintf(os.Stderr, "Wrote %s (%d bytes)\n", outPath, m.Size)
 	}
 	return nil
 }

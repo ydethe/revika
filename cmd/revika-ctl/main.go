@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -92,7 +93,9 @@ Commands:
   get (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
         Reconstruct a file. With -node, fetch from that node; with -bootstrap/-mdns,
         discover each shard's providers via the DHT. Read your own file with
-        -manifest, or a shared file by unwrapping a -cap with your -key. Out: stdout.
+        -manifest, or a shared file by unwrapping a -cap with your -key. Writes to
+        the file's original name (recorded in the manifest) unless -o is given;
+        falls back to stdout for older manifests that carry no name.
 
   delete (-node <ma> | -bootstrap <ma>... | -mdns) -manifest <path> [-signkey <path>]
         Drop your ownership claim on every shard of the file. A node frees a
@@ -345,7 +348,13 @@ func runStore(ctx context.Context, s store.Store, cfg pipeline.Config, path stri
 		return pipeline.FileManifest{}, err
 	}
 	defer f.Close()
-	return pipeline.StoreFile(ctx, s, cfg, f)
+	m, err := pipeline.StoreFile(ctx, s, cfg, f)
+	if err != nil {
+		return pipeline.FileManifest{}, err
+	}
+	// Record the original file name so `get` can restore it without being told.
+	m.Name = filepath.Base(path)
+	return m, nil
 }
 
 // runLoad reconstructs the file described by m from s into w.
