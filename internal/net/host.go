@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 )
@@ -31,8 +32,8 @@ type HostConfig struct {
 	// EnableMDNS turns on mDNS LAN peer discovery (auto-dial peers found on the
 	// local network). Useful for development and single-LAN deployments.
 	EnableMDNS bool
-	// Log receives a line for each new peer discovered via mDNS. If nil, discovery
-	// logging is discarded.
+	// Log receives host lifecycle lines: peer connect/disconnect (Debug) and each
+	// new peer discovered via mDNS (Info). If nil, this logging is discarded.
 	Log *slog.Logger
 }
 
@@ -62,17 +63,36 @@ func NewHost(cfg HostConfig) (host.Host, error) {
 	if err != nil {
 		return nil, fmt.Errorf("revika/net: new host: %w", err)
 	}
+	log := cfg.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	// Log the underlying peer connection lifecycle. This is churn on a busy DHT,
+	// so it stays at Debug; the meaningful "discovered node" lines are emitted at
+	// Info by the mDNS/DHT discovery layers.
+	notifyConnections(h, log)
 	if cfg.EnableMDNS {
-		log := cfg.Log
-		if log == nil {
-			log = slog.New(slog.DiscardHandler)
-		}
 		if err := startMDNS(h, log); err != nil {
 			h.Close()
 			return nil, err
 		}
 	}
 	return h, nil
+}
+
+// notifyConnections wires a network notifiee that logs each transport-level peer
+// connection and disconnection the host handles.
+func notifyConnections(h host.Host, log *slog.Logger) {
+	h.Network().Notify(&network.NotifyBundle{
+		ConnectedF: func(_ network.Network, c network.Conn) {
+			log.Debug("peer connected",
+				"peer", c.RemotePeer(), "addr", c.RemoteMultiaddr(), "dir", c.Stat().Direction)
+		},
+		DisconnectedF: func(_ network.Network, c network.Conn) {
+			log.Debug("peer disconnected",
+				"peer", c.RemotePeer(), "addr", c.RemoteMultiaddr())
+		},
+	})
 }
 
 // loadOrCreateIdentity loads the Ed25519 private key at path, creating and

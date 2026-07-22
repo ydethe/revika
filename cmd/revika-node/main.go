@@ -197,9 +197,14 @@ func run() error {
 		}()
 	}
 
+	addrs := make([]string, 0, len(h.Addrs()))
+	for _, a := range h.Addrs() {
+		addrs = append(addrs, fmt.Sprintf("%s/p2p/%s", a, h.ID()))
+	}
 	log.Info("revika-node started",
 		"version", version,
 		"peer", h.ID().String(),
+		"addrs", addrs,
 		"shards", shardsDir,
 		"mdns", *mdnsOn,
 		"dht", *dhtOn,

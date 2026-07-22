@@ -101,6 +101,7 @@ func (srv *Server) handleShard(s network.Stream) {
 }
 
 func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
+	start := time.Now()
 	data, err := readBlob(s, MaxShardSize)
 	if err != nil {
 		srv.log.Debug("shard put: read blob", "peer", peer, "err", err)
@@ -200,7 +201,11 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 	} else {
 		srv.announce(id)
 	}
-	srv.log.Debug("shard put", "peer", peer, "id", id, "bytes", len(data), "stripe", stripeOK)
+	// A shard has been accepted and stored: this is the node fulfilling its one
+	// job (taking in an encrypted, erasure-coded blob), so surface it at Info.
+	srv.log.Info("shard received",
+		"peer", peer, "id", id, "bytes", len(data), "stripe", stripeOK,
+		"dur", time.Since(start).Round(time.Millisecond))
 	// OK + the content address the caller can verify against its own hash.
 	if err := writeByte(s, byte(statusOK)); err != nil {
 		return
@@ -228,6 +233,7 @@ func (srv *Server) announce(id store.ShardID) {
 }
 
 func (srv *Server) handleGet(ctx context.Context, s network.Stream, peer any) {
+	start := time.Now()
 	id, err := readID(s)
 	if err != nil {
 		srv.log.Debug("shard get: read id", "peer", peer, "err", err)
@@ -244,6 +250,11 @@ func (srv *Server) handleGet(ctx context.Context, s network.Stream, peer any) {
 		return
 	}
 	_ = writeBlob(s, data)
+	// A shard has been served out to a peer: the node's other core job, so log
+	// it at Info alongside reception.
+	srv.log.Info("shard served",
+		"peer", peer, "id", id, "bytes", len(data),
+		"dur", time.Since(start).Round(time.Millisecond))
 }
 
 func (srv *Server) handleHas(ctx context.Context, s network.Stream, peer any) {
@@ -266,6 +277,7 @@ func (srv *Server) handleHas(ctx context.Context, s network.Stream, peer any) {
 		present = 1
 	}
 	_ = writeByte(s, present)
+	srv.log.Debug("shard has", "peer", peer, "id", id, "present", ok)
 }
 
 func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any) {
@@ -289,6 +301,7 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 			srv.replyErr(s, err)
 			return
 		}
+		srv.log.Info("shard deleted", "peer", peer, "id", id, "removed", true)
 		_ = writeByte(s, byte(statusOK))
 		return
 	}
@@ -320,6 +333,10 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 			return
 		}
 	}
+	// A claim was dropped: log it at Info, noting whether that emptied the last
+	// owner (removed=true) and the blob was physically deleted, or the shard
+	// lives on for its other owners.
+	srv.log.Info("shard deleted", "peer", peer, "id", id, "removed", remaining == 0, "owners_left", remaining)
 	_ = writeByte(s, byte(statusOK))
 }
 
@@ -360,6 +377,9 @@ func (srv *Server) handleProbe(s network.Stream) {
 		return
 	}
 	_, _ = s.Write(proof)
+	// Probes are a frequent repair heartbeat, so this stays at Debug — it proves
+	// the node answered a possession challenge for a shard it holds.
+	srv.log.Debug("probe answered", "peer", peer, "id", id)
 }
 
 // replyErr sends a mapped status byte, and for a generic error a short message
