@@ -38,6 +38,7 @@ User side — a node is trusted for *availability*, never *confidentiality* (the
 
 ## Toolchain & conventions
 
+- **Formatting** prefer spaces over tabulation
 - **Module path is `revika`** (bare).
 - **Go 1.26** (`go 1.26` in `go.mod`). System `go` is older; leave `GOTOOLCHAIN` at its default
   (`auto`) so 1.26 auto-downloads on first build.
@@ -57,7 +58,7 @@ go test -run TestName ./path/to/pkg
 go vet ./...
 go run ./cmd/revika-node  # Node daemon (-data -listen -mdns -dht -bootstrap -advertise
                           #   -quota -lease-ttl -gc-interval -gc-expired-leases -repair
-                          #   -repair-interval -v)
+                          #   -repair-interval -metrics -v)
 go run ./cmd/revika-ctl   # User client: keygen | put | get | delete | share (see -h)
 ```
 

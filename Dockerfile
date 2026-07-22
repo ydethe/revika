@@ -63,6 +63,8 @@ VOLUME ["/data"]
 # libp2p transports: TCP and QUIC (UDP) on the same port number.
 EXPOSE 4001/tcp
 EXPOSE 4001/udp
+# HTTP metrics/status server (plain HTTP; front with a TLS-terminating proxy).
+EXPOSE 9096/tcp
 
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/revika-node"]

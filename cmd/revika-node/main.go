@@ -59,6 +59,10 @@ const (
 	discoveryScanTimeout = 30 * time.Second
 )
 
+// version is the build version reported on /status and /metrics. Override at
+// build time with -ldflags="-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "revika-node:", err)
@@ -85,6 +89,7 @@ func run() error {
 		gcExpired   = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
 		repairOn    = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
 		repairEvery = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
+		metricsAddr = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics over plain HTTP — put TLS on a reverse proxy")
 		listen      multiFlag
 		bootstrap   multiFlag
 	)
@@ -97,6 +102,8 @@ func run() error {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+
+	startedAt := time.Now()
 
 	// The process-lifetime context: cancelled on SIGINT/SIGTERM, it bounds the
 	// DHT and its background loops so they stop cleanly on shutdown.
@@ -173,16 +180,32 @@ func run() error {
 	srv.Register(h)
 
 	// Garbage collector: reclaim shards no owner holds any longer (and, if
-	// enabled, expired leases), keeping disk and ledger aligned.
-	go gcLoop(ctx, blobs, led, log, *gcInterval, *gcExpired)
+	// enabled, expired leases), keeping disk and ledger aligned. Its activity is
+	// recorded into gcStats so the metrics server can report it.
+	gcStats := net.NewGCStats()
+	go gcLoop(ctx, blobs, led, log, *gcInterval, *gcExpired, gcStats)
+
+	// Metrics/status HTTP server (plain HTTP; front it with a TLS-terminating
+	// reverse proxy). disc is nil when the DHT is off, which the server handles.
+	if *metricsAddr != "" {
+		ms := net.NewMetricsServer(h, led, disc, version, startedAt, log)
+		ms.SetGCStats(gcStats)
+		go func() {
+			if err := ms.Serve(ctx, *metricsAddr); err != nil {
+				log.Error("metrics: server stopped", "err", err)
+			}
+		}()
+	}
 
 	log.Info("revika-node started",
+		"version", version,
 		"peer", h.ID().String(),
 		"shards", shardsDir,
 		"mdns", *mdnsOn,
 		"dht", *dhtOn,
 		"bootstrap", len(bootstrap),
 		"repair", *dhtOn && *repairOn,
+		"metrics", *metricsAddr,
 	)
 	fmt.Println("Peer ID:", h.ID())
 	fmt.Println("Listening on:")
@@ -191,6 +214,9 @@ func run() error {
 	}
 	if *dhtOn {
 		fmt.Printf("DHT: server mode, %d bootstrap peer(s), advertising=%v\n", len(bootstrap), *advertiseOn)
+	}
+	if *metricsAddr != "" {
+		fmt.Printf("Metrics: http://%s/status (also /healthz /readyz /metrics)\n", *metricsAddr)
 	}
 
 	// Block until interrupted, then shut down cleanly.
@@ -381,7 +407,7 @@ func sleepJitter(ctx context.Context, interval time.Duration) bool {
 // before a sweep is never swept. The atomic CollectRecord drop plus the fact
 // that a racing re-PUT re-creates the (content-addressed) blob make collection
 // non-destructive even at the edges.
-func gcLoop(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog.Logger, interval time.Duration, expireLeases bool) {
+func gcLoop(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog.Logger, interval time.Duration, expireLeases bool, stats *net.GCStats) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var prev map[store.ShardID]bool
@@ -390,14 +416,15 @@ func gcLoop(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slo
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			prev = runGC(ctx, blobs, led, log, expireLeases, prev)
+			prev = runGC(ctx, blobs, led, log, expireLeases, prev, stats)
 		}
 	}
 }
 
 // runGC performs one GC cycle and returns the set of shards seen collectible
-// this cycle (the next cycle's grace baseline).
-func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog.Logger, expireLeases bool, prev map[store.ShardID]bool) map[store.ShardID]bool {
+// this cycle (the next cycle's grace baseline). It records the cycle's outcome
+// into stats (may be nil) for the metrics server.
+func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog.Logger, expireLeases bool, prev map[store.ShardID]bool, stats *net.GCStats) map[store.ShardID]bool {
 	ids, err := led.Collectible(time.Now(), expireLeases)
 	if err != nil {
 		log.Warn("gc: list collectible", "err", err)
@@ -434,10 +461,15 @@ func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog
 		log.Info("gc: reclaimed shards", "count", freed)
 	}
 	// Realign disk and ledger: drop records whose blob vanished, recompute quota.
-	if rep, err := led.Reconcile(ctx, blobs); err != nil {
+	var rep ledger.ReconcileReport
+	if r, err := led.Reconcile(ctx, blobs); err != nil {
 		log.Warn("gc: reconcile", "err", err)
-	} else if rep.DroppedRecords > 0 {
-		log.Info("gc: reconciled", "dropped_records", rep.DroppedRecords, "orphan_blobs", rep.OrphanBlobs)
+	} else {
+		rep = r
+		if rep.DroppedRecords > 0 {
+			log.Info("gc: reconciled", "dropped_records", rep.DroppedRecords, "orphan_blobs", rep.OrphanBlobs)
+		}
 	}
+	stats.Record(freed, rep.DroppedRecords, rep.OrphanBlobs, time.Now())
 	return curr
 }

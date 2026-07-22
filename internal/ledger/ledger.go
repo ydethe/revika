@@ -103,6 +103,9 @@ func Open(path string, opts Options) (*Ledger, error) {
 // Close closes the underlying database.
 func (l *Ledger) Close() error { return l.db.Close() }
 
+// QuotaBytes returns the configured per-owner quota in bytes (0 = unlimited).
+func (l *Ledger) QuotaBytes() int64 { return l.opts.QuotaBytes }
+
 // AddOwner records owner's claim on id (or renews its lease if already held) and
 // enforces the quota. size is the shard's byte length.
 //
@@ -333,6 +336,53 @@ func (l *Ledger) Account(owner []byte) (bytesUsed int64, shardCount int, err err
 		return 0, 0, nil
 	}
 	return bytesUsed, shardCount, err
+}
+
+// OwnerStat is one owner's (client's) accounting: the raw owner public key and
+// how much it holds. Owner is the exact bytes stored in the ledger; callers
+// render it (hex/base64) as they see fit.
+type OwnerStat struct {
+	Owner      []byte
+	BytesUsed  int64
+	ShardCount int
+}
+
+// Stats is an aggregate snapshot of what a node currently stores, for the
+// metrics/status surface. Shards and BytesUsed count *physical* storage (each
+// content-addressed blob once, regardless of how many owners share it), while
+// per-owner BytesUsed is what each owner is charged (so their sum can exceed the
+// physical total when owners dedup onto the same blobs).
+type Stats struct {
+	Shards    int64       // distinct shards stored
+	BytesUsed int64       // physical bytes across all shards
+	Clients   int         // distinct owners storing shards
+	Owners    []OwnerStat // per-owner breakdown, largest first
+}
+
+// Stats returns an aggregate snapshot of the ledger for reporting.
+func (l *Ledger) Stats() (Stats, error) {
+	var s Stats
+	if err := l.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(size), 0) FROM shards`).
+		Scan(&s.Shards, &s.BytesUsed); err != nil {
+		return Stats{}, err
+	}
+	rows, err := l.db.Query(`SELECT owner, bytes_used, shard_count FROM accounts ORDER BY bytes_used DESC, owner`)
+	if err != nil {
+		return Stats{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var o OwnerStat
+		if err := rows.Scan(&o.Owner, &o.BytesUsed, &o.ShardCount); err != nil {
+			return Stats{}, err
+		}
+		s.Owners = append(s.Owners, o)
+	}
+	if err := rows.Err(); err != nil {
+		return Stats{}, err
+	}
+	s.Clients = len(s.Owners)
+	return s, nil
 }
 
 // StripeRow is the erasure context a node records for one shard it holds: the

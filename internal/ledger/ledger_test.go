@@ -66,6 +66,45 @@ func TestAddOwnerDedupAndRefcount(t *testing.T) {
 	}
 }
 
+func TestStats(t *testing.T) {
+	l := open(t, Options{})
+	now := time.Unix(1_700_000_000, 0)
+
+	// Empty ledger.
+	s, err := l.Stats()
+	if err != nil {
+		t.Fatalf("Stats empty: %v", err)
+	}
+	if s.Shards != 0 || s.BytesUsed != 0 || s.Clients != 0 {
+		t.Fatalf("empty stats = %+v, want zero", s)
+	}
+
+	// Two shards; alice owns both, bob shares the first (dedup).
+	s1, s2 := id(1), id(2)
+	l.AddOwner(s1, alice, 100, now)
+	l.AddOwner(s2, alice, 200, now)
+	l.AddOwner(s1, bob, 100, now)
+
+	s, err = l.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	// Physical: 2 distinct shards, 300 bytes (each blob counted once).
+	if s.Shards != 2 || s.BytesUsed != 300 {
+		t.Fatalf("physical stats = %d shards / %d bytes, want 2 / 300", s.Shards, s.BytesUsed)
+	}
+	if s.Clients != 2 || len(s.Owners) != 2 {
+		t.Fatalf("clients = %d (owners %d), want 2", s.Clients, len(s.Owners))
+	}
+	// Owners ordered by bytes_used desc: alice (300) before bob (100).
+	if string(s.Owners[0].Owner) != string(alice) || s.Owners[0].BytesUsed != 300 || s.Owners[0].ShardCount != 2 {
+		t.Fatalf("owner[0] = %+v, want alice 300/2", s.Owners[0])
+	}
+	if string(s.Owners[1].Owner) != string(bob) || s.Owners[1].BytesUsed != 100 || s.Owners[1].ShardCount != 1 {
+		t.Fatalf("owner[1] = %+v, want bob 100/1", s.Owners[1])
+	}
+}
+
 func TestRemoveOwner(t *testing.T) {
 	l := open(t, Options{})
 	now := time.Unix(1_700_000_000, 0)
