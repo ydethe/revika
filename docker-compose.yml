@@ -49,6 +49,17 @@
 # seed`). Peers reference it as `*seed_addr`.
 x-seed-addr: &seed_addr "${SEED_ADDR:?SEED_ADDR must be set (CI: the SEED_ADDR secret; local: export it)}"
 
+# Shared healthcheck for every node service: curl the node's HTTP /healthz
+# endpoint (the -metrics server, on :9096 by default). curl ships in the node
+# image for exactly this. start_period gives libp2p time to come up before
+# failures count against the container.
+x-node-healthcheck: &node_healthcheck
+  test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9096/healthz"]
+  interval: 15s
+  timeout: 3s
+  retries: 5
+  start_period: 20s
+
 services:
   # Entry point of the network: no -bootstrap, others join through it. Its
   # identity is pinned by the bind-mounted key so its Peer ID is stable and
@@ -65,6 +76,7 @@ services:
       - -mdns=false
       # Repair cadence; shortened by deploy/repair.sh via REPAIR_INTERVAL, else 1h.
       - -repair-interval=${REPAIR_INTERVAL:-1h}
+    healthcheck: *node_healthcheck
     volumes:
       - ./deploy/seed.key:/data/keys/node.key:ro
       - seed-data:/data
@@ -86,6 +98,7 @@ services:
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
+    healthcheck: *node_healthcheck
     volumes:
       - node2-data:/data
 
@@ -103,6 +116,7 @@ services:
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
+    healthcheck: *node_healthcheck
     volumes:
       - node3-data:/data
 
@@ -125,6 +139,7 @@ services:
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
+    healthcheck: *node_healthcheck
     volumes:
       - node4-data:/data
 
@@ -143,6 +158,7 @@ services:
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
+    healthcheck: *node_healthcheck
     volumes:
       - node5-data:/data
 

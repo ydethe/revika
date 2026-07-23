@@ -49,9 +49,19 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN mkdir -p /data
 
 # ---- runtime stage ---------------------------------------------------------
-FROM gcr.io/distroless/static-debian12:nonroot AS node
+# debian-slim (not distroless) so the image ships curl, which the docker-compose
+# healthcheck uses to probe the node's HTTP /healthz endpoint. We recreate the
+# unprivileged "nonroot" user (uid/gid 65532, matching distroless' convention)
+# so the node still runs unprivileged and owns its /data volume.
+FROM debian:bookworm-slim AS node
 LABEL org.opencontainers.image.title="revika-node" \
       org.opencontainers.image.description="revika headless storage Node (libp2p + Kademlia DHT)"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 65532 nonroot \
+    && useradd --uid 65532 --gid 65532 --home-dir /home/nonroot --create-home nonroot
 
 COPY --from=build /out/revika-node /usr/local/bin/revika-node
 COPY --from=build --chown=nonroot:nonroot /data /data
