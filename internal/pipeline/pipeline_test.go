@@ -24,7 +24,9 @@ func newStores(t *testing.T) map[string]store.Store {
 
 func testConfig() Config {
 	// Small chunks so multi-chunk paths are exercised without large data.
-	return Config{ChunkSize: 1024, Params: erasure.Params{K: 4, M: 2}}
+	// Compression on: random test data is incompressible, so this exercises the
+	// "compress but discard" branch; TestCompression covers the kept branch.
+	return Config{ChunkSize: 1024, Params: erasure.Params{K: 4, M: 2}, Compress: true}
 }
 
 func TestRoundTrip(t *testing.T) {
@@ -105,6 +107,47 @@ func TestManifestChunkCount(t *testing.T) {
 	for i, ref := range m.Chunks {
 		if len(ref.Shards) != testConfig().Params.N() {
 			t.Fatalf("chunk %d: %d shards, want %d", i, len(ref.Shards), testConfig().Params.N())
+		}
+	}
+}
+
+// TestCompression checks that highly compressible data round-trips, is actually
+// marked compressed, and that disabling compression leaves it uncompressed.
+func TestCompression(t *testing.T) {
+	ctx := context.Background()
+	// 8 KiB of a repeating pattern → very compressible, spans several chunks.
+	data := bytes.Repeat([]byte("revika compresses well "), 356)
+
+	on := testConfig()
+	off := on
+	off.Compress = false
+
+	for name, s := range newStores(t) {
+		m, err := StoreFile(ctx, s, on, bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("[%s] StoreFile: %v", name, err)
+		}
+		var out bytes.Buffer
+		if err := LoadFile(ctx, s, m, &out); err != nil {
+			t.Fatalf("[%s] LoadFile: %v", name, err)
+		}
+		if !bytes.Equal(out.Bytes(), data) {
+			t.Fatalf("[%s] compressed round trip mismatch", name)
+		}
+		for i, ref := range m.Chunks {
+			if !ref.Compressed {
+				t.Fatalf("[%s] chunk %d not marked compressed", name, i)
+			}
+		}
+
+		mOff, err := StoreFile(ctx, s, off, bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("[%s] StoreFile (no compress): %v", name, err)
+		}
+		for i, ref := range mOff.Chunks {
+			if ref.Compressed {
+				t.Fatalf("[%s] chunk %d compressed despite Compress=false", name, i)
+			}
 		}
 	}
 }

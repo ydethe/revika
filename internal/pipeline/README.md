@@ -8,24 +8,30 @@ K of N — and it runs against any `store.Store` (mock or networked).
 
 ## Purpose
 
-- **`StoreFile`** — chunk → encrypt → erasure-code → put shards, producing a
-  `FileManifest`.
+- **`StoreFile`** — chunk → compress → encrypt → erasure-code → put shards,
+  producing a `FileManifest`.
 - **`LoadFile`** — the exact inverse: fetch available shards → erasure-decode →
-  decrypt → write out the original bytes.
+  decrypt → decompress → write out the original bytes.
+
+Compression is optional and runs *before* encryption (ciphertext is
+incompressible); see [`internal/compress`](../compress/README.md).
 
 The `FileManifest` is the recipe to rebuild a file and the only thing (besides
 shard access) a reader needs.
 
 ## Exported types and functions
 
-- **`Config`** — encoding parameters: `ChunkSize` (plaintext bytes per chunk)
-  and `Params` (`erasure.Params` giving K data + M parity shards per chunk).
+- **`Config`** — encoding parameters: `ChunkSize` (plaintext bytes per chunk),
+  `Params` (`erasure.Params` giving K data + M parity shards per chunk), and
+  `Compress` (DEFLATE each chunk before encrypting).
 - **`DefaultConfig() Config`** — sensible defaults: `chunk.DefaultSize` chunks
-  with 4+2 erasure coding.
+  with 4+2 erasure coding and compression enabled.
 - **`ChunkRef`** — everything needed to rebuild one chunk: its per-chunk
-  `crypto.Key` and the ordered `[]store.ShardID` content addresses of its N
-  shards. Shard index maps directly to erasure position (first K are data, the
-  rest parity).
+  `crypto.Key`, a `Compressed` flag, and the ordered `[]store.ShardID` content
+  addresses of its N shards. Shard index maps directly to erasure position
+  (first K are data, the rest parity). `Compressed` is decided per chunk at
+  store time (only kept when it shrinks the data), so `LoadFile` relies on the
+  flag rather than the `Config`.
 - **`FileManifest`** — see below.
 - **`StoreFile(ctx, s store.Store, cfg Config, r io.Reader) (FileManifest, error)`**
   — encodes and stores `r`, returning the manifest. Because shards are addressed
@@ -39,13 +45,14 @@ shard access) a reader needs.
 ```go
 type FileManifest struct {
     Name   string       // original file name (set by the caller after StoreFile)
-    Params Config       // encoding config used (chunk size + K/M)
+    Params Config       // encoding config used (chunk size + K/M + compression)
     Size   int64        // original plaintext size in bytes
-    Chunks []ChunkRef   // ordered per-chunk recipes (key + shard IDs)
+    Chunks []ChunkRef   // ordered per-chunk recipes (key + compressed flag + shard IDs)
 }
 ```
 
-Each `ChunkRef` carries the chunk's encryption `Key` and its ordered `Shards`.
+Each `ChunkRef` carries the chunk's encryption `Key`, its `Compressed` flag, and
+its ordered `Shards`.
 `StoreFile` takes an `io.Reader` and cannot know the name, so the caller sets
 `Name` after storing (see `revika-ctl`'s `runStore`); it lets a reader restore
 the file under its original name without being told it out of band.
@@ -54,11 +61,14 @@ the file under its original name without being told it out of band.
 
 `storeChunk` (per chunk):
 
-1. `crypto.NewKey` mints a fresh per-chunk key; `crypto.Seal` encrypts the
-   plaintext.
-2. `erasure.Encode` splits the ciphertext into all N shards at once, so every
+1. If `Config.Compress` is set, `compress.Compress` DEFLATEs the plaintext; the
+   compressed form is kept only when it is smaller (incompressible data is
+   stored verbatim), and the outcome is recorded in `ChunkRef.Compressed`.
+2. `crypto.NewKey` mints a fresh per-chunk key; `crypto.Seal` encrypts the
+   (possibly compressed) payload.
+3. `erasure.Encode` splits the ciphertext into all N shards at once, so every
    shard's content address is known before the first put.
-3. It builds a `stripe.Descriptor` (the non-confidential erasure context: K, M,
+4. It builds a `stripe.Descriptor` (the non-confidential erasure context: K, M,
    and the ordered shard IDs). If the store implements `stripe.Putter` (a
    networked `PlacementStore`) it calls `PutStripe` so each node records the
    descriptor for later repair; otherwise it falls back to `store.Put`. Each
@@ -66,7 +76,8 @@ the file under its original name without being told it out of band.
 
 `loadChunk` (per chunk): fetches each shard, treating `store.ErrNotFound` /
 `store.ErrCorrupt` as a lost shard (erasure covers it), then `erasure.Decode`
-and `crypto.Open` recover the plaintext.
+and `crypto.Open` recover the payload, and `compress.Decompress` restores the
+plaintext when `ChunkRef.Compressed` is set.
 
 Chunking comes from `chunk.Fixed`, an iterator over fixed-size plaintext chunks.
 

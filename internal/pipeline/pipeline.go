@@ -1,6 +1,6 @@
-// Package pipeline is the store/retrieve core: it wires chunking, encryption,
-// erasure coding, and the content-addressed store into the two reversible
-// operations StoreFile and LoadFile. This is the first end-to-end path — the
+// Package pipeline is the store/retrieve core: it wires chunking, optional
+// compression, encryption, erasure coding, and the content-addressed store into
+// the two reversible operations StoreFile and LoadFile. This is the first end-to-end path — the
 // proof that a file can be split, encrypted, dispersed as shards, and rebuilt
 // from any K of N — and it runs against any store.Store (mock or networked).
 //
@@ -17,6 +17,7 @@ import (
 	"io"
 
 	"revika/internal/chunk"
+	"revika/internal/compress"
 	"revika/internal/crypto"
 	"revika/internal/erasure"
 	"revika/internal/store"
@@ -27,19 +28,25 @@ import (
 type Config struct {
 	ChunkSize int            // plaintext bytes per chunk before encryption
 	Params    erasure.Params // K data + M parity shards per chunk
+	Compress  bool           // DEFLATE each chunk before encrypting (see internal/compress)
 }
 
-// DefaultConfig is a sensible starting point: 4 MiB chunks, 4+2 erasure coding.
+// DefaultConfig is a sensible starting point: 4 MiB chunks, 4+2 erasure coding,
+// with compression enabled (it is skipped per chunk when it would not help).
 func DefaultConfig() Config {
-	return Config{ChunkSize: chunk.DefaultSize, Params: erasure.Params{K: 4, M: 2}}
+	return Config{ChunkSize: chunk.DefaultSize, Params: erasure.Params{K: 4, M: 2}, Compress: true}
 }
 
 // ChunkRef records everything needed to rebuild one chunk: its per-chunk
-// encryption key and the ordered content addresses of its N shards. Shard
-// index maps directly to erasure position (first K are data, rest parity).
+// encryption key, whether the plaintext was compressed before encryption, and
+// the ordered content addresses of its N shards. Shard index maps directly to
+// erasure position (first K are data, rest parity). Compressed is decided per
+// chunk at store time (only kept when it shrinks the data), so LoadFile relies
+// on this flag rather than the Config to know whether to decompress.
 type ChunkRef struct {
-	Key    crypto.Key
-	Shards []store.ShardID
+	Key        crypto.Key
+	Compressed bool
+	Shards     []store.ShardID
 }
 
 // FileManifest is the ordered list of chunk recipes plus the encoding
@@ -63,7 +70,7 @@ func StoreFile(ctx context.Context, s store.Store, cfg Config, r io.Reader) (Fil
 		if err != nil {
 			return FileManifest{}, err
 		}
-		ref, err := storeChunk(ctx, s, cfg.Params, plain)
+		ref, err := storeChunk(ctx, s, cfg, plain)
 		if err != nil {
 			return FileManifest{}, err
 		}
@@ -73,12 +80,30 @@ func StoreFile(ctx context.Context, s store.Store, cfg Config, r io.Reader) (Fil
 	return m, nil
 }
 
-func storeChunk(ctx context.Context, s store.Store, p erasure.Params, plain []byte) (ChunkRef, error) {
+func storeChunk(ctx context.Context, s store.Store, cfg Config, plain []byte) (ChunkRef, error) {
+	p := cfg.Params
+
+	// Compression runs on plaintext, before encryption — ciphertext is
+	// incompressible. Keep the compressed form only when it actually shrinks the
+	// chunk, so incompressible data (already-compressed files) is not expanded.
+	payload := plain
+	compressed := false
+	if cfg.Compress {
+		packed, err := compress.Compress(plain)
+		if err != nil {
+			return ChunkRef{}, err
+		}
+		if len(packed) < len(plain) {
+			payload = packed
+			compressed = true
+		}
+	}
+
 	key, err := crypto.NewKey()
 	if err != nil {
 		return ChunkRef{}, err
 	}
-	sealed, err := crypto.Seal(key, plain)
+	sealed, err := crypto.Seal(key, payload)
 	if err != nil {
 		return ChunkRef{}, err
 	}
@@ -115,7 +140,7 @@ func storeChunk(ctx context.Context, s store.Store, p erasure.Params, plain []by
 			return ChunkRef{}, fmt.Errorf("pipeline: shard %d stored as %s, want %s", i, id, ids[i])
 		}
 	}
-	return ChunkRef{Key: key, Shards: ids}, nil
+	return ChunkRef{Key: key, Compressed: compressed, Shards: ids}, nil
 }
 
 // LoadFile reconstructs the file described by m and writes it to w. For each
@@ -150,9 +175,12 @@ func loadChunk(ctx context.Context, s store.Store, p erasure.Params, ref ChunkRe
 	if err != nil {
 		return nil, err
 	}
-	plain, err := crypto.Open(ref.Key, sealed)
+	payload, err := crypto.Open(ref.Key, sealed)
 	if err != nil {
 		return nil, err
 	}
-	return plain, nil
+	if ref.Compressed {
+		return compress.Decompress(payload)
+	}
+	return payload, nil
 }

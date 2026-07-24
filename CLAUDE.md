@@ -79,6 +79,7 @@ internal/
   store/     content-addressed blob store (Mem + Disk)
   crypto/    AES-256-GCM AEAD
   erasure/   Reed–Solomon encode/decode
+  compress/  optional pre-encryption DEFLATE stage (per-chunk, skipped when it doesn't help)
   chunk/     fixed-size chunking (CDC planned)
   stripe/    non-confidential erasure metadata (Descriptor) + signed repair grant
   pipeline/  StoreFile/LoadFile + FileManifest (in-memory; serialized to local JSON by revika-ctl)

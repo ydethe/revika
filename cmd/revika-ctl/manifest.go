@@ -12,9 +12,10 @@ import (
 )
 
 // manifestVersion tags the on-disk format so a future reader can detect and
-// migrate older files. v2 added the original file name; v1 manifests (no name)
-// still decode.
-const manifestVersion = 2
+// migrate older files. v3 added compression flags; v2 added the original file
+// name; v1 manifests (no name) still decode. Older manifests predate
+// compression, so their absent flags correctly decode as uncompressed.
+const manifestVersion = 3
 
 // jsonManifest is the serialized form of a pipeline.FileManifest. It IS the
 // file's read-capability: the per-chunk keys plus the ordered shard content
@@ -30,13 +31,15 @@ type jsonManifest struct {
 	ChunkSize int         `json:"chunk_size"`
 	K         int         `json:"k"`
 	M         int         `json:"m"`
+	Compress  bool        `json:"compress,omitempty"` // compression was enabled (v3+)
 	Size      int64       `json:"size"`
 	Chunks    []jsonChunk `json:"chunks"`
 }
 
 type jsonChunk struct {
-	Key    string   `json:"key"`    // hex of the 32-byte per-chunk AES key
-	Shards []string `json:"shards"` // hex of each 32-byte shard content address
+	Key        string   `json:"key"`                  // hex of the 32-byte per-chunk AES key
+	Compressed bool     `json:"compressed,omitempty"` // plaintext was DEFLATEd before encryption (v3+)
+	Shards     []string `json:"shards"`               // hex of each 32-byte shard content address
 }
 
 // encodeManifest renders m as indented JSON.
@@ -47,6 +50,7 @@ func encodeManifest(m pipeline.FileManifest) ([]byte, error) {
 		ChunkSize: m.Params.ChunkSize,
 		K:         m.Params.Params.K,
 		M:         m.Params.Params.M,
+		Compress:  m.Params.Compress,
 		Size:      m.Size,
 		Chunks:    make([]jsonChunk, len(m.Chunks)),
 	}
@@ -56,8 +60,9 @@ func encodeManifest(m pipeline.FileManifest) ([]byte, error) {
 			shards[j] = id.String()
 		}
 		jm.Chunks[i] = jsonChunk{
-			Key:    hex.EncodeToString(ch.Key[:]),
-			Shards: shards,
+			Key:        hex.EncodeToString(ch.Key[:]),
+			Compressed: ch.Compressed,
+			Shards:     shards,
 		}
 	}
 	return json.MarshalIndent(jm, "", "  ")
@@ -78,6 +83,7 @@ func decodeManifest(data []byte) (pipeline.FileManifest, error) {
 		Params: pipeline.Config{
 			ChunkSize: jm.ChunkSize,
 			Params:    erasure.Params{K: jm.K, M: jm.M},
+			Compress:  jm.Compress,
 		},
 		Size:   jm.Size,
 		Chunks: make([]pipeline.ChunkRef, len(jm.Chunks)),
@@ -95,7 +101,7 @@ func decodeManifest(data []byte) (pipeline.FileManifest, error) {
 			}
 			shards[j] = id
 		}
-		m.Chunks[i] = pipeline.ChunkRef{Key: key, Shards: shards}
+		m.Chunks[i] = pipeline.ChunkRef{Key: key, Compressed: jc.Compressed, Shards: shards}
 	}
 	return m, nil
 }

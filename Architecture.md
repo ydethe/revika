@@ -61,7 +61,7 @@ addressing (IPFS-style provider records).
 ├─────────────────────────────────────────────┤
 │ Capability & crypto layer                     │  per-object keys, caps         [partial]
 ├─────────────────────────────────────────────┤
-│ Encoding pipeline                             │  chunk → encrypt → erasure  [implemented]
+│ Encoding pipeline                             │  chunk → compress → encrypt → erasure  [implemented]
 ├─────────────────────────────────────────────┤
 │ Placement / repair layer                      │  placement [planned] / repair [impl.]
 ├─────────────────────────────────────────────┤
@@ -121,28 +121,35 @@ since only a networked node needs them. `.revika/shards/` is the intended on-dis
 
 `StoreFile(ctx, store, cfg, reader) → FileManifest` runs the store path chunk by chunk;
 `LoadFile(ctx, store, manifest, writer)` runs it in reverse. `Config` is
-`{ChunkSize int; Params erasure.Params}` (default 4 MiB chunks, `k=4`, `m=2`).
+`{ChunkSize int; Params erasure.Params; Compress bool}` (default 4 MiB chunks, `k=4`,
+`m=2`, compression on).
 
 1. **Chunk** (`internal/chunk`) — **fixed-size** for now, exposed as a Go
    `iter.Seq2[[]byte, error]`. Content-defined chunking (FastCDC-style rolling hash, so
    an edit only rewrites the affected chunk) is a **[planned]** upgrade behind the same
    iterator contract.
-2. **Encrypt** (`internal/crypto`) — each chunk gets a fresh random key and is sealed
+2. **Compress** (`internal/compress`) — **optional**, gated by `Config.Compress`. Each
+   chunk is DEFLATEd (stdlib `compress/flate`) *before* encryption, since ciphertext is
+   incompressible. The compressed form is kept only when it is actually smaller, so
+   incompressible data is stored verbatim; the per-chunk outcome is recorded in
+   `ChunkRef.Compressed` and drives decompression on load. (Note: compress-then-encrypt
+   leaks plaintext length — a CRIME/BREACH-class trade-off accepted for at-rest storage.)
+3. **Encrypt** (`internal/crypto`) — each chunk gets a fresh random key and is sealed
    with **AES-256-GCM** (stdlib `crypto/aes`+`crypto/cipher`; 12-byte random nonce
    prepended). AES-GCM was chosen over XChaCha20-Poly1305 to avoid an external
    dependency; it is isolated behind `Seal`/`Open` and swappable. Per-object random keys
    avoid the equality-leak of convergent encryption.
-3. **Erasure-code** (`internal/erasure`) — Reed–Solomon (`klauspost/reedsolomon`) splits
+4. **Erasure-code** (`internal/erasure`) — Reed–Solomon (`klauspost/reedsolomon`) splits
    the *encrypted* chunk into `k` data + `m` parity shards; any `k` of the `k+m`
    reconstruct it. An 8-byte length header is prepended so `Decode` recovers the exact
    original length despite RS zero-padding. **`Encode` is deterministic** — the same
    input always yields byte-identical shards (this is what makes repair address-stable,
    §3.4).
-4. **Address & store** — each shard is `Put` into the `Store`; its `shardID = hash(shard)`
+5. **Address & store** — each shard is `Put` into the `Store`; its `shardID = hash(shard)`
    is recorded in the chunk's `ChunkRef`.
 
 Retrieval fetches whatever shards are available (missing/corrupt ones are tolerated up
-to the erasure margin) → erasure-decode → decrypt → reassemble.
+to the erasure margin) → erasure-decode → decrypt → decompress → reassemble.
 
 ### 3.4 Placement / repair layer
 
