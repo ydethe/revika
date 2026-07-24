@@ -33,6 +33,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/host"
 
+	"revika/internal/cap"
 	"revika/internal/erasure"
 	"revika/internal/ledger"
 	"revika/internal/net"
@@ -94,6 +95,8 @@ func run() error {
 		connLow     = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
 		connHigh    = flag.Int("conn-high", 0, "connection-manager high watermark, above which idle connections are trimmed (0 = built-in default; <0 disables)")
 		connGrace   = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
+		powDiff     = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). Clients must keygen with a matching -pow-puzzle and difficulty >= this")
+		powPuzzle   = flag.String("pow-puzzle", "argon2id", "proof-of-work puzzle owner identities must satisfy: argon2id (memory-hard) or sha256 (fast). Must match what clients mint with")
 		listen      multiFlag
 		bootstrap   multiFlag
 	)
@@ -171,6 +174,21 @@ func run() error {
 
 	srv := net.NewServer(blobs, log)
 	srv.SetLedger(led)
+
+	// Proof-of-work identity admission: when enabled, an owner's Ed25519 key must
+	// be self-certifying (hash under the difficulty target) to store shards, so a
+	// banned owner cannot re-mint a fresh identity for free. Off by default.
+	if *powDiff > 0 {
+		if *powDiff > 255 {
+			return fmt.Errorf("pow-difficulty %d out of range (0-255)", *powDiff)
+		}
+		puzzle, err := cap.PuzzleByName(*powPuzzle)
+		if err != nil {
+			return err
+		}
+		srv.SetPoW(puzzle, cap.Difficulty(*powDiff))
+		log.Info("proof-of-work admission enabled", "puzzle", puzzle.Name(), "min_bits", *powDiff)
+	}
 
 	// Join the DHT (server mode: a node stores routing state + provider records
 	// for others). Wiring the Discovery in as the Server's announcer means every

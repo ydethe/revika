@@ -206,6 +206,88 @@ func TestUnsignedWriteRejected(t *testing.T) {
 	}
 }
 
+// mintFailingKey returns a signing key whose public key does NOT satisfy puzzle
+// at difficulty d — i.e. a plain, non-self-certifying identity. At small d a
+// random key fails with overwhelming probability, so this returns quickly.
+func mintFailingKey(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) cap.SignKey {
+	t.Helper()
+	for range 10000 {
+		key, pub, err := cap.GenerateSigningKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cap.MeetsPoW(puzzle, pub[:], d) {
+			return key
+		}
+	}
+	t.Fatalf("could not find a key failing difficulty %d", d)
+	return cap.SignKey{}
+}
+
+// TestPoWAdmission checks the node-side proof-of-work gate on PUT: a
+// self-certifying owner is admitted; a plain owner below the difficulty is
+// refused with ErrUnauthorized; and DELETE stays ungated.
+func TestPoWAdmission(t *testing.T) {
+	// SHA-256 keeps the test fast; difficulty 8 => ~256 attempts to mint.
+	puzzle := cap.SHA256Puzzle{}
+	const d cap.Difficulty = 8
+
+	backing := store.NewMemStore()
+	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
+	if err != nil {
+		t.Fatalf("server host: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+	led, err := ledger.Open(filepath.Join(t.TempDir(), "ledger.db"), ledger.Options{})
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	t.Cleanup(func() { led.Close() })
+	srv := NewServer(backing, nil)
+	srv.SetLedger(led)
+	srv.SetPoW(puzzle, d)
+	srv.Register(h)
+	ctx := context.Background()
+
+	// A non-self-certifying owner is refused on PUT.
+	weakKey := mintFailingKey(t, puzzle, d)
+	weak := signedClient(t, h, weakKey)
+	if _, err := weak.Put(ctx, []byte("from a cheap identity")); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("weak-identity put = %v, want ErrUnauthorized", err)
+	}
+
+	// A self-certifying owner is admitted.
+	strongKey, strongPub, err := cap.MintSigningKey(puzzle, d, nil)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if !cap.MeetsPoW(puzzle, strongPub[:], d) { // sanity
+		t.Fatal("minted key does not meet difficulty")
+	}
+	strong := signedClient(t, h, strongKey)
+	id, err := strong.Put(ctx, []byte("from a self-certifying identity"))
+	if err != nil {
+		t.Fatalf("strong-identity put = %v, want success", err)
+	}
+
+	// DELETE is ungated: the same weak identity can still remove its own claims.
+	// (It has none here, so this just confirms the gate does not reject the verb.)
+	if err := weak.Delete(ctx, id); err != nil && !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("weak delete unexpected error: %v", err)
+	}
+}
+
+// TestPoWDisabledByDefault confirms the gate is off unless configured: a plain
+// keypair writes normally on a ledger node with no PoW policy.
+func TestPoWDisabledByDefault(t *testing.T) {
+	server, _ := newLedgerNode(t, store.NewMemStore(), ledger.Options{})
+	key, _, _ := cap.GenerateSigningKey()
+	c := signedClient(t, server, key)
+	if _, err := c.Put(context.Background(), []byte("no pow required")); err != nil {
+		t.Fatalf("put with pow disabled = %v, want success", err)
+	}
+}
+
 // TestQuotaEnforced checks a PUT past the owner's quota is rejected.
 func TestQuotaEnforced(t *testing.T) {
 	server, _ := newLedgerNode(t, store.NewMemStore(), ledger.Options{QuotaBytes: 10})

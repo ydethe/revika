@@ -112,10 +112,20 @@ model in §2 is untouched. The first three are **[implemented]** in `internal/ne
   only. A new `statusRateLimited` response code surfaces the rejection.
 
 These are *flow/connection* caps that complement the existing *storage* caps (per-owner
-quota + leases, §3.2). Because owner identities are self-minted for free, **ban-by-identity
-is only as strong as the cost of a fresh identity** — so identity bans pair with an
-optional owner allowlist for hardened deployments (**[planned]**), while global anti-Sybil,
-reputation, and economic deterrents stay deferred (§5, §10).
+quota + leases, §3.2). Ban-by-identity is only as strong as the cost of minting a fresh
+identity, so revika makes owner identities **self-certifying** via proof-of-work: a valid
+Ed25519 owner key must, on its own, hash under a difficulty target, so it costs
+seconds-to-minutes of CPU to mint but one hash to verify — a banned owner cannot re-mint in
+milliseconds (`internal/cap/pow.go`; minted by `revika-ctl keygen` and enforced on PUT by a
+node via `Server.SetPoW` / `revika-node -pow-difficulty`, **[implemented]**; a client-side
+**difficulty advertisement** so `put` learns a node's requirement up front and fails fast is
+**[planned]**). The puzzle is swappable behind a `Puzzle` interface — `SHA256Puzzle`
+(hashcash) or a memory-hard `Argon2idPuzzle` that collapses the GPU/ASIC advantage over an
+honest CPU. Difficulty and puzzle are *local* operator policy, checked statelessly with no
+authority or consensus. This is a re-mint speed bump keyed to the ban loop, not a
+per-identity tax: identity bans still pair with an optional owner allowlist for hardened
+deployments (**[planned]**), and global anti-Sybil, reputation, and economic deterrents stay
+deferred (§5, §10).
 
 ### 3.2 Storage layer (Node) — **[implemented]** (`internal/store`)
 
@@ -375,9 +385,19 @@ index/accounting of the user's own data and where it lives, *not* a global share
   independent and untrusted — there is no global ban authority. A node combines per-owner
   storage quota + leases (§3.2, **[implemented]**) with the connection/flow defences above
   (rcmgr/connmgr/gater **[implemented]**; write-verb rate limiting **[planned]**).
-  Ban-by-identity keys on the Ed25519 owner pubkey but is only as strong as the cost of
-  minting a fresh identity, so hardened nodes may run an **owner allowlist** (admission)
-  instead of, or alongside, a blocklist.
+  Ban-by-identity keys on the Ed25519 owner pubkey; to keep that ban meaningful, owner keys
+  are **self-certifying** — minted via proof-of-work so a fresh identity costs
+  seconds-to-minutes of CPU, not milliseconds. This is enforced end to end: the client mints
+  under proof-of-work (`revika-ctl keygen -pow-difficulty/-pow-puzzle`) and a node admits a
+  PUT only from an owner meeting its own difficulty (`revika-node -pow-difficulty`,
+  `Server.SetPoW`; `internal/cap/pow.go`, **[implemented]**). Repair and DELETE are exempt
+  (repair regenerates already-admitted data and is mandatory; DELETE is owner-scoped). Since
+  difficulty is per-node policy, a client storing across nodes must mint at the max
+  difficulty among them; a planned **difficulty advertisement** (a `/revika/params` query or
+  a field on the storage advertisement) will let the client learn each node's `(puzzle, min
+  difficulty)` up front and fail fast with a "re-keygen at difficulty ≥ N" message instead of
+  a late authorization error (**[planned]**). Hardened nodes may also run an **owner
+  allowlist** (admission) instead of, or alongside, a blocklist.
 - **Out of scope for the PoC (note as future work):** economic incentives/payments,
   Byzantine-fault-tolerant reputation, defenses against storage nodes that lie about
   possession beyond the probe mechanism, and **global** anti-Sybil measures (a cost to mint

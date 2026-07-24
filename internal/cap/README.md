@@ -77,6 +77,58 @@ libp2p peer identity of whatever host they dial from.
 - `(SignPubKey).Verify(msg, sig []byte) bool` — verify a signature.
 - `String`, `ParseSignPubKey`, `ParseSignKey` — standard-base64 text form.
 
+## Self-certifying owner identity (proof-of-work, `pow.go`)
+
+Owner identities are self-minted for free, so ban-by-identity is only as strong
+as the cost of minting a fresh one. `pow.go` raises that cost by making a valid
+owner key **self-certifying**: its Ed25519 public key must, on its own, satisfy a
+proof-of-work target. Minting means grinding fresh keypairs until one hashes
+under the target — the public key *is* the proof, so it costs seconds-to-minutes
+of CPU to produce yet **one hash to verify**, and the work is bound to that exact
+key. A banned owner cannot re-mint a usable identity in milliseconds.
+
+This is a **local** deterrent: difficulty and puzzle are operator policy, checked
+statelessly by any node with no authority or consensus (matching revika's "each
+node defends itself" model). It complements — does not replace — the deferred
+economic/anti-Sybil layer: it is a re-mint speed bump, not a per-identity tax, so
+it does not stop a patient attacker from pre-minting a stockpile.
+
+The puzzle sits behind a small **`Puzzle` interface** so the hash is swappable:
+
+- `SHA256Puzzle` — hashcash-style single SHA-256. Cheapest to verify, but a
+  GPU/ASIC attacker grinds it far faster than an honest CPU.
+- `Argon2idPuzzle{Time, Memory, Threads}` — memory-hard (Argon2id,
+  `golang.org/x/crypto/argon2`). Every attempt costs a fixed slice of RAM+CPU, so
+  the attacker's specialised-hardware edge collapses; both minting and
+  verification pay one evaluation. `DefaultArgon2id()` = 64 MiB, 2 passes, 1 lane.
+
+Difficulty is the number of leading zero bits the puzzle digest must have;
+expected minting cost is `~2^Difficulty` evaluations, verification always one.
+Hash-based PoW stays PQC-class: Grover only halves effective difficulty (a D-bit
+proof costs ~`2^(D/2)` quantum evaluations) and memory-hardness blunts even that.
+
+### Types and functions
+
+- `Difficulty` — target as leading zero bits; `0` disables the check.
+- `Puzzle` — `Name()` + `Sum(pubkey) []byte`; a deterministic digest of the key.
+- `SHA256Puzzle`, `Argon2idPuzzle`, `DefaultArgon2id()`.
+- `MeetsPoW(puzzle, pubkey, d) bool` — the verifier a node runs on a recovered
+  owner pubkey; O(1) in the minter's attempt count.
+- `MintSigningKey(puzzle, d, onProgress) (SignKey, SignPubKey, error)` — grind a
+  self-certifying signing keypair, fanning out across all CPUs and reporting
+  `Progress{Attempts, Elapsed}` to `onProgress` (may be nil) ~10×/s and once on
+  success. `MintSigningKeyContext` adds cancellation.
+
+`revika-ctl keygen` mints the signing key this way and renders an
+ssh-keygen-style progress line (`-pow-puzzle`, `-pow-difficulty`). A node enforces
+the other side: `net.Server.SetPoW` (wired by `revika-node -pow-difficulty`) runs
+`MeetsPoW` on the owner pubkey recovered from a PUT's auth token and refuses the
+write if it falls short. Since difficulty is per-node policy, a client must mint at
+the highest difficulty among the nodes it uses under a matching puzzle; a
+**difficulty advertisement** so `put` learns each node's requirement up front and
+fails fast (instead of a late `ErrUnauthorized`) is planned — see
+`internal/net/README.md` and Architecture.md §5.
+
 ## How it fits into revika
 
 - **Sharing = wrapping keys, never copying plaintext.** A read-cap is wrapped

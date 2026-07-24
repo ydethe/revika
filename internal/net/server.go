@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 
+	"revika/internal/cap"
 	"revika/internal/ledger"
 	"revika/internal/store"
 	"revika/internal/stripe"
@@ -31,6 +32,13 @@ type Server struct {
 	log       *slog.Logger
 	announcer Announcer
 	ledger    *ledger.Ledger
+
+	// Proof-of-work admission policy. When powMin > 0, an owner identity
+	// presented on a write must satisfy powMin leading zero bits under powPuzzle,
+	// or the write is refused — raising the cost of minting a fresh identity to
+	// replace a banned one (see internal/cap/pow.go). Zero disables the check.
+	powPuzzle cap.Puzzle
+	powMin    cap.Difficulty
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -60,6 +68,41 @@ func (srv *Server) SetAnnouncer(a Announcer) { srv.announcer = a }
 // Left unset, the server behaves as an unauthenticated blob store — the mode
 // used by in-memory tests and legacy single-node setups.
 func (srv *Server) SetLedger(l *ledger.Ledger) { srv.ledger = l }
+
+// SetPoW sets the proof-of-work admission policy for writes: the owner identity
+// (the Ed25519 pubkey recovered from a PUT's auth token) must be self-certifying
+// — its puzzle digest must have at least d leading zero bits — or the write is
+// refused with ErrUnauthorized. This is what makes an identity ban bite:
+// replacing a banned owner costs ~2^d puzzle evaluations, not milliseconds.
+// difficulty and puzzle are local operator policy; a client must mint (revika-ctl
+// keygen) with a matching puzzle and difficulty >= d, since a self-certifying key
+// only verifies against the exact puzzle it was minted for. The grant-authorized
+// repair path is exempt (it regenerates already-admitted data, and repair is
+// mandatory), as is DELETE (owner-scoped; drops only the caller's own claim).
+//
+// A zero difficulty (the default) disables the check, leaving the node's prior
+// behaviour untouched. If d > 0 and puzzle is nil, DefaultArgon2id is used. Call
+// before Register. The check only applies when a ledger is set (no ledger = an
+// unauthenticated blob store with no owner identity to gate).
+func (srv *Server) SetPoW(puzzle cap.Puzzle, d cap.Difficulty) {
+	if d > 0 && puzzle == nil {
+		puzzle = cap.DefaultArgon2id()
+	}
+	srv.powPuzzle, srv.powMin = puzzle, d
+}
+
+// enforcePoW reports whether owner satisfies the node's proof-of-work admission
+// policy, returning ErrUnauthorized if not. A zero minimum difficulty accepts
+// any owner (the check is disabled).
+func (srv *Server) enforcePoW(owner []byte) error {
+	if srv.powMin == 0 {
+		return nil
+	}
+	if !cap.MeetsPoW(srv.powPuzzle, owner, srv.powMin) {
+		return ErrUnauthorized
+	}
+	return nil
+}
 
 // Register installs the Server's stream handlers on h. After this the host will
 // serve /revika/shard and /revika/probe to any peer that dials them.
@@ -160,6 +203,20 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 			owner, err = verifyToken(token, opPut, id, s.Conn().LocalPeer(), now)
 			if err != nil {
 				srv.log.Debug("shard put: unauthorized", "peer", peer, "id", id, "err", err)
+				srv.replyErr(s, err)
+				return
+			}
+			// Proof-of-work admission: a fresh, owner-initiated write is only
+			// accepted from a self-certifying identity meeting the node's
+			// difficulty. This gates the abuse vector (an owner injecting new
+			// load), so it applies to token writes but NOT to the grant branch
+			// below: repair regenerates already-admitted, content-addressed data
+			// under an owner vouched for at store time, and repair is mandatory —
+			// gating it would strand data whose owner predates the current bar.
+			// DELETE is likewise ungated (owner-scoped, drops only the caller's
+			// own claim).
+			if err := srv.enforcePoW(owner); err != nil {
+				srv.log.Debug("shard put: owner fails proof-of-work", "peer", peer, "id", id, "min_bits", srv.powMin)
 				srv.replyErr(s, err)
 				return
 			}

@@ -77,11 +77,16 @@ func usage() {
 	fmt.Fprint(os.Stderr, `revika-ctl — revika User client
 
 Commands:
-  keygen [-key <prefix>]
+  keygen [-key <prefix>] [-pow-puzzle argon2id|sha256] [-pow-difficulty <bits>]
         Generate the User identity: an ML-KEM-768 (FIPS 203) keypair for receiving shared files
         (<prefix>.key/.pub) and an Ed25519 signing keypair that is your storage
         owner identity (<prefix>.sign.key/.sign.pub). Default prefix:
         .revika/keys/user
+        The signing key is self-certifying: it is ground until its public key
+        satisfies a proof-of-work target (-pow-difficulty leading zero bits under
+        -pow-puzzle), so it costs seconds-to-minutes to mint but one hash to
+        verify — a banned owner cannot re-mint an identity for free. Default
+        argon2id (memory-hard) at 12 bits; -pow-difficulty 0 disables it.
 
   put (-node <ma> | -bootstrap <ma>... | -mdns) [-manifest <path>] [-signkey <path>] <file>
         Chunk, encrypt, erasure-code and store <file>. With -node, store on that

@@ -158,6 +158,18 @@ interprets, or trusts payloads.
   removes the blob only when the last owner leaves; the erasure context (descriptor
   + grant) is recorded so the node can later help repair the stripe. Without a
   ledger the server is an unauthenticated blob store (tests / legacy single-node).
+- `SetPoW(puzzle, difficulty)` — turns on **proof-of-work identity admission**. When
+  difficulty > 0, the owner a PUT would be recorded under (from the token, or the
+  repair grant) must be a *self-certifying* identity — its `cap.Puzzle` digest must
+  have at least `difficulty` leading zero bits (`cap.MeetsPoW`) — or the PUT is refused
+  with `ErrUnauthorized`. This makes an identity ban bite: replacing a banned owner
+  costs ~`2^difficulty` puzzle evaluations, not milliseconds. Verification is one hash.
+  Only PUT is gated (the write/abuse vector); DELETE stays ungated (owner-scoped, and
+  gating it would strand data for owners minted below a later-raised bar). Difficulty
+  and puzzle are local operator policy, so a client must `keygen` with a matching puzzle
+  and difficulty ≥ the node's — a self-certifying key only verifies against the exact
+  puzzle it was minted for. Zero (the default) disables the check. See
+  `internal/cap/pow.go` and `revika-node -pow-difficulty/-pow-puzzle`.
 
 Ordering is crash-safe: bytes are stored before ownership is recorded, and on
 DELETE the ledger row is removed before the blob — a crash in between leaves an
@@ -171,6 +183,15 @@ on `PUT`/`DELETE` (keyed on the Ed25519 owner from `verifyToken`), with anonymou
 response code. Transport-level blocking already lives in the host's `ConnectionGater`
 (see **Self-defence** above); together with the quota they form a node's acceptable-use
 enforcement. See Architecture.md §3.1/§5.
+
+**Planned — proof-of-work difficulty advertisement.** Difficulty is per-node local policy
+(`SetPoW`), so a client storing across nodes must mint at the *max* difficulty among them
+under a matching puzzle. Today `put` does not learn a node's requirement in advance, so a
+mismatch surfaces late as an `ErrUnauthorized` on the failed `PUT`. Planned: the node
+advertises its `(puzzle, min difficulty)` — e.g. a `/revika/params` query or a field on the
+DHT provider/storage advertisement — so the client checks it up front and fails fast with an
+actionable "re-run keygen at difficulty ≥ N with puzzle X" message instead of a bare
+authorization error. See Architecture.md §5.
 
 ## DHT-backed stores (`placement.go`, `repair.go`)
 

@@ -71,13 +71,18 @@ go vet ./...
 go run ./cmd/revika-node  # Node daemon (-data -listen -mdns -dht -bootstrap -advertise
                           #   -quota -lease-ttl -gc-interval -gc-expired-leases -repair
                           #   -repair-interval -metrics -blocklist -conn-low -conn-high
-                          #   -conn-grace -v)
+                          #   -conn-grace -pow-difficulty -pow-puzzle -v)
 go run ./cmd/revika-ctl   # User client: keygen | put | get | delete | share (see -h)
 ```
 
 `keygen` writes two keypairs: `<prefix>.key/.pub` (ML-KEM-768, receiving shares) and
-`<prefix>.sign.key/.sign.pub` (Ed25519, the storage owner identity). `put`/`delete` sign with
-`-signkey` (default `.revika/keys/user.sign.key`).
+`<prefix>.sign.key/.sign.pub` (Ed25519, the storage owner identity). The signing key is
+*self-certifying*: it is ground via proof-of-work (`-pow-difficulty`/`-pow-puzzle`, default
+argon2id@12) until its pubkey hashes under the target, so re-minting a banned identity costs
+CPU, not milliseconds (`internal/cap/pow.go`). Nodes admit writes only from owners meeting
+their own `-pow-difficulty` (default 0 = off), so client and node must use a matching puzzle
+and the client's difficulty must be ≥ the node's. `put`/`delete` sign with `-signkey`
+(default `.revika/keys/user.sign.key`).
 
 Runtime state lives under `.revika/` (git-ignored): node shares, SQLite ledger, keys, mock store.
 

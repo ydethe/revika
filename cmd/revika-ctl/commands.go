@@ -19,7 +19,16 @@ import (
 func cmdKeygen(args []string) error {
 	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
 	prefix := fs.String("key", filepath.Join(".revika", "keys", "user"), "path prefix for the identity (writes <prefix>.key and <prefix>.pub)")
+	powDifficulty := fs.Uint("pow-difficulty", 12, "proof-of-work difficulty for the signing (owner) identity, in leading zero bits (0 disables); expected cost ~2^difficulty attempts")
+	powPuzzle := fs.String("pow-puzzle", "argon2id", "proof-of-work puzzle: argon2id (memory-hard, recommended) or sha256 (fast, GPU-friendly)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *powDifficulty > 255 {
+		return fmt.Errorf("pow-difficulty %d out of range (0-255)", *powDifficulty)
+	}
+	puzzle, err := cap.PuzzleByName(*powPuzzle)
+	if err != nil {
 		return err
 	}
 
@@ -43,7 +52,7 @@ func cmdKeygen(args []string) error {
 	if err != nil {
 		return err
 	}
-	signKey, signPub, err := cap.GenerateSigningKey()
+	signKey, signPub, err := mintSigningKey(puzzle, cap.Difficulty(*powDifficulty))
 	if err != nil {
 		return err
 	}
@@ -72,6 +81,49 @@ func cmdKeygen(args []string) error {
 	fmt.Println(pub.String())
 	fmt.Fprintln(os.Stderr, "note: the signing key is your storage owner identity — back it up. Lose it and you cannot delete or renew what you stored (the data is still retrievable via its manifest).")
 	return nil
+}
+
+// mintSigningKey grinds a self-certifying owner identity, rendering an
+// ssh-keygen-style progress line on stderr when it is a terminal (and a quiet
+// one-shot summary otherwise, e.g. when logging to a file or in CI).
+func mintSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, cap.SignPubKey, error) {
+	if d == 0 {
+		// Proof-of-work disabled: a plain keypair, no grinding.
+		return cap.GenerateSigningKey()
+	}
+
+	tty := isTerminal(os.Stderr)
+	expected := 1 << uint(d) // ~2^d attempts expected
+	fmt.Fprintf(os.Stderr, "Minting owner identity: %s, difficulty %d bits (~%s attempts expected)\n",
+		puzzle.Name(), d, humanCount(uint64(expected)))
+
+	var final cap.Progress
+	onProgress := func(p cap.Progress) {
+		final = p
+		if !tty {
+			return
+		}
+		rate := 0.0
+		if s := p.Elapsed.Seconds(); s > 0 {
+			rate = float64(p.Attempts) / s
+		}
+		line := fmt.Sprintf("%s  %s attempts  %s/s  %s",
+			spinner(p.Elapsed), humanCount(p.Attempts), humanCount(uint64(rate)),
+			progressBar(p.Attempts, uint64(expected)))
+		// Overwrite in place; pad to clear any shorter previous line.
+		fmt.Fprintf(os.Stderr, "\r%-72s", line)
+	}
+
+	signKey, signPub, err := cap.MintSigningKey(puzzle, d, onProgress)
+	if tty {
+		fmt.Fprintln(os.Stderr) // finish the progress line
+	}
+	if err != nil {
+		return cap.SignKey{}, cap.SignPubKey{}, err
+	}
+	fmt.Fprintf(os.Stderr, "Minted owner identity after %s attempts in %s.\n",
+		humanCount(final.Attempts), roundDuration(final.Elapsed))
+	return signKey, signPub, nil
 }
 
 // defaultSignKeyPath is where put/delete look for the User's signing key.
