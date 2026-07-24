@@ -21,6 +21,7 @@ func cmdKeygen(args []string) error {
 	prefix := fs.String("key", filepath.Join(".revika", "keys", "user"), "path prefix for the identity (writes <prefix>.key and <prefix>.pub)")
 	powDifficulty := fs.Uint("pow-difficulty", 12, "proof-of-work difficulty for the signing (owner) identity, in leading zero bits (0 disables); expected cost ~2^difficulty attempts")
 	powPuzzle := fs.String("pow-puzzle", "argon2id", "proof-of-work puzzle: argon2id (memory-hard, recommended) or sha256 (fast, GPU-friendly)")
+	powFail := fs.Bool("pow-fail", false, "TESTING ONLY: mint a signing (owner) key that FAILS the pow check at -pow-difficulty, to exercise a node's pow-admission gate")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -52,7 +53,11 @@ func cmdKeygen(args []string) error {
 	if err != nil {
 		return err
 	}
-	signKey, signPub, err := mintSigningKey(puzzle, cap.Difficulty(*powDifficulty))
+	mint := mintSigningKey
+	if *powFail {
+		mint = mintFailingSigningKey
+	}
+	signKey, signPub, err := mint(puzzle, cap.Difficulty(*powDifficulty))
 	if err != nil {
 		return err
 	}
@@ -124,6 +129,29 @@ func mintSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, cap.SignP
 	fmt.Fprintf(os.Stderr, "Minted owner identity after %s attempts in %s.\n",
 		humanCount(final.Attempts), roundDuration(final.Elapsed))
 	return signKey, signPub, nil
+}
+
+// mintFailingSigningKey is the deliberate inverse of mintSigningKey: it returns a
+// signing (owner) keypair whose public key does NOT satisfy puzzle at difficulty
+// d — a non-self-certifying identity that a pow-enforcing node refuses on write.
+// It exists only for testing that admission gate; a random Ed25519 key fails
+// difficulty d with probability 1 - 2^-d, so this returns almost immediately.
+// At d == 0 no key can fail (every key passes), which is an error.
+func mintFailingSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, cap.SignPubKey, error) {
+	if d == 0 {
+		return cap.SignKey{}, cap.SignPubKey{}, fmt.Errorf("-pow-fail needs -pow-difficulty > 0: at difficulty 0 every key passes, so none can fail")
+	}
+	for range 1_000_000 {
+		key, pub, err := cap.GenerateSigningKey()
+		if err != nil {
+			return cap.SignKey{}, cap.SignPubKey{}, err
+		}
+		if !cap.MeetsPoW(puzzle, pub[:], d) {
+			fmt.Fprintf(os.Stderr, "TESTING: minted a NON-self-certifying owner identity failing %s at difficulty %d bits — a pow-enforcing node will reject its writes.\n", puzzle.Name(), d)
+			return key, pub, nil
+		}
+	}
+	return cap.SignKey{}, cap.SignPubKey{}, fmt.Errorf("could not find a key failing difficulty %d after 1e6 attempts", d)
 }
 
 // defaultSignKeyPath is where put/delete look for the User's signing key.

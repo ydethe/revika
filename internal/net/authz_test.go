@@ -115,6 +115,27 @@ func signedClient(t *testing.T, server host.Host, signer cap.SignKey) *NetStore 
 	return NewNetStoreSigned(clientHost(t, server), server.ID(), signer)
 }
 
+// newPoWNode spins up a ledger-backed server host enforcing proof-of-work
+// admission at difficulty d under puzzle. Returns the host to dial.
+func newPoWNode(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) host.Host {
+	t.Helper()
+	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
+	if err != nil {
+		t.Fatalf("server host: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+	led, err := ledger.Open(filepath.Join(t.TempDir(), "ledger.db"), ledger.Options{})
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	t.Cleanup(func() { led.Close() })
+	srv := NewServer(store.NewMemStore(), nil)
+	srv.SetLedger(led)
+	srv.SetPoW(puzzle, d)
+	srv.Register(h)
+	return h
+}
+
 // TestOwnershipDelete is the headline scenario: two Users store the same bytes;
 // one deleting drops only their claim, and the blob survives until the last
 // owner deletes.
@@ -232,21 +253,7 @@ func TestPoWAdmission(t *testing.T) {
 	puzzle := cap.SHA256Puzzle{}
 	const d cap.Difficulty = 8
 
-	backing := store.NewMemStore()
-	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
-	if err != nil {
-		t.Fatalf("server host: %v", err)
-	}
-	t.Cleanup(func() { h.Close() })
-	led, err := ledger.Open(filepath.Join(t.TempDir(), "ledger.db"), ledger.Options{})
-	if err != nil {
-		t.Fatalf("ledger: %v", err)
-	}
-	t.Cleanup(func() { led.Close() })
-	srv := NewServer(backing, nil)
-	srv.SetLedger(led)
-	srv.SetPoW(puzzle, d)
-	srv.Register(h)
+	h := newPoWNode(t, puzzle, d)
 	ctx := context.Background()
 
 	// A non-self-certifying owner is refused on PUT.
@@ -275,6 +282,74 @@ func TestPoWAdmission(t *testing.T) {
 	if err := weak.Delete(ctx, id); err != nil && !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("weak delete unexpected error: %v", err)
 	}
+}
+
+// mintValidButBelow mints a key that is self-certifying under puzzle at mintD
+// but does NOT reach nodeD leading zero bits — a genuine proof-of-work that is
+// nonetheless too weak for a node demanding nodeD. mintD must be < nodeD.
+func mintValidButBelow(t *testing.T, puzzle cap.Puzzle, mintD, nodeD cap.Difficulty) cap.SignKey {
+	t.Helper()
+	for range 100 {
+		key, pub, err := cap.MintSigningKey(puzzle, mintD, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cap.MeetsPoW(puzzle, pub[:], mintD) && !cap.MeetsPoW(puzzle, pub[:], nodeD) {
+			return key
+		}
+	}
+	t.Fatalf("could not mint a key valid at %d but below %d", mintD, nodeD)
+	return cap.SignKey{}
+}
+
+// TestPoWRejectsInvalidProofs exercises the ways an owner's proof-of-work can be
+// invalid for a node that requires one, beyond the plain no-PoW identity of
+// TestPoWAdmission. A self-certifying key only verifies against the exact puzzle
+// and difficulty the node enforces, so each of these must be refused on PUT with
+// ErrUnauthorized.
+func TestPoWRejectsInvalidProofs(t *testing.T) {
+	t.Run("no proof-of-work", func(t *testing.T) {
+		// A plain keypair minted without grinding: its digest is unconstrained, so
+		// it fails the node's difficulty with overwhelming probability.
+		puzzle := cap.SHA256Puzzle{}
+		const d cap.Difficulty = 12
+		node := newPoWNode(t, puzzle, d)
+		c := signedClient(t, node, mintFailingKey(t, puzzle, d))
+		if _, err := c.Put(context.Background(), []byte("no pow")); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("put with no proof-of-work = %v, want ErrUnauthorized", err)
+		}
+	})
+
+	t.Run("wrong puzzle", func(t *testing.T) {
+		// The client mints a valid identity under sha256, but the node enforces
+		// argon2id. The key certifies itself for its own puzzle only; its argon2id
+		// digest is unconstrained, so the node rejects it. (Node-side verification
+		// is a single argon2id evaluation, so this stays fast.)
+		node := newPoWNode(t, cap.DefaultArgon2id(), 8)
+		key, pub, err := cap.MintSigningKey(cap.SHA256Puzzle{}, 8, nil)
+		if err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		if cap.MeetsPoW(cap.DefaultArgon2id(), pub[:], 8) {
+			t.Skip("sha256-minted key coincidentally satisfies argon2id difficulty")
+		}
+		c := signedClient(t, node, key)
+		if _, err := c.Put(context.Background(), []byte("wrong puzzle")); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("put with mismatched puzzle = %v, want ErrUnauthorized", err)
+		}
+	})
+
+	t.Run("insufficient difficulty", func(t *testing.T) {
+		// A real proof, but ground for fewer leading zero bits than the node
+		// demands — the client cannot pass off a cheaper puzzle as a costlier one.
+		puzzle := cap.SHA256Puzzle{}
+		const nodeD cap.Difficulty = 12
+		node := newPoWNode(t, puzzle, nodeD)
+		c := signedClient(t, node, mintValidButBelow(t, puzzle, 6, nodeD))
+		if _, err := c.Put(context.Background(), []byte("too weak")); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("put below required difficulty = %v, want ErrUnauthorized", err)
+		}
+	})
 }
 
 // TestPoWDisabledByDefault confirms the gate is off unless configured: a plain
