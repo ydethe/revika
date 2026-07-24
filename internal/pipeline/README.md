@@ -38,6 +38,7 @@ shard access) a reader needs.
 
 ```go
 type FileManifest struct {
+    Name   string       // original file name (set by the caller after StoreFile)
     Params Config       // encoding config used (chunk size + K/M)
     Size   int64        // original plaintext size in bytes
     Chunks []ChunkRef   // ordered per-chunk recipes (key + shard IDs)
@@ -45,6 +46,9 @@ type FileManifest struct {
 ```
 
 Each `ChunkRef` carries the chunk's encryption `Key` and its ordered `Shards`.
+`StoreFile` takes an `io.Reader` and cannot know the name, so the caller sets
+`Name` after storing (see `revika-ctl`'s `runStore`); it lets a reader restore
+the file under its original name without being told it out of band.
 
 ## How it ties the pieces together
 
