@@ -5,10 +5,9 @@ Dropbox/Drive that runs over a peer-to-peer network instead of a central server.
 split, encrypted, and spread across many independent nodes, so no single node ever holds a
 whole file (or any plaintext) and the system tolerates node loss.
 
-Think **"RAID-6 over the internet, with client-side encryption"** — the [Tahoe-LAFS][tahoe]
-model on modern P2P plumbing ([go-libp2p][libp2p]).
+Think **"RAID-6 over the internet, with client-side encryption"** on modern P2P plumbing
+([go-libp2p][libp2p]).
 
-[tahoe]: https://tahoe-lafs.org/
 [libp2p]: https://github.com/libp2p/go-libp2p
 
 ## How it works

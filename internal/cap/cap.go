@@ -2,7 +2,7 @@
 // read-capability (in practice, a file's manifest bytes) so that only the
 // holder of a chosen recipient's private key can unwrap it.
 //
-// This is the mechanism behind sharing in the Tahoe-LAFS model (Architecture
+// This is the mechanism behind sharing (Architecture
 // §3.5): access is granted by handing over a read-cap, and cap delivery is done
 // by encrypting that cap to the recipient's public key. Nodes are never
 // involved and learn nothing — wrapping and unwrapping are purely client-side.

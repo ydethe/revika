@@ -7,7 +7,7 @@ Ed25519 signing identity used to prove shard ownership to nodes.
 
 ## Purpose
 
-This is the mechanism behind sharing in the Tahoe-LAFS model. Access to a file
+This is the mechanism behind sharing. Access to a file
 is granted by handing over a *read-cap*; delivery is done by encrypting that cap
 to the recipient's public key. Nodes are never involved and learn nothing —
 wrapping and unwrapping are purely client-side. The package treats the cap as

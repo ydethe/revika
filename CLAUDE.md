@@ -17,10 +17,12 @@ that stores ciphertext shards. One machine can be both.
 
 **Nodes are dumb, untrusted blob stores.** They only ever see encrypted, erasure-coded shards
 addressed by content hash. All intelligence (chunking, encryption, keys, sharing) lives on the
-User side — a node is trusted for *availability*, never *confidentiality* (the Tahoe-LAFS model).
+User side — a node is trusted for *availability*, never *confidentiality*.
 
 ## Design constraints (settled — treat as fixed unless the maintainer changes them)
 
+- **Never mention Tahoe-LAFS nor make design choices inspired by it** Always use Specifications and Architecture documents, and state-of-the-art concepts for cryptography and P2P sharing
+- **Keep all READMEs in subpackages up to date**
 - **All crypto must be PQC-class.** Cap wrapping = ML-KEM-768 (FIPS 203) via stdlib
   `crypto/mlkem` as a KEM-DEM with AES-256-GCM. AEAD = AES-256-GCM (stdlib; AES-256 is
   PQC-safe). Signatures stay Ed25519 (FIPS 204 ML-DSA not yet in stdlib).

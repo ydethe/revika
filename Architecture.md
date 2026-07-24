@@ -48,7 +48,7 @@ Consequences:
   stores.
 - The network can be fully open/permissionless without weakening privacy.
 
-This is the **Tahoe-LAFS** model, adapted to modern P2P plumbing (go-libp2p) and content
+This trust model runs on modern P2P plumbing (go-libp2p) and content
 addressing (IPFS-style provider records).
 
 ## 3. Layered architecture
@@ -191,7 +191,7 @@ file's read-cap (its serialized manifest) to a recipient's public key. **Still
 planned:** the derivation chain (write-cap → read-cap → verify-cap), signing keys for
 mutable root pointers, and a compact string form for caps.
 
-The **capability** ("cap") is how access is named and delegated, following Tahoe-LAFS:
+The **capability** ("cap") is how access is named and delegated:
 
 - A **read-capability** = *manifest location* + *decryption key(s)*. Whoever holds it can
   read the object. Nothing else is needed, and nodes never see it.
@@ -243,7 +243,7 @@ the most:
    ciphertext destroys that invariant. It also turns a node from a *dumb, untrusted blob
    store* (§2) into an active crypto participant holding re-encryption keys, and
    proxy-plus-recipient collusion is a live concern in several PRE schemes — a real
-   departure from the Tahoe-LAFS trust model.
+   departure from revika's trust model.
 
 2. **The "identity-based" part needs a trusted authority.** IBE-family schemes require a
    **Private Key Generator** that can derive *any* user's private key — inherent key escrow
@@ -459,7 +459,7 @@ Still open:
 - If/when content-defined chunking replaces fixed-size, its parameters and target chunk
   size — and whether `k`/`m` should scale with file size / desired durability.
 - Concrete on-disk/on-wire serialization for manifests and capabilities (and a compact
-  string form for caps, à la Tahoe URIs); where `FileManifest` finally lives.
+  string form for caps); where `FileManifest` finally lives.
 - How User identity keys relate to libp2p peer identity keys.
 - Placement policy details: diversity signals available in a libp2p network, reputation
   inputs, and repair thresholds/cadence.

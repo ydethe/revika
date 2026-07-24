@@ -3,7 +3,7 @@
 # Unauthorized-access check, run inside the compose `attacker` service as a
 # SEPARATE client from the one that stored the data.
 #
-# revika's trust model (Tahoe-LAFS style): nodes are dumb, untrusted blob stores
+# revika's trust model: nodes are dumb, untrusted blob stores
 # that hold only encrypted, erasure-coded, content-addressed shards, and they
 # serve those shards to ANYONE on the network. Confidentiality therefore rests
 # entirely on the read-capability — the decryption keys + shard IDs kept in the
