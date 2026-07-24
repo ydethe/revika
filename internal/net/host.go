@@ -32,6 +32,11 @@ type HostConfig struct {
 	// EnableMDNS turns on mDNS LAN peer discovery (auto-dial peers found on the
 	// local network). Useful for development and single-LAN deployments.
 	EnableMDNS bool
+	// Defense, when non-nil, installs the node's self-defence layers (resource
+	// manager, connection manager, and a static blocklist gater) on the host —
+	// see defense.go. Nil (the default, used by tests) leaves libp2p's own
+	// defaults in place and installs no gater.
+	Defense *DefenseConfig
 	// Log receives host lifecycle lines: peer connect/disconnect (Debug) and each
 	// new peer discovered via mDNS (Info). If nil, this logging is discarded.
 	Log *slog.Logger
@@ -56,16 +61,32 @@ func NewHost(cfg HostConfig) (host.Host, error) {
 	if len(listen) == 0 {
 		listen = defaultListenAddrs()
 	}
-	h, err := libp2p.New(
-		libp2p.Identity(priv),
-		libp2p.ListenAddrStrings(listen...),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("revika/net: new host: %w", err)
-	}
 	log := cfg.Log
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
+	}
+
+	opts := []libp2p.Option{
+		libp2p.Identity(priv),
+		libp2p.ListenAddrStrings(listen...),
+	}
+	// Node self-defence: resource manager + connection manager + optional static
+	// blocklist gater. Only wired when the caller asks for it (nodes do; tests
+	// leave it nil and run on libp2p defaults).
+	if cfg.Defense != nil {
+		if cfg.Defense.Log == nil {
+			cfg.Defense.Log = log
+		}
+		defOpts, err := defenseOptions(cfg.Defense)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, defOpts...)
+	}
+
+	h, err := libp2p.New(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("revika/net: new host: %w", err)
 	}
 	// Log the underlying peer connection lifecycle. This is churn on a busy DHT,
 	// so it stays at Debug; the meaningful "discovered node" lines are emitted at

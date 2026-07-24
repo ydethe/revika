@@ -49,6 +49,36 @@ each newly seen LAN peer and logs it once. NAT traversal / transport concerns ar
 handled by libp2p itself (QUIC + TCP transports, the identify service that
 populates peer addresses); revika does not roll its own.
 
+## Self-defence (`defense.go`)
+
+A node is dumb about *content*, not about its own availability. `HostConfig.Defense`
+(a `*DefenseConfig`) installs three anti-DoS/DDoS layers on `libp2p.New`; all inspect
+only connection/identity metadata — a peer ID, an IP, a connection count — never shard
+bytes, so the untrusted-blob-store model holds. Nil (tests) leaves libp2p's defaults.
+
+- **`ResourceManager`** — an explicit fixed limiter from `rcmgr.DefaultLimits.AutoScale()`
+  (scaled to the host's memory + FD budget), giving hard per-scope caps on memory, streams,
+  and connections so one peer can't exhaust the host.
+- **`ConnManager`** — soft low/high connection watermarks (`defaultConnLow`/`defaultConnHigh`
+  = 64/192) with a grace period (`defaultConnGrace` = 30s); once connections exceed the high
+  mark the least-useful ones (past grace) are trimmed toward the low mark. `ConnHigh <= 0`
+  disables it.
+- **`ConnectionGater`** (`blocklistGater`) — a static, operator-supplied **peer-ID / subnet
+  blocklist**. Installed only when non-empty. It denies a blocked peer whether we dial it
+  (`InterceptPeerDial`/`InterceptAddrDial`) or it dials us (`InterceptAccept` on IP before
+  the handshake, `InterceptSecured` on peer ID after), so an abusive peer is refused at the
+  transport layer before any protocol handler runs.
+
+`ParseBlocklist`/`LoadBlocklistFile` parse a blocklist file: one entry per line, each a
+libp2p peer ID, a CIDR (`203.0.113.0/24`), or a bare IP (kept as a /32 or /128 host route);
+`#` starts a whole-line or inline comment. `revika-node -blocklist <file>` wires it in;
+`-conn-low`/`-conn-high`/`-conn-grace` tune the connection manager.
+
+These are *connection/flow* caps that complement the ledger's *storage* cap (per-owner
+quota). **Still planned:** per-peer/per-owner rate limiting on the write verbs (a token
+bucket keyed on the Ed25519 owner) with a `statusRateLimited` response. See
+Architecture.md §3.1/§5.
+
 ## DHT discovery (`dht.go`)
 
 `Discovery` is revika's Kademlia DHT layer for WAN peer, node-service, and shard
@@ -133,6 +163,14 @@ Ordering is crash-safe: bytes are stored before ownership is recorded, and on
 DELETE the ledger row is removed before the blob — a crash in between leaves an
 orphan blob for GC to reclaim, never lost owner data. `handleProbe` returns
 `SHA-256(nonce || shardBytes)`. `serverStreamTimeout` (60s) bounds each exchange.
+
+**Planned abuse controls.** Beyond the per-owner storage quota the ledger already
+enforces, the server is the place for a *flow* cap: a per-peer and per-owner token bucket
+on `PUT`/`DELETE` (keyed on the Ed25519 owner from `verifyToken`), with anonymous
+`GET`/`HAS`/`PROBE` limited per-peer/IP only, surfaced by a new `statusRateLimited`
+response code. Transport-level blocking already lives in the host's `ConnectionGater`
+(see **Self-defence** above); together with the quota they form a node's acceptable-use
+enforcement. See Architecture.md §3.1/§5.
 
 ## DHT-backed stores (`placement.go`, `repair.go`)
 

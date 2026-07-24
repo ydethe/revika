@@ -90,6 +90,33 @@ network layer and the two `cmd/` binaries do not.
 Do not roll a bespoke wire protocol. All revika interactions are **libp2p stream
 protocols** with versioned protocol IDs (see §6).
 
+**Node self-defence (anti-DoS/DDoS).** A node is *dumb about content*, not defenceless
+about its own availability. Operators enable local defences that act only on
+connection/identity/volume metadata and never decrypt or interpret a shard, so the trust
+model in §2 is untouched. The first three are **[implemented]** in `internal/net/defense.go`
+(wired via `HostConfig.Defense` on `libp2p.New` in `host.go`):
+
+- **`ResourceManager` (rcmgr) — [implemented]** — an explicit fixed limiter from
+  `rcmgr.DefaultLimits.AutoScale()` (scaled to the host's memory + FD budget) bounding
+  memory, streams, and connections per scope so one peer can't exhaust the host.
+- **`ConnManager` — [implemented]** — low/high connection watermarks (defaults 64/192) with
+  a grace period (30 s), trimming the least-useful connections once the count exceeds the
+  high mark. `-conn-low`/`-conn-high`/`-conn-grace` tune it; `-conn-high 0` disables it.
+- **`ConnectionGater` — [implemented]** — a static, operator-supplied **peer-ID / subnet
+  blocklist** (`blocklistGater`) consulted on inbound *and* outbound dials, so a known-abusive
+  peer is refused at the transport layer before any protocol handler runs. Loaded from
+  `revika-node -blocklist <file>` (one peer ID, CIDR, or bare IP per line; `#` comments).
+- **Rate limiting — [planned]** — a per-peer and per-owner token bucket on the write verbs
+  (`PUT`/`DELETE`), keyed on the Ed25519 owner pubkey the auth token already carries
+  (§3.2, `internal/net/auth.go`); anonymous reads (`GET`/`HAS`/`PROBE`) limited per-peer/IP
+  only. A new `statusRateLimited` response code surfaces the rejection.
+
+These are *flow/connection* caps that complement the existing *storage* caps (per-owner
+quota + leases, §3.2). Because owner identities are self-minted for free, **ban-by-identity
+is only as strong as the cost of a fresh identity** — so identity bans pair with an
+optional owner allowlist for hardened deployments (**[planned]**), while global anti-Sybil,
+reputation, and economic deterrents stay deferred (§5, §10).
+
 ### 3.2 Storage layer (Node) — **[implemented]** (`internal/store`)
 
 A content-addressed blob store. The `Store` interface is content-addressed: `Put`
@@ -338,12 +365,24 @@ index/accounting of the user's own data and where it lives, *not* a global share
   missing.)*
 - **Availability:** erasure coding + active repair are implemented against a single local
   store; **diverse placement across nodes is planned**. `k`/`m` and the redundancy margin
-  are chosen for target durability.
+  are chosen for target durability. A node also protects *its own* availability with local
+  anti-DoS/DDoS defences — `ResourceManager`/`ConnManager` limits and a `ConnectionGater`
+  blocklist (§3.1) — that act on connection/identity metadata only, never on shard content.
+  *(Implemented in `internal/net/defense.go`; per-peer/per-owner rate limiting still planned.)*
 - **Authentication:** libp2p secure channels authenticate peers; root pointers are signed
   by the User's key. *(Planned — arrives with the network layer.)*
+- **Acceptable use / abuse control:** enforced *locally per node*, since nodes are
+  independent and untrusted — there is no global ban authority. A node combines per-owner
+  storage quota + leases (§3.2, **[implemented]**) with the connection/flow defences above
+  (rcmgr/connmgr/gater **[implemented]**; write-verb rate limiting **[planned]**).
+  Ban-by-identity keys on the Ed25519 owner pubkey but is only as strong as the cost of
+  minting a fresh identity, so hardened nodes may run an **owner allowlist** (admission)
+  instead of, or alongside, a blocklist.
 - **Out of scope for the PoC (note as future work):** economic incentives/payments,
   Byzantine-fault-tolerant reputation, defenses against storage nodes that lie about
-  possession beyond the probe mechanism, and anti-Sybil measures.
+  possession beyond the probe mechanism, and **global** anti-Sybil measures (a cost to mint
+  identities network-wide) — local per-node quota/rate-limits/blocklists above are *in*
+  scope as planned work.
 
 ## 6. libp2p protocol surface
 

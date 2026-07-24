@@ -90,6 +90,10 @@ func run() error {
 		repairOn    = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
 		repairEvery = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
 		metricsAddr = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics over plain HTTP — put TLS on a reverse proxy")
+		blocklist   = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
+		connLow     = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
+		connHigh    = flag.Int("conn-high", 0, "connection-manager high watermark, above which idle connections are trimmed (0 = built-in default; <0 disables)")
+		connGrace   = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
 		listen      multiFlag
 		bootstrap   multiFlag
 	)
@@ -134,10 +138,30 @@ func run() error {
 		log.Info("ledger reconciled", "orphan_blobs", rep.OrphanBlobs, "dropped_records", rep.DroppedRecords)
 	}
 
+	// Self-defence: resource manager + connection manager + a static blocklist
+	// gater. Always on for a node (they act on connection/identity metadata only,
+	// never shard content); the blocklist is empty unless -blocklist is given.
+	defense := &net.DefenseConfig{
+		ConnLow:   *connLow,
+		ConnHigh:  *connHigh,
+		ConnGrace: *connGrace,
+		Log:       log,
+	}
+	if *blocklist != "" {
+		peers, subnets, err := net.LoadBlocklistFile(*blocklist)
+		if err != nil {
+			return err
+		}
+		defense.BlockPeers = peers
+		defense.BlockSubnets = subnets
+		log.Info("blocklist loaded", "path", *blocklist, "peers", len(peers), "subnets", len(subnets))
+	}
+
 	h, err := net.NewHost(net.HostConfig{
 		ListenAddrs:  listen,
 		IdentityPath: filepath.Join(*dataDir, "keys", "node.key"),
 		EnableMDNS:   *mdnsOn,
+		Defense:      defense,
 		Log:          log,
 	})
 	if err != nil {

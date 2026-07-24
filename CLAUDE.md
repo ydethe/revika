@@ -37,6 +37,16 @@ User side — a node is trusted for *availability*, never *confidentiality*.
 - **Repair is mandatory** — erasure coding without repair only delays data loss. Repair operates
   on ciphertext only (no decryption key), relying on `erasure.Encode` being deterministic so
   regenerated shards reproduce their content addresses.
+- **Nodes may defend their own availability.** "Dumb" means dumb about *content*, not defenceless:
+  an operator-run node is allowed local, operator-controlled anti-DoS/anti-DDoS defences that never
+  decrypt or interpret a shard — they act only on connection/identity/volume metadata. Sanctioned
+  levers: libp2p `ResourceManager` + `ConnManager` limits, a `ConnectionGater` with a static
+  peer/subnet blocklist (and optional allowlist), and per-peer / per-owner rate limiting keyed on
+  the Ed25519 owner pubkey. Existing per-owner quota + leases stay the *storage* cap; these add a
+  *flow/connection* cap. The rcmgr/connmgr/gater + static blocklist live in
+  `internal/net/defense.go` (wired via `HostConfig.Defense`); write-verb rate limiting is still
+  TODO. Note ban-by-identity is weak while identities are free to mint — global anti-Sybil,
+  reputation, and economic layers remain deferred (see Architecture.md §5).
 
 ## Toolchain & conventions
 
@@ -60,7 +70,8 @@ go test -run TestName ./path/to/pkg
 go vet ./...
 go run ./cmd/revika-node  # Node daemon (-data -listen -mdns -dht -bootstrap -advertise
                           #   -quota -lease-ttl -gc-interval -gc-expired-leases -repair
-                          #   -repair-interval -metrics -v)
+                          #   -repair-interval -metrics -blocklist -conn-low -conn-high
+                          #   -conn-grace -v)
 go run ./cmd/revika-ctl   # User client: keygen | put | get | delete | share (see -h)
 ```
 
