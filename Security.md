@@ -3,6 +3,8 @@
 ## Objectif
 Ce document recense les principaux scénarios d'attaque contre Revika afin d'alimenter les analyses de risque. Il ne contient volontairement aucune mesure de défense.
 
+Chaque scénario porte un identifiant unique. Convention : `<cible>-<catégorie>[-<sous-catégorie>]-<nn>`, où la cible est `N` (nœuds) ou `C` (clients). Ces identifiants sont stables : ne pas les réutiliser ni les renuméroter, ajouter les nouveaux scénarios à la suite.
+
 ## Actifs à protéger
 - Données (shards)
 - Métadonnées
@@ -17,147 +19,147 @@ Ce document recense les principaux scénarios d'attaque contre Revika afin d'ali
 
 ## Confidentialité
 ### Données
-- Lecture non autorisée des shards stockés.
-- Analyse des accès.
-- Corrélation des métadonnées.
-- Observation des flux réseau.
-- Inférence des relations entre utilisateurs.
+- **N-CONF-01** — Lecture non autorisée des shards stockés.
+- **N-CONF-02** — Analyse des accès.
+- **N-CONF-03** — Corrélation des métadonnées.
+- **N-CONF-04** — Observation des flux réseau.
+- **N-CONF-05** — Inférence des relations entre utilisateurs.
 
 ## Intégrité
 ### Stockage
-- Altération d'un shard.
-- Fourniture d'un shard corrompu.
-- Fourniture d'une ancienne version (rollback).
-- Réorganisation locale des données.
+- **N-INT-STO-01** — Altération d'un shard.
+- **N-INT-STO-02** — Fourniture d'un shard corrompu.
+- **N-INT-STO-03** — Fourniture d'une ancienne version (rollback).
+- **N-INT-STO-04** — Réorganisation locale des données.
 ### Métadonnées
-- Falsification des métadonnées.
-- Modification des timestamps.
-- Réécriture de l'historique.
-- Suppression d'événements locaux.
+- **N-INT-MET-01** — Falsification des métadonnées.
+- **N-INT-MET-02** — Modification des timestamps.
+- **N-INT-MET-03** — Réécriture de l'historique.
+- **N-INT-MET-04** — Suppression d'événements locaux.
 ### Registre
-- Double publication.
-- Réécriture du registre.
-- Omission d'événements.
-- Création d'événements fictifs.
-- Rejeu d'événements.
+- **N-INT-REG-01** — Double publication.
+- **N-INT-REG-02** — Réécriture du registre.
+- **N-INT-REG-03** — Omission d'événements.
+- **N-INT-REG-04** — Création d'événements fictifs.
+- **N-INT-REG-05** — Rejeu d'événements.
 ### Preuves
-- Fausses preuves de stockage.
-- Réutilisation d'anciennes preuves.
-- Mutualisation de preuves.
-- Fabrication de preuves sans données.
-- Falsification de preuves de disponibilité.
+- **N-INT-PRE-01** — Fausses preuves de stockage.
+- **N-INT-PRE-02** — Réutilisation d'anciennes preuves.
+- **N-INT-PRE-03** — Mutualisation de preuves.
+- **N-INT-PRE-04** — Fabrication de preuves sans données.
+- **N-INT-PRE-05** — Falsification de preuves de disponibilité.
 ### Identité
-- Usurpation d'identité.
-- Duplication d'identité.
-- Vol de clé privée.
+- **N-INT-ID-01** — Usurpation d'identité.
+- **N-INT-ID-02** — Duplication d'identité.
+- **N-INT-ID-03** — Vol de clé privée.
 
 ## Disponibilité
-- Suppression d'un shard.
-- Refus de fournir un shard.
-- Refus de répondre.
-- Ralentissement volontaire.
-- Partition réseau.
-- Blocage du gossip.
-- Saturation CPU, mémoire, disque ou bande passante.
-- Refus de maintenance.
-- Déconnexion stratégique.
+- **N-DISP-01** — Suppression d'un shard.
+- **N-DISP-02** — Refus de fournir un shard.
+- **N-DISP-03** — Refus de répondre.
+- **N-DISP-04** — Ralentissement volontaire.
+- **N-DISP-05** — Partition réseau.
+- **N-DISP-06** — Blocage du gossip.
+- **N-DISP-07** — Saturation CPU, mémoire, disque ou bande passante.
+- **N-DISP-08** — Refus de maintenance.
+- **N-DISP-09** — Déconnexion stratégique.
 
 ## Contrôle d'accès
-- Ignorer une révocation.
-- Accorder un accès sans autorisation.
-- Servir des données après expiration.
-- Utiliser des permissions obsolètes.
-- Falsifier l'identité d'un demandeur.
+- **N-AC-01** — Ignorer une révocation.
+- **N-AC-02** — Accorder un accès sans autorisation.
+- **N-AC-03** — Servir des données après expiration.
+- **N-AC-04** — Utiliser des permissions obsolètes.
+- **N-AC-05** — Falsifier l'identité d'un demandeur.
 
 ## Menaces protocolaires
-- Injection de faux messages Gossip.
-- Attaque Eclipse.
-- Redirection vers de faux pairs.
-- Logiciel modifié.
-- Exploitation de vulnérabilités.
-- Désactivation de vérifications.
+- **N-PROTO-01** — Injection de faux messages Gossip.
+- **N-PROTO-02** — Attaque Eclipse.
+- **N-PROTO-03** — Redirection vers de faux pairs.
+- **N-PROTO-04** — Logiciel modifié.
+- **N-PROTO-05** — Exploitation de vulnérabilités.
+- **N-PROTO-06** — Désactivation de vérifications.
 
 ## Menaces économiques
-- Déclarer une capacité fictive.
-- Participer uniquement aux opérations rémunératrices.
-- Quitter après récompense.
-- Externaliser clandestinement le stockage.
+- **N-ECO-01** — Déclarer une capacité fictive.
+- **N-ECO-02** — Participer uniquement aux opérations rémunératrices.
+- **N-ECO-03** — Quitter après récompense.
+- **N-ECO-04** — Externaliser clandestinement le stockage.
 
 ## Menaces organisationnelles
 ### Sybil / collusion
-- Création de faux nœuds.
-- Collusion entre nœuds.
-- Censure coordonnée.
-- Contrôle d'une majorité régionale.
+- **N-ORG-SYB-01** — Création de faux nœuds.
+- **N-ORG-SYB-02** — Collusion entre nœuds.
+- **N-ORG-SYB-03** — Censure coordonnée.
+- **N-ORG-SYB-04** — Contrôle d'une majorité régionale.
 ### Géolocalisation
-- Fausser sa localisation.
-- VPN/proxy.
-- Concentration sur une même infrastructure.
-- Répartition géographique fictive.
+- **N-ORG-GEO-01** — Fausser sa localisation.
+- **N-ORG-GEO-02** — VPN/proxy.
+- **N-ORG-GEO-03** — Concentration sur une même infrastructure.
+- **N-ORG-GEO-04** — Répartition géographique fictive.
 
 # Menaces visant les clients
 
 ## Confidentialité
-- Déduire l'existence de données.
-- Corrélation des métadonnées.
-- Observation des temps de réponse.
-- Collecte d'informations publiques.
+- **C-CONF-01** — Déduire l'existence de données.
+- **C-CONF-02** — Corrélation des métadonnées.
+- **C-CONF-03** — Observation des temps de réponse.
+- **C-CONF-04** — Collecte d'informations publiques.
 
 ## Intégrité
 ### Données
-- Envoi de données corrompues.
-- Modification non autorisée.
-- Versions incompatibles.
-- Suppression logique.
-- Injection de données malveillantes.
+- **C-INT-DAT-01** — Envoi de données corrompues.
+- **C-INT-DAT-02** — Modification non autorisée.
+- **C-INT-DAT-03** — Versions incompatibles.
+- **C-INT-DAT-04** — Suppression logique.
+- **C-INT-DAT-05** — Injection de données malveillantes.
 ### Métadonnées
-- Falsification.
-- Modification des timestamps.
-- Fausse origine.
-- Manipulation des versions.
-- Fausse liste de destinataires.
+- **C-INT-MET-01** — Falsification.
+- **C-INT-MET-02** — Modification des timestamps.
+- **C-INT-MET-03** — Fausse origine.
+- **C-INT-MET-04** — Manipulation des versions.
+- **C-INT-MET-05** — Fausse liste de destinataires.
 ### Signatures
-- Double signature.
-- Signature d'un contenu différent.
-- Rejeu.
-- Signature volée.
-- Utilisation d'une clé compromise.
+- **C-INT-SIG-01** — Double signature.
+- **C-INT-SIG-02** — Signature d'un contenu différent.
+- **C-INT-SIG-03** — Rejeu.
+- **C-INT-SIG-04** — Signature volée.
+- **C-INT-SIG-05** — Utilisation d'une clé compromise.
 ### Journaux
-- Empêcher un audit.
-- Événements contradictoires.
-- Bruit massif.
-- Réémission d'événements.
+- **C-INT-JRN-01** — Empêcher un audit.
+- **C-INT-JRN-02** — Événements contradictoires.
+- **C-INT-JRN-03** — Bruit massif.
+- **C-INT-JRN-04** — Réémission d'événements.
 
 ## Disponibilité
-- Flood.
-- Multiplication des connexions.
-- Téléchargements interrompus.
-- Demandes massives de reconstruction.
-- Saturation des vérifications.
+- **C-DISP-01** — Flood.
+- **C-DISP-02** — Multiplication des connexions.
+- **C-DISP-03** — Téléchargements interrompus.
+- **C-DISP-04** — Demandes massives de reconstruction.
+- **C-DISP-05** — Saturation des vérifications.
 
 ## Contrôle d'accès
-- Accès sans autorisation.
-- Réutilisation d'un droit expiré.
-- Jeton falsifié.
-- Escalade de privilèges.
-- Contournement d'une révocation.
-- Partage de droits.
+- **C-AC-01** — Accès sans autorisation.
+- **C-AC-02** — Réutilisation d'un droit expiré.
+- **C-AC-03** — Jeton falsifié.
+- **C-AC-04** — Escalade de privilèges.
+- **C-AC-05** — Contournement d'une révocation.
+- **C-AC-06** — Partage de droits.
 
 ## Menaces protocolaires
-- Non-respect du protocole.
-- Messages dans un ordre invalide.
-- Ancienne version du protocole.
-- Exploitation de comportements indéfinis.
-- Déclaration mensongère de capacités.
+- **C-PROTO-01** — Non-respect du protocole.
+- **C-PROTO-02** — Messages dans un ordre invalide.
+- **C-PROTO-03** — Ancienne version du protocole.
+- **C-PROTO-04** — Exploitation de comportements indéfinis.
+- **C-PROTO-05** — Déclaration mensongère de capacités.
 
 ## Menaces économiques
-- Création massive de données.
-- Multiplication d'opérations.
-- Création/suppression répétées.
-- Tentative d'obtenir gratuitement des ressources.
+- **C-ECO-01** — Création massive de données.
+- **C-ECO-02** — Multiplication d'opérations.
+- **C-ECO-03** — Création/suppression répétées.
+- **C-ECO-04** — Tentative d'obtenir gratuitement des ressources.
 
 ## Collusion
-- Collusion entre clients.
-- Collusion avec des nœuds.
-- Partage de clés.
-- Création coordonnée de faux événements.
+- **C-COL-01** — Collusion entre clients.
+- **C-COL-02** — Collusion avec des nœuds.
+- **C-COL-03** — Partage de clés.
+- **C-COL-04** — Création coordonnée de faux événements.
