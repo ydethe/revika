@@ -14,3 +14,12 @@ La clé privée d'identité d'un nœud est dérobée, permettant à l'attaquant 
 | Unsecured Credentials | T1552 | La clé privée d'identité du nœud est dérobée là où elle est stockée en clair sur l'hôte. | Stockage restreint des clés sous `.revika/keys` avec permissions strictes ; isolation crypto stdlib et clés jamais transmises hors machine. |
 | Steal or Forge Authentication Certificates | T1649 | L'attaquant obtient le matériel cryptographique d'identité pour signer comme le nœud légitime. | Rotation/révocation de l'identité et rebroyage PoW (argon2id) d'une nouvelle identité auto-certifiante, invalidant l'usage de la clé volée. |
 | Valid Accounts | T1078 | Muni de la clé volée, l'attaquant agit sous l'identité authentique du nœud sur le réseau. | Baux et quotas du ledger à TTL par owner + blocklist du `ConnectionGater`, limitant l'abus et permettant d'exclure l'identité compromise. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Isolation des clés côté client (.revika/keys) | — | SC-12 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |

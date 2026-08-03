@@ -13,3 +13,11 @@ Un client malveillant inonde le réseau de requêtes pour dégrader la disponibi
 | --- | --- | --- | --- |
 | Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Le déluge de requêtes applicatives épuise les nœuds et dégrade le service pour les autres. | Appliquer un rate-limiting par-pair / par-owner (clé sur la pubkey Ed25519) et les quotas du ledger pour plafonner le débit de requêtes. |
 | Network Denial of Service: Direct Network Flood | T1498.001 | L'inondation directe du réseau sature la bande passante et la capacité de traitement des nœuds. | Wirer les défenses de `internal/net/defense.go` (`ResourceManager` + `ConnManager`) et bloquer les pairs/sous-réseaux abusifs via `ConnectionGater`. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |

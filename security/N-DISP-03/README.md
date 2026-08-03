@@ -13,3 +13,12 @@ Un nœud ignore les requêtes entrantes, se comportant comme injoignable tout en
 | --- | --- | --- | --- |
 | Endpoint Denial of Service | T1499 | Analogue P2P : le nœud rend son propre point de service indisponible en n'acquittant plus aucune requête. | Sondes de disponibilité et réparation automatique vers des nœuds répondants, la redondance Reed-Solomon absorbant la perte du nœud silencieux. |
 | Service Stop | T1489 | Le nœud reste membre du réseau mais cesse de traiter les flux applicatifs entrants. | Suivi des baux/quotas dans le ledger SQLite et déclassement du nœud injoignable au profit d'un placement sur pairs actifs. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Sondes + défis de possession | — | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Placement réparti sur owners indépendants | — | SC-36 |

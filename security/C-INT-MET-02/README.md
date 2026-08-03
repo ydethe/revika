@@ -13,3 +13,12 @@ Les horodatages associés aux données du client sont altérés pour fausser l'o
 | --- | --- | --- | --- |
 | Indicator Removal: Timestomp | T1070.006 | Les horodatages des données sont modifiés pour fausser l'ordre chronologique ou la fraîcheur perçue. | Horloges/nonces/numéros de séquence signés (anti-rejeu) et journal d'audit append-only chaîné rendant toute réécriture temporelle détectable. |
 | Data Manipulation: Stored Data Manipulation | T1565.001 | L'altération des métadonnées d'horodatage stockées vise à tromper la logique de version. | Métadonnées d'effacement signées (`stripe.Descriptor`) et manifeste signé Ed25519 figeant l'ordre attendu. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
+| Journaux append-only chaînés + seq signés | — | AU-9 |
+| Métadonnées d'effacement signées (stripe.Descriptor) | D3-MAN | SI-7 |
+| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |

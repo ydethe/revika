@@ -13,3 +13,10 @@ Un nœud continue de fournir des données au-delà de l'expiration du bail ou du
 | --- | --- | --- | --- |
 | Use Alternate Authentication Material: Application Access Token | T1550.001 | Un jeton d'accès signé arrivé à expiration est rejoué pour prolonger indûment l'accès aux shards. | Vérification stricte du TTL et de l'horodatage signé du jeton à chaque requête, rejet de tout jeton expiré. |
 | Valid Accounts | T1078 | Un bail (lease) expiré continue de justifier un accès qui aurait dû cesser. | Expiration des baux gérée par le ledger SQLite avec purge par le GC, refusant le service dès le dépassement du TTL. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |

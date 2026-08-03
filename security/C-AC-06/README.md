@@ -13,3 +13,11 @@ Un client redistribue à des tiers non autorisés les droits d'accès qui lui on
 | --- | --- | --- | --- |
 | Use Alternate Authentication Material | T1550 | Le client transmet à un tiers le matériel d'authentification/capacité qu'il détient. | Partage strictement par encapsulation ML-KEM-768 à la pubkey du destinataire (jamais copie du plaintext) et capacités révocables à TTL. |
 | Trusted Relationship | T1199 | Le client abuse de la confiance qui lui a été accordée pour propager l'accès hors périmètre. | Journal d'audit append-only signé et chaîné traçant les partages, avec révocation et rotation des capacités concernées. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
+| Capacités TTL court + révocation | — | AC-3 |
+| Journaux append-only chaînés + seq signés | — | AU-9 |

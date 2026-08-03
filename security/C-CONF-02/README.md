@@ -14,3 +14,14 @@ Le recoupement de métadonnées côté client (manifestes, identifiants, tailles
 | Data from Information Repositories | T1213 | L'attaquant exploite les manifestes et index de stripe comme dépôt d'informations pour corréler données et utilisateurs. | Chiffrement client-side des manifestes et encapsulation des capacités en ML-KEM-768, les métadonnées d'effacement non confidentielles (`stripe.Descriptor`) étant minimisées. |
 | Automated Collection | T1119 | Le recoupement automatisé des identifiants et tailles de shards permet de lier des jeux de données entre eux. | Adressage par hash de contenu et shards de taille normalisée par le chunking, réduisant les corrélations exploitables. |
 | Gather Victim Identity Information | T1589 | Les pubkeys Ed25519/ML-KEM associées aux manifestes servent à relier des utilisateurs à leurs données. | Identités auto-certifiées libp2p sans lien avec l'identité réelle, capacités encapsulées par destinataire sans exposer la liste des accès. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
+| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
+| Métadonnées d'effacement signées (stripe.Descriptor) | D3-MAN | SI-7 |
+| Adressage par hash de contenu | D3-FH | SI-7 |
+| Chunking taille fixe / normalisation des shards | — | SC-4 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |

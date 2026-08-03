@@ -37,7 +37,8 @@ go.work.sum
 
 # revika runtime state (persisted node shares, ledger, keys, mock store)
 .revika/
-# local cache of MITRE ATT&CK STIX bundles for tools/check_attack_ids.py
+# local cache of framework datasets (ATT&CK STIX, D3FEND, NIST 800-53) for tools/check_attack_ids.py
+tools/.frameworks/
 tools/.attack-stix/
 # Python tooling bytecode
 __pycache__/

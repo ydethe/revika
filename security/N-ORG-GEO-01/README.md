@@ -13,3 +13,10 @@ Un nœud déclare une position géographique erronée pour satisfaire des contra
 | --- | --- | --- | --- |
 | Masquerading | T1036 | Le nœud auto-déclare un attribut de position géographique falsifié pour satisfaire les contraintes de répartition. | Ne pas se fier à la géoloc auto-déclarée : dériver la position via sondes de latence/topologie et sous-réseau/AS observé au niveau libp2p. |
 | Transmitted Data Manipulation | T1565.002 | Analogue : la métadonnée de localisation transmise à la politique de placement est manipulée en transit par le nœud émetteur. | Politique de placement basée sur des mesures réseau vérifiables plutôt que sur des métadonnées déclaratives, et diversité keyée sur la pubkey Ed25519. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Diversité de placement mesurée par le réseau | — | SC-36 |
+| Placement réparti sur owners indépendants | — | SC-36 |

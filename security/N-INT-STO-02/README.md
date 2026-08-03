@@ -13,3 +13,10 @@
 | --- | --- | --- | --- |
 | Data Manipulation: Transmitted Data Manipulation | T1565.002 | Le nœud sert en transit, à la lecture, un contenu falsifié qui ne correspond pas à l'identifiant de shard demandé. | Vérification par recomputation du hash de contenu à la réception : un shard qui ne re-hashe pas vers l'ID demandé est rejeté. |
 | Inhibit System Recovery | T1490 | En fournissant des shards corrompus, le nœud cherche à empêcher la reconstruction erasure-coded du fichier. | Codage Reed-Solomon (tout `k` parmi `k+m` reconstruit) + réparation obligatoire : la lecture bascule sur d'autres shards valides et régénère les manquants. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Recompute du hash à la réception | D3-FH | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |

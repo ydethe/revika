@@ -14,3 +14,13 @@ Un nœud délègue en secret le stockage à un tiers ou à un cloud, brisant les
 | Trusted Relationship | T1199 | Le nœud s'appuie sur un tiers caché (hébergeur, cloud) pour tenir ses engagements, brisant l'hypothèse d'indépendance. | Confidentialité préservée quoi qu'il arrive : le tiers ne voit que du ciphertext opaque (chiffrement client-side AES-256-GCM) ; diversité de placement mesurée par sondes réseau, non par déclaration. |
 | Proxy | T1090 | Analogue : le nœud relaie en secret les shards vers un backend externe au lieu de les stocker localement. | Sondes de possession recomputant le hash de contenu et mesure de latence/topologie pour détecter un backend distant ; quota et index de propriété tenus par le ledger. |
 | Data from Cloud Storage | T1530 | Analogue : les données confiées finissent stockées sur un service cloud tiers, hors du modèle de menace revika. | Chiffrement client-side et encapsulation de capacité ML-KEM-768 : même exfiltré vers un cloud, le shard reste inexploitable sans la clé détenue côté User. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
+| Diversité de placement mesurée par le réseau | — | SC-36 |
+| Sondes + défis de possession | — | SI-7 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |

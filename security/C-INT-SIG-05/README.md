@@ -14,3 +14,12 @@ Une clé de signature compromise continue d'être acceptée, permettant de forge
 | Valid Accounts | T1078 | La clé d'owner compromise reste un identifiant valide et donc encore accepté par les nœuds. | Maintenir une liste de révocation et permettre le bannissement par pubkey Ed25519 (ConnectionGater / ledger), pour cesser d'honorer une clé compromise. |
 | Forge Web Credentials | T1606 | L'attaquant forge des autorisations (capacités/jetons) au nom de l'owner grâce à la clé compromise. | Lier chaque autorisation à des capacités signées à TTL court révocables, de sorte qu'une forge ne survive pas à la révocation de la clé. |
 | Use Alternate Authentication Material: Application Access Token | T1550.001 | Les jetons signés par la clé compromise continuent d'ouvrir l'accès. | Invalider les baux/jetons de l'identité compromise dans le ledger et exiger une nouvelle identité PoW pour ré-admettre des écritures. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Capacités TTL court + révocation | — | AC-3 |
+| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |

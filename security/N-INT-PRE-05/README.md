@@ -13,3 +13,10 @@ Un nœud fournit une preuve mensongère qu'il est disponible et joignable pour s
 | --- | --- | --- | --- |
 | Masquerading | T1036 | Le nœud se déclare joignable et apte à servir une donnée qu'il ne peut effectivement pas fournir. | Probes de disponibilité exigeant le renvoi réel du shard vérifié par hash, et non une simple attestation déclarative. |
 | Social Engineering: Impersonation | T1684.001 | Analogue : le nœud usurpe le statut d'un dépositaire fonctionnel dans le calcul de placement/réparation. | Réparation obligatoire déclenchée dès qu'une probe échoue, régénérant les shards depuis les k survivants sur d'autres nœuds. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Sondes + défis de possession | — | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |

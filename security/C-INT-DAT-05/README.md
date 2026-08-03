@@ -13,3 +13,11 @@ Un attaquant insère dans le flux du client des données malveillantes destinée
 | --- | --- | --- | --- |
 | Data Manipulation: Transmitted Data Manipulation | T1565.002 | L'attaquant injecte des shards illégitimes dans le flux d'écriture/lecture du client. | Recomputation du hash de contenu à la réception et AEAD AES-256-GCM rejetant tout shard non issu du chiffrement client-side. |
 | Exploitation for Client Execution | T1203 | Les données malveillantes injectées visent à être traitées par le client pour déclencher un comportement non voulu. | Traitement des shards comme ciphertext opaque adressé par hash, vérifié avant tout déchiffrement, sans interprétation par les nœuds. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Recompute du hash à la réception | D3-FH | SI-7 |
+| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
+| Nœud « dumb/untrusted » + re-vérification côté User | — | SA-8 |

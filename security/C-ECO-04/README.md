@@ -12,3 +12,12 @@ Un client cherche à consommer stockage et bande passante sans s'acquitter de la
 | Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
 | --- | --- | --- | --- |
 | Resource Hijacking | T1496 | Le client consomme stockage et bande passante sans fournir la contrepartie attendue. | Admission des écritures sous preuve de travail (coût CPU par identité), quotas par-owner du ledger et rate-limiting/`ConnManager` bornant la bande passante par pair. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |

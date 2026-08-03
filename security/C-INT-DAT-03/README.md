@@ -13,3 +13,11 @@ Le client se voit présenter un mélange de versions incompatibles d'un même co
 | --- | --- | --- | --- |
 | Data Manipulation: Stored Data Manipulation | T1565.001 | Des nœuds servent des shards issus de versions différentes du même contenu, mélangeant des stripes incohérentes. | Adressage par hash de contenu liant chaque shard à sa version exacte, le manifeste signé fixant l'ensemble cohérent à récupérer. |
 | Inhibit System Recovery | T1490 | Le mélange de versions empêche le rassemblement de `k` shards compatibles et bloque la reconstruction. | Codage Reed-Solomon avec sélection des `k` shards du hash attendu et réparation déterministe sur ciphertext. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Adressage par hash de contenu | D3-FH | SI-7 |
+| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |

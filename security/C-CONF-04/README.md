@@ -14,3 +14,12 @@ Un attaquant agrège des informations publiquement disponibles (annonces DHT, cl
 | Gather Victim Network Information | T1590 | L'attaquant agrège les annonces DHT et pairs observables pour cartographier l'empreinte réseau du client. | Découverte confinée au préfixe DHT privé `/revika` et minimisation des annonces de fourniture publiques. |
 | Gather Victim Identity Information | T1589 | Les pubkeys ML-KEM/Ed25519 publiques sont collectées pour rattacher un client à ses activités. | Identités auto-certifiées libp2p dissociées de l'identité réelle, rotation possible des identités de stockage. |
 | Network Service Discovery | T1046 | Les requêtes DHT énumèrent les enregistrements de fourniture pour profiler les données rattachées à un client. | Adressage par hash opaque et rate-limiting par-owner sur la pubkey Ed25519 freinant l'énumération. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| DHT /revika + diversité des pairs | — | SC-36 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Adressage par hash de contenu | D3-FH | SI-7 |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |

@@ -15,3 +15,12 @@ Un nœud ou un groupe monopolise les connexions d'une victime pour contrôler sa
 | Rogue Domain Controller | T1207 | De faux pairs saturent la table de routage de la victime pour dominer sa vue du réseau. | Identités auto-certifiantes par preuve de travail (argon2id) renchérissant la création massive de pairs et `ConnectionGater` filtrant pairs/sous-réseaux suspects. |
 | Establish Accounts | T1585 | L'attaquant crée en masse des identités de nœuds pour peupler l'entourage de la victime (Sybil). | Frein anti-Sybil par PoW sur l'identité de stockage et rate-limiting par-owner clé sur la pubkey Ed25519. |
 | Acquire Infrastructure: Botnet | T1583.005 | Un ensemble de nœuds contrôlés est mobilisé pour encercler la victime. | Limites de connexions du `ResourceManager`/`ConnManager` et blocklist statique du `ConnectionGater` plafonnant l'emprise d'un même acteur. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| DHT /revika + diversité des pairs | — | SC-36 |
+| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |

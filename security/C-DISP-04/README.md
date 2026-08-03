@@ -13,3 +13,11 @@ Un client déclenche des reconstructions erasure-coded en masse pour saturer le 
 | --- | --- | --- | --- |
 | Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Les demandes massives de reconstruction Reed-Solomon saturent CPU et bande passante des nœuds. | Conditionner la réparation à un grant de réparation signé (`stripe`) et rate-limiter les reconstructions par-owner. |
 | Resource Hijacking | T1496 | L'attaquant détourne le calcul et la bande passante des nœuds via des reconstructions inutiles. | Encadrer par quotas et baux TTL du ledger, en réservant les reconstructions au processus de réparation légitime. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Grant de réparation signé | D3-MAN | AC-3 |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |

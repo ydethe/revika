@@ -13,3 +13,11 @@ Un client crée un volume massif de données pour épuiser les ressources ou le 
 | --- | --- | --- | --- |
 | Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Le client inonde les nœuds de créations pour épuiser leur stockage disponible. | Quotas par-owner et baux (leases) à TTL tenus par le ledger SQLite, plafonnant le stockage consommable par identité. |
 | Resource Hijacking | T1496 | Le client accapare les ressources de stockage du réseau au détriment des autres. | Rate-limiting par-owner clé sur la pubkey Ed25519 et admission des écritures conditionnée à une preuve de travail (argon2id). |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |

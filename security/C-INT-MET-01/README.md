@@ -13,3 +13,11 @@ Les métadonnées d'un manifeste client (structure, clés, pointeurs) sont falsi
 | --- | --- | --- | --- |
 | Data Manipulation: Stored Data Manipulation | T1565.001 | La structure, les clés ou les pointeurs du manifeste sont modifiés pour détourner la reconstruction ou l'accès. | Manifeste signé Ed25519 avec pointeurs de shards par hash de contenu, toute falsification invalidant la signature ou la vérification de hash. |
 | Masquerading | T1036 | Un manifeste falsifié se fait passer pour un manifeste légitime afin de tromper le client. | Capacité de lecture (localisation manifeste + clé encapsulée ML-KEM-768) liée à la pubkey du destinataire, empêchant l'acceptation d'un manifeste non authentifié. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
+| Adressage par hash de contenu | D3-FH | SI-7 |
+| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |

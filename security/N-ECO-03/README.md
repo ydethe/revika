@@ -13,3 +13,13 @@ Un nœud collecte les récompenses puis quitte le réseau sans honorer ses engag
 | --- | --- | --- | --- |
 | Data Destruction | T1485 | Analogue : le départ brutal du nœud rend indisponibles (« détruit ») les shards qu'il conservait. | Codage d'effacement Reed-Solomon (tout `k` reconstruit) + réparation obligatoire régénérant les shards perdus sur ciphertext déterministe reproduisant leur adresse de contenu. |
 | Service Stop | T1489 | Le nœud cesse tout service après encaissement, interrompant l'accès aux données hébergées. | Baux (leases) à TTL et sondes de disponibilité détectant la sortie, déclenchant le re-placement vers d'autres owners avant expiration de la redondance. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Adressage par hash de contenu | D3-FH | SI-7 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Sondes + défis de possession | — | SI-7 |
+| Placement réparti sur owners indépendants | — | SC-36 |

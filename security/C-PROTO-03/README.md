@@ -12,3 +12,10 @@ Un client force l'usage d'une version obsolète du protocole pour bénéficier d
 | Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
 | --- | --- | --- | --- |
 | Weaken Encryption | T1600 | Le client tente un downgrade vers une version aux garanties cryptographiques ou protocolaires affaiblies. | Protocoles libp2p versionnés dont la négociation refuse les versions dépréciées, sur transport chiffré/authentifié imposant AES-256-GCM et ML-KEM-768. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Protocoles versionnés + fail-closed | — | SI-10 |
+| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |

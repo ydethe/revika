@@ -13,3 +13,11 @@ Plusieurs nœuds coordonnent leurs actions pour tromper les mécanismes de place
 | --- | --- | --- | --- |
 | Trusted Relationship | T1199 | Des nœuds en collusion coordonnent leurs réponses pour paraître indépendants aux yeux du placement et de l'audit. | Répartition des shards par codage d'effacement sur des owners distincts (pubkey Ed25519) : aucun sous-ensemble en collusion inférieur à `k` ne compromet la reconstruction. |
 | Establish Accounts | T1585 | Les colludeurs entretiennent plusieurs identités coordonnées pour simuler une diversité de redondance. | Sondes de possession indépendantes recomputant le hash de contenu : les colludeurs ne peuvent satisfaire l'audit sans réellement détenir des shards distincts. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Placement réparti sur owners indépendants | — | SC-36 |
+| Sondes + défis de possession | — | SI-7 |

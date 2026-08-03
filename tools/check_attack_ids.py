@@ -1,69 +1,129 @@
 #!/usr/bin/env python3
-"""Validate the MITRE ATT&CK technique IDs cited in the revika threat model.
+"""Validate the framework IDs cited in the revika threat model.
 
-Every threat sheet under ``security/<ID>/README.md`` carries a table:
+Each threat sheet under ``security/<ID>/README.md`` carries two tables:
 
+    ## Techniques MITRE ATT&CK et défenses
     | Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
-    | --- | --- | --- | --- |
     | Adversary-in-the-Middle | T1557 | ... | ... |
 
-This script extracts every value in the ``ID`` column and checks it against the
-official MITRE ATT&CK knowledge base loaded via ``mitreattack-python``. An ID
-that no matrix knows is a hard error (typo or dropped technique); an ID that is
-deprecated/revoked upstream is a warning (still valid, but worth migrating).
+    ## Correspondance cadres de défense
+    | Mesure de défense | D3FEND | NIST 800-53 |
+    | Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
 
-STIX bundles are read from ``--stix-dir`` (default ``$ATTACK_STIX_DIR`` or
-``tools/.attack-stix``): any of ``enterprise-attack.json``, ``mobile-attack.json``,
-``ics-attack.json`` present there is loaded. See tools/README.md for how to fetch
-them locally; CI downloads them from mitre-attack/attack-stix-data.
+This script extracts every framework ID cited and checks it against the
+official knowledge bases:
 
-Exit status: 0 = all IDs valid, 1 = at least one unknown ID, 2 = setup error
-(no STIX bundle found / dependency missing).
+- **MITRE ATT&CK** (Enterprise + Mobile + ICS) via ``mitreattack-python`` — an
+  ID no matrix knows is a hard error; a deprecated/revoked ID is a warning.
+- **MITRE D3FEND** via the ontology JSON-LD — an unknown ``D3-XXXX`` id is an error.
+- **NIST SP 800-53 Rev 5** via the OSCAL catalog — an unknown control id is an
+  error. Enhancements accepted as ``SC-7(3)`` or ``SC-7.3`` (normalized to ``sc-7.3``).
+
+A row in the cadres table with ``—`` in *both* framework columns is a warning
+(the measure maps to no framework — usually a deliberate P2P state-of-the-art gap).
+
+Datasets are read from ``--data-dir`` (default ``$FRAMEWORK_DATA_DIR`` or
+``tools/.frameworks``): ATT&CK STIX bundles (``{enterprise,mobile,ics}-attack.json``),
+``d3fend.json``, ``nist-sp800-53-rev5.json``. See tools/README.md for how to fetch
+them; CI downloads them from the upstream projects.
+
+Exit status: 0 = all IDs valid, 1 = at least one unknown ID, 2 = setup error.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
 from pathlib import Path
 
-# ATT&CK external_references source_name for the three matrices.
 MITRE_SOURCES = {"mitre-attack", "mitre-mobile-attack", "mitre-ics-attack"}
 STIX_FILES = ("enterprise-attack.json", "mobile-attack.json", "ics-attack.json")
+D3FEND_FILE = "d3fend.json"
+NIST_FILE = "nist-sp800-53-rev5.json"
 
-# A technique ID: Txxxx, optionally a .yyy sub-technique.
-ID_IN_CELL = re.compile(r"T\d{4}(?:\.\d{3})?")
+ATTACK_ID = re.compile(r"T\d{4}(?:\.\d{3})?")
+D3FEND_ID = re.compile(r"D3-[A-Z0-9]+")
+NIST_ID = re.compile(r"[A-Za-z]{2}-\d+(?:\.\d+|\(\d+\))?")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+# --------------------------------------------------------------------------- #
+# Markdown table parsing
+# --------------------------------------------------------------------------- #
+def iter_tables(path: Path):
+    """Yield (header_cells, [(lineno, row_cells), ...]) for each pipe table."""
+    header = None
+    rows: list[tuple[int, list[str]]] = []
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if line.startswith("|") and line.endswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if header is None:
+                header = cells
+            elif set("".join(cells)) <= set("-: "):
+                continue  # separator row
+            else:
+                rows.append((lineno, cells))
+        else:
+            if header is not None:
+                yield header, rows
+            header, rows = None, []
+    if header is not None:
+        yield header, rows
+
+
+def column(header: list[str], name: str) -> int | None:
+    return header.index(name) if name in header else None
+
+
+def normalize_nist(token: str) -> str:
+    """SC-28 -> sc-28 ; SC-7(3) -> sc-7.3 ; SC-7.3 -> sc-7.3."""
+    return token.lower().replace("(", ".").replace(")", "")
+
+
+def extract_ids(path: Path) -> dict[str, list[tuple[int, str]]]:
+    """Return {framework: [(lineno, id), ...]} for one fiche."""
+    found: dict[str, list[tuple[int, str]]] = {"attack": [], "d3fend": [], "nist": []}
+    for header, rows in iter_tables(path):
+        att_col = column(header, "ID") if "Technique ATT&CK" in header else None
+        d3_col = column(header, "D3FEND")
+        nist_col = column(header, "NIST 800-53")
+        for lineno, cells in rows:
+            if att_col is not None and att_col < len(cells):
+                found["attack"] += [(lineno, m) for m in ATTACK_ID.findall(cells[att_col])]
+            if d3_col is not None or nist_col is not None:
+                d3 = cells[d3_col] if d3_col is not None and d3_col < len(cells) else ""
+                nist = cells[nist_col] if nist_col is not None and nist_col < len(cells) else ""
+                found["d3fend"] += [(lineno, m) for m in D3FEND_ID.findall(d3)]
+                found["nist"] += [(lineno, normalize_nist(m)) for m in NIST_ID.findall(nist)]
+                if not D3FEND_ID.findall(d3) and not NIST_ID.findall(nist):
+                    found.setdefault("gap", []).append((lineno, cells[0][:40]))
+    return found
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge-base loaders
+# --------------------------------------------------------------------------- #
 def attack_external_id(obj) -> str | None:
-    """Return an object's ATT&CK ID (e.g. 'T1557') from its external references."""
     for ref in obj.get("external_references", []):
         if ref.get("source_name") in MITRE_SOURCES:
             return ref.get("external_id")
     return None
 
 
-def load_known_ids(stix_dir: Path) -> tuple[set[str], set[str]]:
-    """Load valid and deprecated/revoked technique IDs from the STIX bundles."""
+def load_attack_ids(data_dir: Path) -> tuple[set[str], set[str]]:
     try:
         from mitreattack.stix20 import MitreAttackData
     except ImportError:
-        sys.exit(
-            "error: mitreattack-python is not installed "
-            "(pip install -r tools/requirements.txt)"
-        )
-
-    bundles = [stix_dir / name for name in STIX_FILES if (stix_dir / name).is_file()]
+        sys.exit("error: mitreattack-python not installed (pip install -r tools/requirements.txt)")
+    bundles = [data_dir / n for n in STIX_FILES if (data_dir / n).is_file()]
     if not bundles:
-        sys.exit(
-            f"error: no ATT&CK STIX bundle found in {stix_dir} "
-            f"(expected any of {', '.join(STIX_FILES)}); see tools/README.md"
-        )
-
+        sys.exit(f"error: no ATT&CK STIX bundle in {data_dir}; see tools/README.md")
     valid: set[str] = set()
     deprecated: set[str] = set()
     for bundle in bundles:
@@ -72,71 +132,97 @@ def load_known_ids(stix_dir: Path) -> tuple[set[str], set[str]]:
             ext_id = attack_external_id(tech)
             if not ext_id:
                 continue
-            if tech.get("x_mitre_deprecated") or tech.get("revoked"):
-                deprecated.add(ext_id)
-            else:
-                valid.add(ext_id)
-    # A deprecated ID re-added as valid in another matrix should count valid.
-    deprecated -= valid
-    return valid, deprecated
+            (deprecated if tech.get("x_mitre_deprecated") or tech.get("revoked") else valid).add(ext_id)
+    return valid, deprecated - valid
 
 
-def extract_ids(path: Path) -> list[tuple[int, str]]:
-    """Return (lineno, id) pairs from the ATT&CK table's ID column in one file."""
-    out: list[tuple[int, str]] = []
-    id_col: int | None = None
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not (line.startswith("|") and line.endswith("|")):
-            id_col = None  # left the table
-            continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if id_col is None:
-            if "ID" in cells and "Technique ATT&CK" in cells:
-                id_col = cells.index("ID")  # header row locates the column
-            continue
-        if cells and set("".join(cells)) <= set("-: "):
-            continue  # separator row
-        if id_col < len(cells):
-            out.extend((lineno, m) for m in ID_IN_CELL.findall(cells[id_col]))
-    return out
+def load_d3fend_ids(data_dir: Path) -> set[str]:
+    path = data_dir / D3FEND_FILE
+    if not path.is_file():
+        sys.exit(f"error: {D3FEND_FILE} not found in {data_dir}; see tools/README.md")
+    ids: set[str] = set()
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "d3f:d3fend-id" and isinstance(v, str):
+                    ids.add(v)
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+
+    walk(json.loads(path.read_text(encoding="utf-8")))
+    return {i for i in ids if D3FEND_ID.fullmatch(i)}
 
 
+def load_nist_ids(data_dir: Path) -> set[str]:
+    path = data_dir / NIST_FILE
+    if not path.is_file():
+        sys.exit(f"error: {NIST_FILE} not found in {data_dir}; see tools/README.md")
+    ids: set[str] = set()
+
+    def rec(controls):
+        for ctrl in controls:
+            ids.add(ctrl["id"])
+            rec(ctrl.get("controls", []))
+
+    catalog = json.loads(path.read_text(encoding="utf-8"))["catalog"]
+    for group in catalog.get("groups", []):
+        rec(group.get("controls", []))
+    return ids
+
+
+# --------------------------------------------------------------------------- #
+# Main
+# --------------------------------------------------------------------------- #
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--security-dir", type=Path, default=REPO_ROOT / "security")
     parser.add_argument(
-        "--security-dir",
+        "--data-dir",
         type=Path,
-        default=REPO_ROOT / "security",
-        help="root of the threat model (default: security/)",
-    )
-    parser.add_argument(
-        "--stix-dir",
-        type=Path,
-        default=Path(os.environ.get("ATTACK_STIX_DIR", REPO_ROOT / "tools" / ".attack-stix")),
-        help="directory holding the ATT&CK STIX bundles",
+        default=Path(os.environ.get("FRAMEWORK_DATA_DIR", REPO_ROOT / "tools" / ".frameworks")),
+        help="directory holding the framework datasets",
     )
     args = parser.parse_args()
 
     fiches = sorted(args.security_dir.glob("*/README.md"))
+    extra = args.security_dir / "frameworks.md"
+    if extra.is_file():
+        fiches.append(extra)
     if not fiches:
-        sys.exit(f"error: no threat sheets found under {args.security_dir}")
+        sys.exit(f"error: no threat sheets under {args.security_dir}")
 
-    valid, deprecated = load_known_ids(args.stix_dir)
+    attack_valid, attack_deprecated = load_attack_ids(args.data_dir)
+    d3fend_valid = load_d3fend_ids(args.data_dir)
+    nist_valid = load_nist_ids(args.data_dir)
 
     errors: list[str] = []
     warnings: list[str] = []
-    checked = 0
+    counts = {"attack": 0, "d3fend": 0, "nist": 0}
     for fiche in fiches:
         rel = fiche.relative_to(REPO_ROOT)
-        for lineno, tid in extract_ids(fiche):
-            checked += 1
-            if tid in valid:
+        ids = extract_ids(fiche)
+        for lineno, tid in ids["attack"]:
+            counts["attack"] += 1
+            if tid in attack_valid:
                 continue
-            if tid in deprecated:
+            if tid in attack_deprecated:
                 warnings.append(f"{rel}:{lineno}: {tid} is deprecated/revoked upstream")
             else:
                 errors.append(f"{rel}:{lineno}: unknown ATT&CK ID {tid}")
+        for lineno, did in ids["d3fend"]:
+            counts["d3fend"] += 1
+            if did not in d3fend_valid:
+                errors.append(f"{rel}:{lineno}: unknown D3FEND ID {did}")
+        for lineno, nid in ids["nist"]:
+            counts["nist"] += 1
+            if nid not in nist_valid:
+                errors.append(f"{rel}:{lineno}: unknown NIST 800-53 control {nid.upper()}")
+        for lineno, label in ids.get("gap", []):
+            warnings.append(f"{rel}:{lineno}: no framework mapping for “{label}…”")
 
     for w in warnings:
         print(f"warning: {w}")
@@ -144,8 +230,9 @@ def main() -> int:
         print(f"error: {e}")
 
     print(
-        f"\nchecked {checked} ID references across {len(fiches)} threat sheets: "
-        f"{len(errors)} unknown, {len(warnings)} deprecated"
+        f"\nchecked {counts['attack']} ATT&CK, {counts['d3fend']} D3FEND, "
+        f"{counts['nist']} NIST refs across {len(fiches)} sheets: "
+        f"{len(errors)} unknown, {len(warnings)} warnings"
     )
     return 1 if errors else 0
 

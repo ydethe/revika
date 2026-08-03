@@ -13,3 +13,13 @@ Un nœud ou un adversaire réseau provoque ou exploite une partition pour isoler
 | --- | --- | --- | --- |
 | Network Denial of Service | T1498 | L'adversaire coupe ou congestionne les liens pour isoler un sous-ensemble de nœuds du reste du réseau. | Kademlia DHT sur préfixe privé `/revika` avec placement multi-nœuds et NAT traversal libp2p, la redondance Reed-Solomon permettant de servir depuis la partition majoritaire. |
 | Adversary-in-the-Middle | T1557 | La partition (analogue d'une éclipse) place l'adversaire en coupure entre segments pour contrôler ou bloquer les échanges. | Transport libp2p chiffré/authentifié et identités auto-certifiées, empêchant l'injection ou l'interception silencieuse malgré l'isolement. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| DHT /revika + diversité des pairs | — | SC-36 |
+| Placement réparti sur owners indépendants | — | SC-36 |
+| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |

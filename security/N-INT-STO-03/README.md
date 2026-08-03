@@ -13,3 +13,10 @@ Le nœud sert délibérément une version périmée d'un shard ou d'un manifeste
 | --- | --- | --- | --- |
 | Data Manipulation: Stored Data Manipulation | T1565.001 | Le nœud restitue une révision antérieure (rollback) d'un shard ou manifeste au lieu de l'état courant, manipulant la donnée servie. | Manifestes signés Ed25519 portant un numéro de version/séquence : un rollback est détecté par régression du numéro signé côté client. |
 | Use Alternate Authentication Material | T1550 | Analogue de rejeu : réservir une version passée valablement signée revient à rejouer un état authentifié périmé. | Nonces/numéros de séquence signés et jetons à TTL borné : un état expiré ou hors-séquence est refusé, cassant le rejeu. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
+| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |

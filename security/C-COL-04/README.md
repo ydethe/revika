@@ -13,3 +13,11 @@ Des clients fabriquent de concert de faux événements pour tromper le journal o
 | --- | --- | --- | --- |
 | Data Manipulation: Stored Data Manipulation | T1565.001 | Les clients insèrent de concert de faux événements dans le journal ou le registre. | Journal d'audit append-only signé et chaîné (hash-chain) : toute insertion ou réécriture rompt la chaîne et est détectée. |
 | Social Engineering: Impersonation | T1684.001 | Les faux événements imitent des actions légitimes d'autres acteurs pour tromper le registre. | Événements signés Ed25519 et adressage par hash de contenu, imposant une provenance vérifiable pour chaque entrée. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Journaux append-only chaînés + seq signés | — | AU-9 |
+| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
+| Adressage par hash de contenu | D3-FH | SI-7 |

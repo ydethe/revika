@@ -13,3 +13,10 @@ Un nœud continue de servir des données à un demandeur dont l'accès a été r
 | --- | --- | --- | --- |
 | Valid Accounts | T1078 | Le demandeur exploite une capacité autrefois légitime mais désormais révoquée pour continuer à accéder aux shards. | Révocation propagée et vérifiée à chaque requête, avec capacités signées à TTL court forçant le renouvellement plutôt qu'un droit permanent. |
 | Use Alternate Authentication Material: Application Access Token | T1550.001 | Un jeton d'accès signé, valide au moment de son émission, est réutilisé après révocation pour justifier l'accès. | Contrôle de l'état de révocation dans le ledger SQLite du nœud avant service, invalidant tout jeton listé même s'il n'est pas encore expiré. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Capacités TTL court + révocation | — | AC-3 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |

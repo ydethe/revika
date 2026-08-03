@@ -13,3 +13,12 @@ Le nœud modifie les métadonnées associées aux shards (propriétaire, bail, q
 | --- | --- | --- | --- |
 | Data Manipulation: Stored Data Manipulation | T1565.001 | Le nœud falsifie dans son ledger SQLite les métadonnées de propriété, bail, quota ou stripe rattachées aux shards. | Métadonnées d'effacement signées (`stripe.Descriptor`, grant de réparation signé) : une métadonnée falsifiée invalide la signature Ed25519 et est rejetée. |
 | Masquerading | T1036 | En réécrivant le propriétaire d'un shard, le nœud fait passer une donnée pour appartenant à un autre owner que le titulaire réel. | Propriété liée à la pubkey Ed25519 auto-certifiante de l'owner et capacités signées encapsulées ML-KEM-768 : l'appartenance n'est pas réattribuable localement par le nœud. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Métadonnées d'effacement signées (stripe.Descriptor) | D3-MAN | SI-7 |
+| Grant de réparation signé | D3-MAN | AC-3 |
+| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
+| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |

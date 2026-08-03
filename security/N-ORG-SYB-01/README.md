@@ -14,3 +14,12 @@ Un attaquant crée de nombreuses identités de nœuds pour peser artificiellemen
 | Establish Accounts | T1585 | L'attaquant fabrique en masse des identités de nœuds pour multiplier son poids apparent dans le réseau. | Identité de stockage auto-certifiante par preuve de travail (argon2id, `internal/cap/pow.go`) : chaque identité coûte du CPU à minter, freinant la fabrication de masse. |
 | Create Account | T1136 | Analogue : chaque faux nœud correspond à la création d'une nouvelle identité libp2p/Ed25519. | Admission des écritures conditionnée à une difficulté PoW ≥ celle du nœud, plus quotas par-owner dans le ledger SQLite. |
 | Botnet | T1583.005 | Le parc d'identités contrôlées agit comme un botnet pour saturer discovery et placement. | Limites de connexions (`ResourceManager` + `ConnManager`) et rate-limiting par-pair/par-owner keyé sur la pubkey Ed25519 dans `internal/net/defense.go`. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |

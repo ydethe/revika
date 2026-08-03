@@ -13,3 +13,11 @@ Un client initie puis interrompt systématiquement des téléchargements pour ga
 | --- | --- | --- | --- |
 | Endpoint Denial of Service: Application or System Exploitation | T1499.004 | L'abus du cycle initier/interrompre exploite le protocole de transfert pour gaspiller les ressources. | Borner temps et ressources par requête via `ResourceManager` et clore les transferts inachevés abusifs. |
 | Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | La répétition de téléchargements avortés sature la capacité de service des nœuds. | Rate-limiter par-owner (clé sur la pubkey Ed25519) et pénaliser via le ledger les pairs aux transferts répétitivement interrompus. |
+
+## Correspondance cadres de défense
+
+| Mesure de défense | D3FEND | NIST 800-53 |
+| --- | --- | --- |
+| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | — | SC-6 |

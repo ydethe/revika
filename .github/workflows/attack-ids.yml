@@ -1,8 +1,9 @@
 name: MITRE Att&ck IDs
 
-# Validate that every MITRE ATT&CK technique ID cited in the security/ threat
-# model exists in the official ATT&CK knowledge base. Guards against typos and
-# techniques that ATT&CK has dropped, keeping the fiches trustworthy.
+# Validate that every framework ID cited in the security/ threat model exists in
+# its official knowledge base: MITRE ATT&CK techniques, MITRE D3FEND defensive
+# techniques, and NIST SP 800-53 Rev 5 controls. Guards against typos and IDs the
+# upstream catalogs have dropped, keeping the fiches trustworthy.
 on:
   push:
     branches: [main]
@@ -29,8 +30,10 @@ permissions:
 
 jobs:
   validate:
-    name: validate MITRE ATT&CK IDs in security/
+    name: validate framework IDs in security/
     runs-on: ubuntu-latest
+    env:
+      FRAMEWORK_DATA_DIR: tools/.frameworks
     steps:
       - uses: actions/checkout@v4
 
@@ -43,17 +46,17 @@ jobs:
       - name: Install mitreattack-python
         run: pip install -r tools/requirements.txt
 
-      - name: Download ATT&CK STIX bundles
-        env:
-          ATTACK_STIX_DIR: tools/.attack-stix
+      - name: Download framework datasets
         run: |
-          mkdir -p "$ATTACK_STIX_DIR"
+          mkdir -p "$FRAMEWORK_DATA_DIR"
           base=https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master
           for m in enterprise mobile ics; do
-            curl -fsSL "$base/$m-attack/$m-attack.json" -o "$ATTACK_STIX_DIR/$m-attack.json"
+            curl -fsSL "$base/$m-attack/$m-attack.json" -o "$FRAMEWORK_DATA_DIR/$m-attack.json"
           done
+          curl -fsSL https://d3fend.mitre.org/ontologies/d3fend.json \
+            -o "$FRAMEWORK_DATA_DIR/d3fend.json"
+          curl -fsSL https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json \
+            -o "$FRAMEWORK_DATA_DIR/nist-sp800-53-rev5.json"
 
-      - name: Validate ATT&CK IDs
-        env:
-          ATTACK_STIX_DIR: tools/.attack-stix
+      - name: Validate framework IDs
         run: python tools/check_attack_ids.py
