@@ -1,4 +1,4 @@
-name: attack-ids
+name: MITRE Att&ck IDs
 
 # Validate that every MITRE ATT&CK technique ID cited in the security/ threat
 # model exists in the official ATT&CK knowledge base. Guards against typos and
