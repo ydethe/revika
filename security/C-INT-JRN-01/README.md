@@ -11,6 +11,5 @@ Un acteur empêche la tenue ou la lecture des journaux nécessaires à un audit 
 
 | Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
 | --- | --- | --- | --- |
-| Impair Defenses: Disable or Modify Tools | T1562.001 | L'acteur désactive ou entrave le mécanisme de journalisation nécessaire à l'audit. | Tenir des journaux d'audit append-only signés et chaînés (hash-chain), dont l'arrêt ou la falsification crée une rupture de chaîne détectable. |
-| Impair Defenses: Indicator Blocking | T1562.006 | Le flux d'événements d'audit est bloqué pour priver l'auditeur d'indicateurs. | Signer et numéroter séquentiellement les entrées, tout trou de numéro de séquence trahissant un blocage. |
-| Indicator Removal: Clear Linux or Mac System Logs | T1070.002 | Les journaux locaux nécessaires à l'audit client sont effacés. | Rendre le journal append-only et chaîné par hash, de sorte qu'une suppression casse la chaîne et soit prouvable. |
+| Disable or Modify Tools | T1685 | L'acteur désactive ou entrave le mécanisme de journalisation, ou bloque le flux d'événements d'audit, pour priver l'auditeur d'indicateurs. | Journaux d'audit append-only signés et chaînés (hash-chain) avec numérotation séquentielle : arrêt, falsification ou blocage crée une rupture de chaîne ou un trou de numéro de séquence détectable. |
+| Disable or Modify Tools: Clear Linux or Mac System Logs | T1685.006 | Les journaux locaux nécessaires à l'audit client sont effacés. | Rendre le journal append-only et chaîné par hash, de sorte qu'une suppression casse la chaîne et soit prouvable. |

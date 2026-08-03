@@ -11,5 +11,5 @@ Une donnée est présentée comme provenant d'un émetteur qui n'est pas le sien
 
 | Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
 | --- | --- | --- | --- |
-| Impersonation | T1656 | Un acteur usurpe l'identité d'un émetteur légitime pour faire accepter une donnée sous une fausse origine. | Signature Ed25519 de l'émetteur vérifiée à la réception et identité de stockage auto-certifiante par preuve de travail (argon2id) coûteuse à usurper. |
+| Social Engineering: Impersonation | T1684.001 | Un acteur usurpe l'identité d'un émetteur légitime pour faire accepter une donnée sous une fausse origine. | Signature Ed25519 de l'émetteur vérifiée à la réception et identité de stockage auto-certifiante par preuve de travail (argon2id) coûteuse à usurper. |
 | Masquerading | T1036 | Une donnée se présente sous une provenance falsifiée pour tromper le client. | Adressage par hash de contenu et capacités signées liant chaque donnée à son propriétaire vérifiable. |
