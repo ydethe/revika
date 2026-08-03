@@ -156,6 +156,14 @@ Full detail — including the mutable-state-without-consensus design, the capabi
 derivation chain, the threat model, and the build order — is in
 [Architecture.md](Architecture.md).
 
+## Security
+
+The threat model is catalogued under [`security/`](security/README.md): one folder per
+attack scenario, each with a stable identifier (`N-…` for nodes, `C-…` for clients) and a
+`README.md` describing it. The flat source document lives at
+[`security/Security.md`](security/Security.md); it deliberately lists threats only, no
+defences.
+
 ## Key libraries
 
 | Concern | Library |
@@ -183,6 +191,7 @@ internal/
   net/       ✓ libp2p host, shard/probe protocols, NetStore client
   cap/       ✓ X25519 capability wrapping for sharing read-caps
   manifest/ placement/ ledger/ sync/   (planned)
+security/          threat model: one folder per attack scenario + Security.md source
 ```
 
 Runtime state is written under `.revika/` (git-ignored): node shards, identity keys, and
