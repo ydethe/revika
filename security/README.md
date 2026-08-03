@@ -1,6 +1,5 @@
 # Modèle de menaces – arborescence `security/`
 
-
 Cette arborescence éclate [`Security.md`](./Security.md) : un dossier par
 scénario de menace, contenant un `README.md` qui le décrit. Le document source
 reste la référence ; ces fiches permettent d'attacher notes de risque et
