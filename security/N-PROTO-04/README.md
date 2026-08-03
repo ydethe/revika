@@ -22,3 +22,7 @@ Un opérateur exécute une version altérée du logiciel de nœud qui dévie du 
 | Nœud « dumb/untrusted » + re-vérification côté User | T1554 | — | SA-8 |
 | Build reproductible / chaîne d'appro. épinglée | T1195.002 | — | SR-4 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1685 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1554 | — | CM-2, CM-5, CM-6, IA-9, SI-3, SI-7, SR-4, SR-5, SR-11 |
+| Contrôles CTID (neo4j) | T1195.002 | — | CA-2, CA-7, CM-7, CM-11, RA-5, RA-10, SA-22, SI-2, SR-5, SR-11 |
+| Techniques D3FEND (neo4j) | T1554 | D3-EAL, D3-EDL, D3-FA, D3-LAM, D3-NTA, D3-PA, D3-PM | — |
+| Techniques D3FEND (neo4j) | T1195.002 | D3-NTA | — |

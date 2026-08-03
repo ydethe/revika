@@ -20,3 +20,5 @@ Un nœud fournit une preuve mensongère qu'il est disponible et joignable pour s
 | --- | --- | --- | --- |
 | Sondes + défis de possession | T1036 | — | SI-7 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1684.001 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4 |
+| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

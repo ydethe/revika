@@ -14,6 +14,7 @@ manifest.json
 
 # Test binary, built with `go test -c`
 *.test
+.mcp.json
 
 # Code coverage profiles and other test artifacts
 *.out

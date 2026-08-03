@@ -24,3 +24,9 @@ Un nœud délègue en secret le stockage à un tiers ou à un cloud, brisant les
 | Sondes + défis de possession | T1090 | — | SI-7 |
 | Ledger SQLite par-owner + quotas/baux | T1090 | — | SC-6 |
 | Encapsulation ML-KEM-768 (cap wrapping) | T1530 | D3-MENCR | SC-12 |
+| Contrôles CTID (neo4j) | T1199 | — | AC-3, AC-4, AC-6, AC-8, CM-6, CM-7, SC-7, SC-46 |
+| Contrôles CTID (neo4j) | T1530 | — | AC-2, AC-3, AC-4, AC-5, AC-6, AC-7, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-5, CM-6, CM-7, CM-8, IA-2, IA-3, IA-4, IA-5, IA-6, IA-8, RA-5, SC-4, SC-7, SI-4, SI-7, SI-12, SI-15 |
+| Contrôles CTID (neo4j) | T1090 | — | AC-3, AC-4, CA-7, CM-2, CM-6, CM-7, SC-7, SC-8, SI-3, SI-4, SI-15 |
+| Techniques D3FEND (neo4j) | T1199 | D3-EAL, D3-EDL, D3-ITF, D3-LFP, D3-OTF, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1530 | D3-AL, D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-OTF, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1090 | D3-EAL, D3-EDL, D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |

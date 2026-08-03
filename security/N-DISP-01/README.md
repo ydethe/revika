@@ -23,3 +23,7 @@ Un nœud efface un shard qu'il s'était engagé à conserver, réduisant la redo
 | Ledger SQLite par-owner + quotas/baux | T1070.004 | — | SC-6 |
 | Sondes + défis de possession | T1070.004 | — | SI-7 |
 | Placement réparti sur owners indépendants | T1490 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1485 | — | AC-3, AC-6, CM-2, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
+| Contrôles CTID (neo4j) | T1490 | — | AC-2, AC-3, AC-6, CM-2, CM-6, CM-7, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
+| Techniques D3FEND (neo4j) | T1485 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1490 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

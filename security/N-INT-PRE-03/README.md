@@ -21,3 +21,5 @@ Plusieurs nœuds partagent une unique copie de la donnée mais présentent chacu
 | Codage Reed-Solomon k=4/m=2 + réparation | T1036 | — | SC-36 |
 | Placement réparti sur owners indépendants | T1036 | — | SC-36 |
 | Sondes + défis de possession | T1684.001 | — | SI-7 |
+| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
+| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

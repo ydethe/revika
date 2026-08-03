@@ -21,3 +21,5 @@ L'analyse du trafic entrant/sortant d'un nœud (volumes, destinations, timing) r
 | Transport libp2p chiffré / authentifié | T1040 | D3-MENCR | SC-8 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1590 | — | SC-36 |
 | Placement réparti sur owners indépendants | T1590 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1040 | — | AC-16, AC-17, AC-18, AC-19, CM-7, IA-2, IA-5, SC-4, SI-4, SI-7, SI-12 |
+| Techniques D3FEND (neo4j) | T1040 | D3-OSM | — |

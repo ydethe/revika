@@ -23,3 +23,7 @@ Un nœud injecte dans le canal de gossip des messages forgés pour propager de f
 | Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |
 | Protocoles versionnés + fail-closed | T1071 | — | SI-10 |
 | Transport libp2p chiffré / authentifié | T1071 | D3-MENCR | SC-8 |
+| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
+| Contrôles CTID (neo4j) | T1071 | — | AC-4, CA-7, CM-2, CM-6, CM-7, SC-7, SC-10, SC-20, SC-21, SC-22, SC-23, SC-31, SC-37, SI-3, SI-4 |
+| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |
+| Techniques D3FEND (neo4j) | T1071 | D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |

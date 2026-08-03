@@ -20,3 +20,7 @@ Un nœud déclare une position géographique erronée pour satisfaire des contra
 | --- | --- | --- | --- |
 | Diversité de placement mesurée par le réseau | T1036, T1565.002 | — | SC-36 |
 | Placement réparti sur owners indépendants | T1565.002 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
+| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
+| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |

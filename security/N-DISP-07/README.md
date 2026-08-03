@@ -24,3 +24,9 @@ Un nœud est ciblé (ou se sur-engage) jusqu'à épuisement de ses ressources, l
 | Identité auto-certifiante PoW argon2id (anti-Sybil) | T1499.001 | — | SC-5 |
 | Ledger SQLite par-owner + quotas/baux | T1498 | — | SC-6 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1498 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1499 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| Contrôles CTID (neo4j) | T1499.001 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| Contrôles CTID (neo4j) | T1498 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
+| Techniques D3FEND (neo4j) | T1499 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1499.001 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1498 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |

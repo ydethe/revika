@@ -23,3 +23,5 @@ Un acteur contrôle assez de nœuds dans une région pour dominer les décisions
 | Ledger SQLite par-owner + quotas/baux | T1585 | — | SC-6 |
 | Diversité de placement mesurée par le réseau | T1583.005 | — | SC-36 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1199 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1199 | — | AC-3, AC-4, AC-6, AC-8, CM-6, CM-7, SC-7, SC-46 |
+| Techniques D3FEND (neo4j) | T1199 | D3-EAL, D3-EDL, D3-ITF, D3-LFP, D3-OTF, D3-UAP | — |

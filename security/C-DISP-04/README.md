@@ -21,3 +21,5 @@ Un client déclenche des reconstructions erasure-coded en masse pour saturer le 
 | Grant de réparation signé | T1499.003 | D3-MAN | AC-3 |
 | Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
 | Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |
+| Contrôles CTID (neo4j) | T1499.003 | — | AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |

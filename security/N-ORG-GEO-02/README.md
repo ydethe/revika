@@ -22,3 +22,7 @@ Un nœud masque sa localisation réelle via VPN ou proxy, faussant la diversité
 | Diversité de placement mesurée par le réseau | T1090.003, T1583.003 | — | SC-36 |
 | Placement réparti sur owners indépendants | T1036 | — | SC-36 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1036 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1090.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
+| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
+| Techniques D3FEND (neo4j) | T1090.003 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

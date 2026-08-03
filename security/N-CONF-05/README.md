@@ -23,3 +23,5 @@ En corrélant les propriétaires, les destinataires de partages et les schémas 
 | Signatures / capacités Ed25519 | T1591 | D3-MAN | AU-10 |
 | Rate-limiting par-owner (pubkey Ed25519) | T1119 | D3-ITF | SC-5 |
 | Identité auto-certifiante PoW argon2id (anti-Sybil) | T1119 | — | SC-5 |
+| Contrôles CTID (neo4j) | T1119 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, SC-4, SC-36, SI-4, SI-7, SI-12 |
+| Techniques D3FEND (neo4j) | T1119 | D3-OSM | — |

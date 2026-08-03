@@ -21,3 +21,7 @@ Un client initie puis interrompt systématiquement des téléchargements pour ga
 | ConnectionGater / ResourceManager / ConnManager | T1499.004 | D3-NTF | SC-7 |
 | Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
 | Ledger SQLite par-owner + quotas/baux | T1499.003 | — | SC-6 |
+| Contrôles CTID (neo4j) | T1499.004 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| Contrôles CTID (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| Techniques D3FEND (neo4j) | T1499.004 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |

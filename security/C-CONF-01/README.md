@@ -24,3 +24,7 @@ Un observateur infère qu'un fichier ou un ensemble de données existe à partir
 | Transport libp2p chiffré / authentifié | T1040 | D3-MENCR | SC-8 |
 | Rate-limiting par-owner (pubkey Ed25519) | T1040 | D3-ITF | SC-5 |
 | Ledger SQLite par-owner + quotas/baux | T1592 | — | SC-6 |
+| Contrôles CTID (neo4j) | T1046 | — | AC-4, CA-7, CM-2, CM-6, CM-7, CM-8, RA-5, SC-7, SC-46, SI-3, SI-4 |
+| Contrôles CTID (neo4j) | T1040 | — | AC-16, AC-17, AC-18, AC-19, CM-7, IA-2, IA-5, SC-4, SI-4, SI-7, SI-12 |
+| Techniques D3FEND (neo4j) | T1046 | D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |
+| Techniques D3FEND (neo4j) | T1040 | D3-OSM | — |

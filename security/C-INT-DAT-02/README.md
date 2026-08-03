@@ -23,3 +23,7 @@ Les données d'un client sont modifiées sans son autorisation entre l'écriture
 | Transport libp2p chiffré / authentifié | T1565.002 | D3-MENCR | SC-8 |
 | Recompute du hash à la réception | T1565.002 | D3-FH | SI-7 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1565.002 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-36, SI-4, SI-12, SI-16 |
+| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-12 |
+| Techniques D3FEND (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
+| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |

@@ -22,3 +22,7 @@ Un nœud ignore les requêtes entrantes, se comportant comme injoignable tout en
 | Codage Reed-Solomon k=4/m=2 + réparation | T1499 | — | SC-36 |
 | Ledger SQLite par-owner + quotas/baux | T1489 | — | SC-6 |
 | Placement réparti sur owners indépendants | T1489 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1499 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| Contrôles CTID (neo4j) | T1489 | — | AC-2, AC-3, AC-4, AC-5, AC-6, CA-7, CM-5, CM-6, CM-7, IA-2, SC-7, SC-37, SC-46, SI-4 |
+| Techniques D3FEND (neo4j) | T1499 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1489 | D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-OSM, D3-OTF, D3-UAP | — |

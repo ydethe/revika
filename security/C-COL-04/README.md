@@ -21,3 +21,5 @@ Des clients fabriquent de concert de faux événements pour tromper le journal o
 | Journaux append-only chaînés + seq signés | T1565.001 | — | AU-9 |
 | Signatures / capacités Ed25519 | T1684.001 | D3-MAN | AU-10 |
 | Adressage par hash de contenu | T1684.001 | D3-FH | SI-7 |
+| Contrôles CTID (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-7, SI-12, SI-16 |
+| Techniques D3FEND (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |

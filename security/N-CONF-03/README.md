@@ -24,3 +24,7 @@ Le recoupement des métadonnées visibles côté nœud (identifiants de contenu,
 | Rate-limiting par-owner (pubkey Ed25519) | T1119 | D3-ITF | SC-5 |
 | Codage Reed-Solomon k=4/m=2 + réparation | T1591 | — | SC-36 |
 | Placement réparti sur owners indépendants | T1591 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1213 | — | AC-2, AC-3, AC-4, AC-5, AC-6, AC-16, AC-17, AC-21, AC-23, CA-7, CM-2, CM-3, CM-5, CM-6, CM-7, CM-8, IA-2, IA-4, IA-8, RA-5, SC-28, SC-37, SI-4 |
+| Contrôles CTID (neo4j) | T1119 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, SC-4, SC-36, SI-4, SI-7, SI-12 |
+| Techniques D3FEND (neo4j) | T1213 | D3-EAL, D3-EDL, D3-ITF, D3-JFAPA, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-OTF, D3-RAPA, D3-UAP, D3-UDTA | — |
+| Techniques D3FEND (neo4j) | T1119 | D3-OSM | — |

@@ -23,3 +23,5 @@ Un attaquant agrège des informations publiquement disponibles (annonces DHT, cl
 | Identité auto-certifiante PoW argon2id (anti-Sybil) | T1589 | — | SC-5 |
 | Adressage par hash de contenu | T1046 | D3-FH | SI-7 |
 | Rate-limiting par-owner (pubkey Ed25519) | T1046 | D3-ITF | SC-5 |
+| Contrôles CTID (neo4j) | T1046 | — | AC-4, CA-7, CM-2, CM-6, CM-7, CM-8, RA-5, SC-7, SC-46, SI-3, SI-4 |
+| Techniques D3FEND (neo4j) | T1046 | D3-FA, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |

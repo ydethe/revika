@@ -23,3 +23,7 @@ Un nœud ou un adversaire réseau provoque ou exploite une partition pour isoler
 | Codage Reed-Solomon k=4/m=2 + réparation | T1498 | — | SC-36 |
 | Transport libp2p chiffré / authentifié | T1557 | D3-MENCR | SC-8 |
 | Identité auto-certifiante PoW argon2id (anti-Sybil) | T1557 | — | SC-5 |
+| Contrôles CTID (neo4j) | T1498 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
+| Contrôles CTID (neo4j) | T1557 | — | AC-3, AC-4, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-7, CM-8, RA-5, SC-4, SC-7, SC-23, SC-46, SI-3, SI-4, SI-7, SI-12, SI-15 |
+| Techniques D3FEND (neo4j) | T1498 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1557 | D3-EAL, D3-EDL, D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |

@@ -22,3 +22,7 @@ Le numéro ou la chaîne de version d'un contenu est manipulé pour faire passer
 | Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
 | Anti-rejeu nonce/horloge/seq + TTL | T1550 | — | SC-23 |
 | Capacités TTL court + révocation | T1550 | — | AC-3 |
+| Contrôles CTID (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-12, SI-16 |
+| Contrôles CTID (neo4j) | T1550 | — | AC-2, AC-5, AC-6, CM-5, CM-6, IA-2 |
+| Techniques D3FEND (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
+| Techniques D3FEND (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |

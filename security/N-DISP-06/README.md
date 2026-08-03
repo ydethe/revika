@@ -21,3 +21,5 @@ Un nœud n'assure pas la propagation des messages de gossip, empêchant la diffu
 | DHT /revika + diversité des pairs | T1685 | — | SC-36 |
 | Sondes + défis de possession | T1498 | — | SI-7 |
 | Placement réparti sur owners indépendants | T1498 | — | SC-36 |
+| Contrôles CTID (neo4j) | T1498 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
+| Techniques D3FEND (neo4j) | T1498 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |

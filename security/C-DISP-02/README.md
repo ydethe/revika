@@ -19,3 +19,7 @@ Un client ouvre un grand nombre de connexions pour épuiser les ressources de co
 | Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
 | ConnectionGater / ResourceManager / ConnManager | T1499.001, T1499.002 | D3-NTF | SC-7 |
+| Contrôles CTID (neo4j) | T1499.001 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| Contrôles CTID (neo4j) | T1499.002 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| Techniques D3FEND (neo4j) | T1499.001 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1499.002 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |

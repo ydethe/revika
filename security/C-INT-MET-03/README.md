@@ -21,3 +21,5 @@ Une donnée est présentée comme provenant d'un émetteur qui n'est pas le sien
 | Signatures / capacités Ed25519 | T1684.001, T1036 | D3-MAN | AU-10 |
 | Identité auto-certifiante PoW argon2id (anti-Sybil) | T1684.001 | — | SC-5 |
 | Adressage par hash de contenu | T1036 | D3-FH | SI-7 |
+| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4 |
+| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

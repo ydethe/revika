@@ -19,3 +19,5 @@ Un client envoie des messages dans un ordre non prévu pour exploiter des états
 | --- | --- | --- | --- |
 | Protocoles versionnés + fail-closed | T1499.004 | — | SI-10 |
 | Anti-rejeu nonce/horloge/seq + TTL | T1499.004 | — | SC-23 |
+| Contrôles CTID (neo4j) | T1499.004 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| Techniques D3FEND (neo4j) | T1499.004 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |

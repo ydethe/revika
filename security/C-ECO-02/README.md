@@ -22,3 +22,5 @@ Un client répète des opérations à grande échelle pour tirer un avantage éc
 | ConnectionGater / ResourceManager / ConnManager | T1499.003 | D3-NTF | SC-7 |
 | Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |
 | Identité auto-certifiante PoW argon2id (anti-Sybil) | T1496 | — | SC-5 |
+| Contrôles CTID (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |

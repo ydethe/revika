@@ -22,3 +22,7 @@ Des clients partagent des clés pour mutualiser indûment des accès ou des iden
 | Capacités TTL court + révocation | T1550 | — | AC-3 |
 | Identité auto-certifiante PoW argon2id (anti-Sybil) | T1078 | — | SC-5 |
 | Journaux append-only chaînés + seq signés | T1078 | — | AU-9 |
+| Contrôles CTID (neo4j) | T1550 | — | AC-2, AC-5, AC-6, CM-5, CM-6, IA-2 |
+| Contrôles CTID (neo4j) | T1078 | — | AC-2, AC-3, AC-5, AC-6, CA-3, CA-7, CM-5, CM-6, CM-7, IA-2, IA-5, IA-12, RA-5, SA-3, SA-4, SA-8, SA-10, SA-11, SA-15, SA-17, SC-7, SC-28, SC-43, SI-4 |
+| Techniques D3FEND (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1078 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-UAP | — |

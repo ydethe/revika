@@ -20,3 +20,7 @@ Un nœud attribue à une requête une identité de demandeur différente pour co
 | Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
 | Signatures / capacités Ed25519 | T1684.001, T1036, T1606 | D3-MAN | AU-10 |
+| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
+| Contrôles CTID (neo4j) | T1606 | — | AC-2, AC-3, AC-5, AC-6, SC-17, SI-2 |
+| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1606 | D3-EAL, D3-EDL, D3-LFP, D3-UAP | — |

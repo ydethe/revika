@@ -21,3 +21,7 @@ Un client redistribue à des tiers non autorisés les droits d'accès qui lui on
 | Encapsulation ML-KEM-768 (cap wrapping) | T1550 | D3-MENCR | SC-12 |
 | Capacités TTL court + révocation | T1550 | — | AC-3 |
 | Journaux append-only chaînés + seq signés | T1199 | — | AU-9 |
+| Contrôles CTID (neo4j) | T1550 | — | AC-2, AC-5, AC-6, CM-5, CM-6, IA-2 |
+| Contrôles CTID (neo4j) | T1199 | — | AC-3, AC-4, AC-6, AC-8, CM-6, CM-7, SC-7, SC-46 |
+| Techniques D3FEND (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1199 | D3-EAL, D3-EDL, D3-ITF, D3-LFP, D3-OTF, D3-UAP | — |

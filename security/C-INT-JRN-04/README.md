@@ -20,3 +20,7 @@ Des événements de journal déjà consignés sont réémis pour fausser le déc
 | --- | --- | --- | --- |
 | Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |
 | Journaux append-only chaînés + seq signés | T1550.001 | — | AU-9 |
+| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
+| Contrôles CTID (neo4j) | T1550.001 | — | AC-16, AC-17, AC-19, AC-20, CM-2, CM-6, CM-10, CM-11, IA-2, IA-4, SC-8, SC-28, SI-4, SI-7, SI-12 |
+| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |
+| Techniques D3FEND (neo4j) | T1550.001 | D3-OSM | — |

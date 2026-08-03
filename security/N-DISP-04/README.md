@@ -22,3 +22,7 @@ Un nœud dégrade délibérément ses temps de réponse pour nuire à la perform
 | Codage Reed-Solomon k=4/m=2 + réparation | T1499 | — | SC-36 |
 | Rate-limiting par-owner (pubkey Ed25519) | T1499.002 | D3-ITF | SC-5 |
 | ConnectionGater / ResourceManager / ConnManager | T1499.002 | D3-NTF | SC-7 |
+| Contrôles CTID (neo4j) | T1499 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| Contrôles CTID (neo4j) | T1499.002 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| Techniques D3FEND (neo4j) | T1499 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| Techniques D3FEND (neo4j) | T1499.002 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |

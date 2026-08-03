@@ -20,3 +20,7 @@ Un nœud rejoue une preuve de stockage valide émise précédemment pour préten
 | --- | --- | --- | --- |
 | Sondes + défis de possession | T1550 | — | SI-7 |
 | Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |
+| Contrôles CTID (neo4j) | T1550 | — | AC-2, AC-3, AC-5, AC-6, CM-5, CM-6, IA-2 |
+| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
+| Techniques D3FEND (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |
+| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |
