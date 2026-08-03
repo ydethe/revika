@@ -6,3 +6,10 @@
 
 ## Description
 Une signature valide est présentée comme couvrant un contenu qu'elle ne couvre pas réellement.
+
+## Techniques MITRE ATT&CK et défenses
+
+| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| --- | --- | --- | --- |
+| Masquerading | T1036 | Un contenu falsifié est déguisé en contenu légitimement signé en réutilisant une signature valide hors de sa portée. | Signer non le contenu brut mais le hash de contenu du shard, de sorte que la signature ne vaut que pour l'objet exact adressé. |
+| Data Manipulation: Stored Data Manipulation | T1565.001 | Le lien signature↔contenu est détourné pour faire passer des données modifiées pour authentifiées. | Recomputer et comparer le hash de contenu à la vérification, tout écart entre le contenu servi et le hash signé étant rejeté. |

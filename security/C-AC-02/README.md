@@ -6,3 +6,9 @@
 
 ## Description
 Un client réutilise un droit ou un jeton dont la validité a expiré.
+
+## Techniques MITRE ATT&CK et défenses
+
+| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| --- | --- | --- | --- |
+| Use Alternate Authentication Material: Application Access Token | T1550.001 | Le client rejoue un jeton d'accès dont le TTL est dépassé (analogue P2P du rejeu d'un jeton applicatif). | Jetons d'accès signés à durée de vie limitée (TTL) vérifiée à chaque requête, avec nonces/horloges signés côté nœud pour l'anti-rejeu. |

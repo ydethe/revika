@@ -6,3 +6,10 @@
 
 ## Description
 Un nœud ignore les requêtes entrantes, se comportant comme injoignable tout en restant nominalement présent.
+
+## Techniques MITRE ATT&CK et défenses
+
+| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| --- | --- | --- | --- |
+| Endpoint Denial of Service | T1499 | Analogue P2P : le nœud rend son propre point de service indisponible en n'acquittant plus aucune requête. | Sondes de disponibilité et réparation automatique vers des nœuds répondants, la redondance Reed-Solomon absorbant la perte du nœud silencieux. |
+| Service Stop | T1489 | Le nœud reste membre du réseau mais cesse de traiter les flux applicatifs entrants. | Suivi des baux/quotas dans le ledger SQLite et déclassement du nœud injoignable au profit d'un placement sur pairs actifs. |

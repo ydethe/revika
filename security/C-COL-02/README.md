@@ -6,3 +6,10 @@
 
 ## Description
 Un client s'entend avec des nœuds pour obtenir un traitement de faveur ou tromper les audits.
+
+## Techniques MITRE ATT&CK et défenses
+
+| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| --- | --- | --- | --- |
+| Trusted Relationship | T1199 | Le client exploite une entente avec des nœuds pour obtenir un traitement de faveur. | Modèle de nœud « dumb » et non fiable : ils ne voient que du ciphertext opaque adressé par hash, sans pouvoir accorder de privilège sur le contenu. |
+| Impair Defenses: Disable or Modify Cloud Logs | T1562.008 | La collusion vise à falsifier ou masquer les journaux d'audit des nœuds. | Journaux d'audit append-only signés et chaînés (hash-chain) détectant réécriture/omission, et vérification indépendante des shards par recomputation du hash. |

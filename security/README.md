@@ -4,8 +4,9 @@
 Cette arborescence éclate [`Security.md`](./Security.md) : un dossier par
 scénario de menace, contenant un `README.md` qui le décrit. Le document source
 reste la référence ; ces fiches permettent d'attacher notes de risque et
-traçabilité menace par menace. Comme `Security.md`, elles ne contiennent
-volontairement **aucune mesure de défense**.
+traçabilité menace par menace. Chaque fiche associe au scénario les techniques
+MITRE ATT&CK mobilisées (avec leur identifiant) et une mesure de défense par
+technique.
 
 ## Convention de nommage
 

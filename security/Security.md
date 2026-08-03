@@ -1,7 +1,7 @@
 
 # Security Threat Model – Revika
 ## Objectif
-Ce document recense les principaux scénarios d'attaque contre Revika afin d'alimenter les analyses de risque. Il ne contient volontairement aucune mesure de défense.
+Ce document recense les principaux scénarios d'attaque contre Revika afin d'alimenter les analyses de risque. Les mesures de défense associées sont détaillées, technique MITRE ATT&CK par technique, dans les fiches de l'arborescence [`security/`](./README.md).
 
 Chaque scénario porte un identifiant unique. Convention : `<cible>-<catégorie>[-<sous-catégorie>]-<nn>`, où la cible est `N` (nœuds) ou `C` (clients). Ces identifiants sont stables : ne pas les réutiliser ni les renuméroter, ajouter les nouveaux scénarios à la suite.
 

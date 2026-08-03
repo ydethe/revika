@@ -6,3 +6,10 @@
 
 ## Description
 Des nœuds apparemment distincts sont hébergés sur une même infrastructure, annulant la redondance géographique.
+
+## Techniques MITRE ATT&CK et défenses
+
+| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| --- | --- | --- | --- |
+| Server | T1583.004 | Plusieurs identités de nœuds sont acquises et exécutées sur un même serveur/hébergeur, annulant la redondance géographique. | Détection de colocation par sous-réseau/AS observé via le `ConnectionGater` et corrélation de latence, pour éviter de placer plusieurs shards `k` sur une même infra. |
+| Masquerading | T1036 | Les nœuds colocalisés se présentent comme indépendants pour tromper la politique de répartition. | Placement imposant des owners distincts (pubkey Ed25519) et une diversité réseau mesurée, complété par la tolérance du codage d'effacement. |
