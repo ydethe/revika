@@ -1,0 +1,59 @@
+name: attack-ids
+
+# Validate that every MITRE ATT&CK technique ID cited in the security/ threat
+# model exists in the official ATT&CK knowledge base. Guards against typos and
+# techniques that ATT&CK has dropped, keeping the fiches trustworthy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'security/**'
+      - 'tools/check_attack_ids.py'
+      - 'tools/requirements.txt'
+      - '.github/workflows/attack-ids.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'security/**'
+      - 'tools/check_attack_ids.py'
+      - 'tools/requirements.txt'
+      - '.github/workflows/attack-ids.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: attack-ids-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate MITRE ATT&CK IDs in security/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tools/requirements.txt
+
+      - name: Install mitreattack-python
+        run: pip install -r tools/requirements.txt
+
+      - name: Download ATT&CK STIX bundles
+        env:
+          ATTACK_STIX_DIR: tools/.attack-stix
+        run: |
+          mkdir -p "$ATTACK_STIX_DIR"
+          base=https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master
+          for m in enterprise mobile ics; do
+            curl -fsSL "$base/$m-attack/$m-attack.json" -o "$ATTACK_STIX_DIR/$m-attack.json"
+          done
+
+      - name: Validate ATT&CK IDs
+        env:
+          ATTACK_STIX_DIR: tools/.attack-stix
+        run: python tools/check_attack_ids.py

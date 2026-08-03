@@ -1,0 +1,3 @@
+# Tooling-only Python deps (not part of the Go module). Used by
+# check_attack_ids.py and its CI job to load the MITRE ATT&CK knowledge base.
+mitreattack-python>=3.0
