@@ -16,9 +16,9 @@ Un client répète des opérations à grande échelle pour tirer un avantage éc
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
+| ConnectionGater / ResourceManager / ConnManager | T1499.003 | D3-NTF | SC-7 |
+| Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1496 | — | SC-5 |

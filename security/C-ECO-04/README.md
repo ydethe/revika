@@ -15,9 +15,9 @@ Un client cherche à consommer stockage et bande passante sans s'acquitter de la
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1496 | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1496 | D3-ITF | SC-5 |
+| ConnectionGater / ResourceManager / ConnManager | T1496 | D3-NTF | SC-7 |

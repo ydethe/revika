@@ -8,8 +8,11 @@ Each threat sheet under ``security/<ID>/README.md`` carries two tables:
     | Adversary-in-the-Middle | T1557 | ... | ... |
 
     ## Correspondance cadres de défense
-    | Mesure de défense | D3FEND | NIST 800-53 |
-    | Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
+    | Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+    | Chiffrement client-side AES-256-GCM | T1530 | D3-MENCR | SC-28 |
+
+The cadres table's ``Technique ATT&CK`` column names the ID(s) countered by each
+defence and is validated the same way as the first table's ``ID`` column.
 
 This script extracts every framework ID cited and checks it against the
 official knowledge bases:
@@ -90,7 +93,15 @@ def extract_ids(path: Path) -> dict[str, list[tuple[int, str]]]:
     """Return {framework: [(lineno, id), ...]} for one fiche."""
     found: dict[str, list[tuple[int, str]]] = {"attack": [], "d3fend": [], "nist": []}
     for header, rows in iter_tables(path):
-        att_col = column(header, "ID") if "Technique ATT&CK" in header else None
+        # First table: IDs live in the "ID" column (the "Technique ATT&CK" column
+        # holds the technique *name*). Cadres table: IDs live in the
+        # "Technique ATT&CK" column itself (no "ID" column present).
+        if "Technique ATT&CK" in header and "ID" in header:
+            att_col = column(header, "ID")
+        elif "Technique ATT&CK" in header:
+            att_col = column(header, "Technique ATT&CK")
+        else:
+            att_col = None
         d3_col = column(header, "D3FEND")
         nist_col = column(header, "NIST 800-53")
         for lineno, cells in rows:

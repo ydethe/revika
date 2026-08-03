@@ -16,8 +16,8 @@ Un client redistribue à des tiers non autorisés les droits d'accès qui lui on
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Capacités TTL court + révocation | — | AC-3 |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1550 | D3-MENCR | SC-12 |
+| Capacités TTL court + révocation | T1550 | — | AC-3 |
+| Journaux append-only chaînés + seq signés | T1199 | — | AU-9 |

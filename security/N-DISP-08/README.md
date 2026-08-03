@@ -16,10 +16,10 @@ Un nœud ne participe pas aux opérations de réparation et de ré-encodage néc
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Sondes + défis de possession | — | SI-7 |
-| Grant de réparation signé | D3-MAN | AC-3 |
-| Métadonnées d'effacement signées (stripe.Descriptor) | D3-MAN | SI-7 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1490 | — | SC-36 |
+| Sondes + défis de possession | T1490 | — | SI-7 |
+| Grant de réparation signé | T1490 | D3-MAN | AC-3 |
+| Métadonnées d'effacement signées (stripe.Descriptor) | T1489 | D3-MAN | SI-7 |
+| Adressage par hash de contenu | T1489 | D3-FH | SI-7 |

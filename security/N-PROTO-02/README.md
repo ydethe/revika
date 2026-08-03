@@ -18,9 +18,9 @@ Un nœud ou un groupe monopolise les connexions d'une victime pour contrôler sa
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| DHT /revika + diversité des pairs | — | SC-36 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| DHT /revika + diversité des pairs | T1557 | — | SC-36 |
+| ConnectionGater / ResourceManager / ConnManager | T1207, T1583.005 | D3-NTF | SC-7 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1207, T1585 | — | SC-5 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1585 | D3-ITF | SC-5 |

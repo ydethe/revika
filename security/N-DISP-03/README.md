@@ -16,9 +16,9 @@ Un nœud ignore les requêtes entrantes, se comportant comme injoignable tout en
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Sondes + défis de possession | — | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Sondes + défis de possession | T1499 | — | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1499 | — | SC-36 |
+| Ledger SQLite par-owner + quotas/baux | T1489 | — | SC-6 |
+| Placement réparti sur owners indépendants | T1489 | — | SC-36 |

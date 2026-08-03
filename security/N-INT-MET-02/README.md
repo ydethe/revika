@@ -16,7 +16,7 @@ Le nœud altère les horodatages d'écriture ou d'expiration afin de fausser l'o
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Capacités TTL court + révocation | — | AC-3 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | T1070.006 | — | SC-23 |
+| Capacités TTL court + révocation | T1565.001 | — | AC-3 |

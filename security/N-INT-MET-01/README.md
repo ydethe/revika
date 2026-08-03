@@ -16,9 +16,9 @@ Le nœud modifie les métadonnées associées aux shards (propriétaire, bail, q
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Métadonnées d'effacement signées (stripe.Descriptor) | D3-MAN | SI-7 |
-| Grant de réparation signé | D3-MAN | AC-3 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Métadonnées d'effacement signées (stripe.Descriptor) | T1565.001 | D3-MAN | SI-7 |
+| Grant de réparation signé | T1565.001 | D3-MAN | AC-3 |
+| Signatures / capacités Ed25519 | T1036 | D3-MAN | AU-10 |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1036 | D3-MENCR | SC-12 |

@@ -16,7 +16,7 @@ Un nœud n'inscrit pas certains événements qu'il devrait publier, laissant le 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Corroboration croisée inter-pairs du ledger | — | AU-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Journaux append-only chaînés + seq signés | T1685 | — | AU-9 |
+| Corroboration croisée inter-pairs du ledger | T1070 | — | AU-6 |

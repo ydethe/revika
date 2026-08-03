@@ -16,8 +16,8 @@ Un client déclenche des reconstructions erasure-coded en masse pour saturer le 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Grant de réparation signé | D3-MAN | AC-3 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Grant de réparation signé | T1499.003 | D3-MAN | AC-3 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |

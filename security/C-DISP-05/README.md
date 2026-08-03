@@ -16,8 +16,8 @@ Un client soumet un volume de requêtes conçu pour saturer les mécanismes de v
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1499.003 | — | SC-6 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1499.004 | — | SC-5 |

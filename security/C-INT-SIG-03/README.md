@@ -16,7 +16,7 @@ Une signature légitime est rejouée dans un contexte différent pour autoriser 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | T1550.001, T1565.002 | — | SC-23 |
+| Transport libp2p chiffré / authentifié | T1565.002 | D3-MENCR | SC-8 |

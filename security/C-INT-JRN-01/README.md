@@ -16,6 +16,6 @@ Un acteur empêche la tenue ou la lecture des journaux nécessaires à un audit 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Journaux append-only chaînés + seq signés | T1685, T1685.006 | — | AU-9 |

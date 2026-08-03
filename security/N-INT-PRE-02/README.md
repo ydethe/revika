@@ -16,7 +16,7 @@ Un nœud rejoue une preuve de stockage valide émise précédemment pour préten
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Sondes + défis de possession | — | SI-7 |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Sondes + défis de possession | T1550 | — | SI-7 |
+| Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |

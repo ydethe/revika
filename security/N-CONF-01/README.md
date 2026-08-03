@@ -17,8 +17,8 @@ Un nœud (ou un attaquant ayant accès à son disque) tente de lire le contenu d
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Chiffrement client-side AES-256-GCM | T1005 | D3-MENCR | SC-28 |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1530 | D3-MENCR | SC-12 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1119 | — | SC-36 |

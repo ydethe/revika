@@ -17,9 +17,9 @@ Un ensemble de nœuds refuse de concert de servir certaines données ou certains
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Placement réparti sur owners indépendants | — | SC-36 |
-| DHT /revika + diversité des pairs | — | SC-36 |
-| Grant de réparation signé | D3-MAN | AC-3 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1489, T1498 | — | SC-36 |
+| Placement réparti sur owners indépendants | T1489 | — | SC-36 |
+| DHT /revika + diversité des pairs | T1498 | — | SC-36 |
+| Grant de réparation signé | T1490 | D3-MAN | AC-3 |

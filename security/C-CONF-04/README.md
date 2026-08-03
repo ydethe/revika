@@ -17,9 +17,9 @@ Un attaquant agrège des informations publiquement disponibles (annonces DHT, cl
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| DHT /revika + diversité des pairs | — | SC-36 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| DHT /revika + diversité des pairs | T1590 | — | SC-36 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1589 | — | SC-5 |
+| Adressage par hash de contenu | T1046 | D3-FH | SI-7 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1046 | D3-ITF | SC-5 |

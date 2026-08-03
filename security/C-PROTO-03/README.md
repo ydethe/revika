@@ -15,7 +15,7 @@ Un client force l'usage d'une version obsolète du protocole pour bénéficier d
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Protocoles versionnés + fail-closed | — | SI-10 |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Protocoles versionnés + fail-closed | T1600 | — | SI-10 |
+| Transport libp2p chiffré / authentifié | T1600 | D3-MENCR | SC-8 |

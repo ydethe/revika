@@ -17,10 +17,10 @@ Des données sont marquées supprimées ou rendues inaccessibles côté client s
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Placement réparti sur owners indépendants | — | SC-36 |
-| Capacités TTL court + révocation | — | AC-3 |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Sondes + défis de possession | — | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1485 | — | SC-36 |
+| Placement réparti sur owners indépendants | T1485 | — | SC-36 |
+| Capacités TTL court + révocation | T1070.004 | — | AC-3 |
+| Journaux append-only chaînés + seq signés | T1070.004 | — | AU-9 |
+| Sondes + défis de possession | T1490 | — | SI-7 |

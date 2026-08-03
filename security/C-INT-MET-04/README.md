@@ -16,9 +16,9 @@ Le numéro ou la chaîne de version d'un contenu est manipulé pour faire passer
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Capacités TTL court + révocation | — | AC-3 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Manifeste signé Ed25519 versionné | T1565.001 | D3-MAN | SI-7 |
+| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
+| Anti-rejeu nonce/horloge/seq + TTL | T1550 | — | SC-23 |
+| Capacités TTL court + révocation | T1550 | — | AC-3 |

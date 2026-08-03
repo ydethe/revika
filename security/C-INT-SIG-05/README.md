@@ -17,9 +17,9 @@ Une clé de signature compromise continue d'être acceptée, permettant de forge
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Capacités TTL court + révocation | — | AC-3 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Capacités TTL court + révocation | T1606 | — | AC-3 |
+| ConnectionGater / ResourceManager / ConnManager | T1078 | D3-NTF | SC-7 |
+| Ledger SQLite par-owner + quotas/baux | T1078, T1550.001 | — | SC-6 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1550.001 | — | SC-5 |

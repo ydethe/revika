@@ -16,8 +16,8 @@ Un client transforme un accès limité en un accès plus étendu que celui qui l
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1548 | D3-MENCR | SC-12 |
+| Signatures / capacités Ed25519 | T1548 | D3-MAN | AU-10 |
+| Ledger SQLite par-owner + quotas/baux | T1068 | — | SC-6 |

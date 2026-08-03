@@ -16,9 +16,9 @@ Une même identité cryptographique de nœud est instanciée sur plusieurs machi
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Diversité de placement mesurée par le réseau | — | SC-36 |
-| Sondes + défis de possession | — | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Rate-limiting par-owner (pubkey Ed25519) | T1078 | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1078 | — | SC-6 |
+| Diversité de placement mesurée par le réseau | T1584.005 | — | SC-36 |
+| Sondes + défis de possession | T1584.005 | — | SI-7 |

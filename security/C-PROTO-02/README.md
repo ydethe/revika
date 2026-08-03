@@ -15,7 +15,7 @@ Un client envoie des messages dans un ordre non prévu pour exploiter des états
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Protocoles versionnés + fail-closed | — | SI-10 |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Protocoles versionnés + fail-closed | T1499.004 | — | SI-10 |
+| Anti-rejeu nonce/horloge/seq + TTL | T1499.004 | — | SC-23 |

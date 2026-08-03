@@ -16,8 +16,8 @@ Un nœud réémet des événements de registre déjà valides pour les faire com
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Protocoles versionnés + fail-closed | — | SI-10 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | T1550 | — | SC-23 |
+| Adressage par hash de contenu | T1565.002 | D3-FH | SI-7 |
+| Protocoles versionnés + fail-closed | T1565.002 | — | SI-10 |

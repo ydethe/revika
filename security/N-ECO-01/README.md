@@ -16,8 +16,8 @@ Un nœud annonce une capacité de stockage supérieure à sa capacité réelle p
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Sondes + défis de possession | — | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Sondes + défis de possession | T1036, T1684.001 | — | SI-7 |
+| Ledger SQLite par-owner + quotas/baux | T1036 | — | SC-6 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1684.001 | — | SC-5 |

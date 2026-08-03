@@ -17,10 +17,10 @@ Un observateur infère qu'un fichier ou un ensemble de données existe à partir
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| DHT /revika + diversité des pairs | — | SC-36 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| DHT /revika + diversité des pairs | T1046 | — | SC-36 |
+| Adressage par hash de contenu | T1046 | D3-FH | SI-7 |
+| Transport libp2p chiffré / authentifié | T1040 | D3-MENCR | SC-8 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1040 | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1592 | — | SC-6 |

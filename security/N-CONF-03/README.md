@@ -17,10 +17,10 @@ Le recoupement des métadonnées visibles côté nœud (identifiants de contenu,
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Adressage par hash de contenu | T1213 | D3-FH | SI-7 |
+| Ledger SQLite par-owner + quotas/baux | T1213 | — | SC-6 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1119 | D3-ITF | SC-5 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1591 | — | SC-36 |
+| Placement réparti sur owners indépendants | T1591 | — | SC-36 |

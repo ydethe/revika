@@ -16,10 +16,10 @@ Les données d'un client sont modifiées sans son autorisation entre l'écriture
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
-| Recompute du hash à la réception | D3-FH | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
+| Chiffrement client-side AES-256-GCM | T1565.001 | D3-MENCR | SC-28 |
+| Transport libp2p chiffré / authentifié | T1565.002 | D3-MENCR | SC-8 |
+| Recompute du hash à la réception | T1565.002 | D3-FH | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1565.002 | — | SC-36 |

@@ -16,7 +16,7 @@ Un client annonce des capacités qu'il ne possède pas pour négocier un service
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1036 | D3-MAN | AU-10 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1684.001 | — | SC-5 |

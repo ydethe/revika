@@ -16,10 +16,10 @@ Un nœud collecte les récompenses puis quitte le réseau sans honorer ses engag
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Sondes + défis de possession | — | SI-7 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1485 | — | SC-36 |
+| Adressage par hash de contenu | T1485 | D3-FH | SI-7 |
+| Ledger SQLite par-owner + quotas/baux | T1489 | — | SC-6 |
+| Sondes + défis de possession | T1489 | — | SI-7 |
+| Placement réparti sur owners indépendants | T1489 | — | SC-36 |

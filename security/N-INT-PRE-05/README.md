@@ -16,7 +16,7 @@ Un nœud fournit une preuve mensongère qu'il est disponible et joignable pour s
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Sondes + défis de possession | — | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Sondes + défis de possession | T1036 | — | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1684.001 | — | SC-36 |

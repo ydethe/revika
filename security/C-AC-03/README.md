@@ -16,7 +16,7 @@ Un client présente un jeton d'accès forgé pour obtenir un service.
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1606 | D3-MAN | AU-10 |
+| Ledger SQLite par-owner + quotas/baux | T1550.001 | — | SC-6 |

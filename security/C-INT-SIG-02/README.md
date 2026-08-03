@@ -16,8 +16,8 @@ Une signature valide est présentée comme couvrant un contenu qu'elle ne couvre
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Recompute du hash à la réception | D3-FH | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1036 | D3-MAN | AU-10 |
+| Adressage par hash de contenu | T1036 | D3-FH | SI-7 |
+| Recompute du hash à la réception | T1565.001 | D3-FH | SI-7 |

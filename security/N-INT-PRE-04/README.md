@@ -16,7 +16,7 @@ Un nœud calcule ou devine une preuve valide sans jamais avoir stocké la donné
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Sondes + défis de possession | — | SI-7 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Sondes + défis de possession | T1036 | — | SI-7 |
+| Adressage par hash de contenu | T1600 | D3-FH | SI-7 |

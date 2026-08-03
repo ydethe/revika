@@ -17,9 +17,9 @@ Un nœud oriente les requêtes de découverte vers des pairs contrôlés par l'a
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Adressage par hash de contenu | T1557 | D3-FH | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1207 | — | SC-36 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1583.004 | — | SC-5 |
+| ConnectionGater / ResourceManager / ConnManager | T1583.004 | D3-NTF | SC-7 |

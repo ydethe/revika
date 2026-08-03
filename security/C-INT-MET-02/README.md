@@ -16,9 +16,9 @@ Les horodatages associés aux données du client sont altérés pour fausser l'o
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Métadonnées d'effacement signées (stripe.Descriptor) | D3-MAN | SI-7 |
-| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | T1070.006 | — | SC-23 |
+| Journaux append-only chaînés + seq signés | T1070.006 | — | AU-9 |
+| Métadonnées d'effacement signées (stripe.Descriptor) | T1565.001 | D3-MAN | SI-7 |
+| Manifeste signé Ed25519 versionné | T1565.001 | D3-MAN | SI-7 |

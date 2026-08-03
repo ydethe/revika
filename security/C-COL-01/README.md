@@ -16,8 +16,8 @@ Plusieurs clients coordonnent leurs actions pour contourner des limites ou fauss
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1136 | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1585 | — | SC-6 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1585 | D3-ITF | SC-5 |

@@ -16,7 +16,7 @@ Un nœud continue de servir des données à un demandeur dont l'accès a été r
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Capacités TTL court + révocation | — | AC-3 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Capacités TTL court + révocation | T1078 | — | AC-3 |
+| Ledger SQLite par-owner + quotas/baux | T1550.001 | — | SC-6 |

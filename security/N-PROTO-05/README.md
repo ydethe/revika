@@ -16,8 +16,8 @@ Un attaquant exploite une faille d'implémentation du nœud pour en détourner l
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Protocoles versionnés + fail-closed | — | SI-10 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
-| Nœud « dumb/untrusted » + re-vérification côté User | — | SA-8 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Protocoles versionnés + fail-closed | T1210 | — | SI-10 |
+| ConnectionGater / ResourceManager / ConnManager | T1210 | D3-NTF | SC-7 |
+| Nœud « dumb/untrusted » + re-vérification côté User | T1068 | — | SA-8 |

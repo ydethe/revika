@@ -16,8 +16,8 @@ Un nœud se fait passer pour un autre nœud (ou pour un propriétaire) afin de b
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1684.001, T1078 | D3-MAN | AU-10 |
+| Transport libp2p chiffré / authentifié | T1078 | D3-MENCR | SC-8 |
+| Ledger SQLite par-owner + quotas/baux | T1078 | — | SC-6 |

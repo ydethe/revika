@@ -17,8 +17,8 @@ Une signature, ou la clé qui la produit, est dérobée et réutilisée par un t
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Isolation des clés côté client (.revika/keys) | — | SC-12 |
-| Capacités TTL court + révocation | — | AC-3 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Isolation des clés côté client (.revika/keys) | T1552 | — | SC-12 |
+| Capacités TTL court + révocation | T1528 | — | AC-3 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1550.001 | — | SC-5 |

@@ -17,9 +17,9 @@ Un acteur fait accepter au client des données corrompues qui ne se reconstruise
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Recompute du hash à la réception | D3-FH | SI-7 |
-| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Recompute du hash à la réception | T1565.002 | D3-FH | SI-7 |
+| Chiffrement client-side AES-256-GCM | T1565.001 | D3-MENCR | SC-28 |
+| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1490 | — | SC-36 |

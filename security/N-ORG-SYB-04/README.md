@@ -17,9 +17,9 @@ Un acteur contrôle assez de nœuds dans une région pour dominer les décisions
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Diversité de placement mesurée par le réseau | — | SC-36 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1585 | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1585 | — | SC-6 |
+| Diversité de placement mesurée par le réseau | T1583.005 | — | SC-36 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1199 | — | SC-36 |

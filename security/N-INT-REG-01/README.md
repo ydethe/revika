@@ -16,8 +16,8 @@ Un nœud publie deux versions divergentes d'un même enregistrement dans le regi
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Corroboration croisée inter-pairs du ledger | — | AU-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Journaux append-only chaînés + seq signés | T1565.001 | — | AU-9 |
+| Adressage par hash de contenu | T1207 | D3-FH | SI-7 |
+| Corroboration croisée inter-pairs du ledger | T1207 | — | AU-6 |

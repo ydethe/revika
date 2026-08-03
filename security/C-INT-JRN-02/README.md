@@ -16,7 +16,7 @@ Des entrées de journal contradictoires sont produites pour rendre l'historique 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Journaux append-only chaînés + seq signés | T1565.001 | — | AU-9 |
+| Signatures / capacités Ed25519 | T1070 | D3-MAN | AU-10 |

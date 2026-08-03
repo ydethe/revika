@@ -17,8 +17,8 @@ Un opérateur simule une dispersion géographique de ses nœuds qui n'existe pas
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Diversité de placement mesurée par le réseau | — | SC-36 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Diversité de placement mesurée par le réseau | T1036, T1090.003, T1583.003 | — | SC-36 |
+| Ledger SQLite par-owner + quotas/baux | T1583.003 | — | SC-6 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1583.003 | — | SC-36 |

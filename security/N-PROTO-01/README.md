@@ -17,9 +17,9 @@ Un nœud injecte dans le canal de gossip des messages forgés pour propager de f
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Protocoles versionnés + fail-closed | — | SI-10 |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1565.002, T1684.001 | D3-MAN | AU-10 |
+| Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |
+| Protocoles versionnés + fail-closed | T1071 | — | SI-10 |
+| Transport libp2p chiffré / authentifié | T1071 | D3-MENCR | SC-8 |

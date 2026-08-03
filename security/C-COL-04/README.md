@@ -16,8 +16,8 @@ Des clients fabriquent de concert de faux événements pour tromper le journal o
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Journaux append-only chaînés + seq signés | T1565.001 | — | AU-9 |
+| Signatures / capacités Ed25519 | T1684.001 | D3-MAN | AU-10 |
+| Adressage par hash de contenu | T1684.001 | D3-FH | SI-7 |

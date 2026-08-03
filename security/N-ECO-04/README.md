@@ -17,10 +17,10 @@ Un nœud délègue en secret le stockage à un tiers ou à un cloud, brisant les
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
-| Diversité de placement mesurée par le réseau | — | SC-36 |
-| Sondes + défis de possession | — | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Chiffrement client-side AES-256-GCM | T1199, T1530 | D3-MENCR | SC-28 |
+| Diversité de placement mesurée par le réseau | T1199 | — | SC-36 |
+| Sondes + défis de possession | T1090 | — | SI-7 |
+| Ledger SQLite par-owner + quotas/baux | T1090 | — | SC-6 |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1530 | D3-MENCR | SC-12 |

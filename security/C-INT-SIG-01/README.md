@@ -17,10 +17,10 @@ Un même contenu reçoit deux signatures contradictoires afin de créer une ambi
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Recompute du hash à la réception | D3-FH | SI-7 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Ledger SQLite par-owner + quotas/baux | T1684.001 | — | SC-6 |
+| Signatures / capacités Ed25519 | T1036 | D3-MAN | AU-10 |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1036 | D3-MENCR | SC-12 |
+| Recompute du hash à la réception | T1565.001 | D3-FH | SI-7 |
+| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |

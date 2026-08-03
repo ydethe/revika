@@ -16,9 +16,9 @@ Un client alterne créations et suppressions pour exploiter les coûts asymétri
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1499.003 | — | SC-6 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1485 | — | SC-36 |
+| Journaux append-only chaînés + seq signés | T1485 | — | AU-9 |

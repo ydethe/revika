@@ -16,9 +16,9 @@ Des clients partagent des clés pour mutualiser indûment des accès ou des iden
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Capacités TTL court + révocation | — | AC-3 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1550 | D3-MENCR | SC-12 |
+| Capacités TTL court + révocation | T1550 | — | AC-3 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1078 | — | SC-5 |
+| Journaux append-only chaînés + seq signés | T1078 | — | AU-9 |

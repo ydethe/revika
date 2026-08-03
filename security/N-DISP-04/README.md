@@ -16,9 +16,9 @@ Un nœud dégrade délibérément ses temps de réponse pour nuire à la perform
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Sondes + défis de possession | — | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Sondes + défis de possession | T1499 | — | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1499 | — | SC-36 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1499.002 | D3-ITF | SC-5 |
+| ConnectionGater / ResourceManager / ConnManager | T1499.002 | D3-NTF | SC-7 |

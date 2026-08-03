@@ -16,8 +16,8 @@ Une donnée est présentée comme provenant d'un émetteur qui n'est pas le sien
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1684.001, T1036 | D3-MAN | AU-10 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1684.001 | — | SC-5 |
+| Adressage par hash de contenu | T1036 | D3-FH | SI-7 |

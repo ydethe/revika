@@ -16,7 +16,7 @@ Un nœud continue de fournir des données au-delà de l'expiration du bail ou du
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | T1550.001 | — | SC-23 |
+| Ledger SQLite par-owner + quotas/baux | T1078 | — | SC-6 |

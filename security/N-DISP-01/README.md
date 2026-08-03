@@ -17,9 +17,9 @@ Un nœud efface un shard qu'il s'était engagé à conserver, réduisant la redo
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Sondes + défis de possession | — | SI-7 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1485 | — | SC-36 |
+| Ledger SQLite par-owner + quotas/baux | T1070.004 | — | SC-6 |
+| Sondes + défis de possession | T1070.004 | — | SI-7 |
+| Placement réparti sur owners indépendants | T1490 | — | SC-36 |

@@ -16,7 +16,7 @@ Un nœud détient un shard mais refuse de le servir à un client légitime.
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Sondes + défis de possession | — | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1489 | — | SC-36 |
+| Sondes + défis de possession | T1490 | — | SI-7 |

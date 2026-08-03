@@ -17,9 +17,9 @@ La clé privée d'identité d'un nœud est dérobée, permettant à l'attaquant 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Isolation des clés côté client (.revika/keys) | — | SC-12 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Isolation des clés côté client (.revika/keys) | T1552 | — | SC-12 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1649 | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1078 | — | SC-6 |
+| ConnectionGater / ResourceManager / ConnManager | T1078 | D3-NTF | SC-7 |

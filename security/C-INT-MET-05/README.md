@@ -16,8 +16,8 @@ La liste des destinataires d'un partage est falsifiée, ajoutant ou retirant des
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Capacités TTL court + révocation | — | AC-3 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1565.001, T1684.001 | D3-MENCR | SC-12 |
+| Signatures / capacités Ed25519 | T1565.001 | D3-MAN | AU-10 |
+| Capacités TTL court + révocation | T1565.001 | — | AC-3 |

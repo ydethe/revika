@@ -16,10 +16,10 @@ Un nœud ne prend en charge que les tâches rentables et néglige les obligation
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Grant de réparation signé | D3-MAN | AC-3 |
-| Sondes + défis de possession | — | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1490 | — | SC-36 |
+| Grant de réparation signé | T1490 | D3-MAN | AC-3 |
+| Sondes + défis de possession | T1489 | — | SI-7 |
+| Ledger SQLite par-owner + quotas/baux | T1489 | — | SC-6 |
+| Placement réparti sur owners indépendants | T1489 | — | SC-36 |

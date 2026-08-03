@@ -17,6 +17,6 @@ Un nœud attribue à une requête une identité de demandeur différente pour co
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1684.001, T1036, T1606 | D3-MAN | AU-10 |

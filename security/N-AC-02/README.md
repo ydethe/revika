@@ -16,7 +16,7 @@ Un nœud sert un shard à un demandeur qui ne présente aucune autorisation vali
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Signatures / capacités Ed25519 | T1078 | D3-MAN | AU-10 |
+| Ledger SQLite par-owner + quotas/baux | T1530 | — | SC-6 |

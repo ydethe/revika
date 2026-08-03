@@ -16,7 +16,7 @@ Le nœud reconstruit après coup son historique local de métadonnées pour masq
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Journaux append-only chaînés + seq signés | T1070 | — | AU-9 |
+| Anti-rejeu nonce/horloge/seq + TTL | T1565.001 | — | SC-23 |

@@ -16,8 +16,8 @@ L'analyse des latences des opérations client révèle des informations telles q
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Transport libp2p chiffré / authentifié | T1040 | D3-MENCR | SC-8 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1040 | — | SC-36 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1592 | D3-ITF | SC-5 |

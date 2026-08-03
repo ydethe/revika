@@ -16,8 +16,8 @@ Un client dont l'accès a été révoqué contourne la révocation pour continue
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Capacités TTL court + révocation | — | AC-3 |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Capacités TTL court + révocation | T1550.001 | — | AC-3 |
+| ConnectionGater / ResourceManager / ConnManager | T1078 | D3-NTF | SC-7 |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1078 | D3-MENCR | SC-12 |

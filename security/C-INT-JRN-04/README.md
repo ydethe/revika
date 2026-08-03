@@ -16,7 +16,7 @@ Des événements de journal déjà consignés sont réémis pour fausser le déc
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |
+| Journaux append-only chaînés + seq signés | T1550.001 | — | AU-9 |

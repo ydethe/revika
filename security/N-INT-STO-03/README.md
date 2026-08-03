@@ -16,7 +16,7 @@ Le nœud sert délibérément une version périmée d'un shard ou d'un manifeste
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Manifeste signé Ed25519 versionné | T1565.001 | D3-MAN | SI-7 |
+| Anti-rejeu nonce/horloge/seq + TTL | T1550 | — | SC-23 |

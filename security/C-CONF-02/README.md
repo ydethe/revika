@@ -17,11 +17,11 @@ Le recoupement de métadonnées côté client (manifestes, identifiants, tailles
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Métadonnées d'effacement signées (stripe.Descriptor) | D3-MAN | SI-7 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Chunking taille fixe / normalisation des shards | — | SC-4 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Chiffrement client-side AES-256-GCM | T1213 | D3-MENCR | SC-28 |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1213 | D3-MENCR | SC-12 |
+| Métadonnées d'effacement signées (stripe.Descriptor) | T1213 | D3-MAN | SI-7 |
+| Adressage par hash de contenu | T1119 | D3-FH | SI-7 |
+| Chunking taille fixe / normalisation des shards | T1119 | — | SC-4 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1589 | — | SC-5 |

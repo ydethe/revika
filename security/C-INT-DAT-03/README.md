@@ -16,8 +16,8 @@ Le client se voit présenter un mélange de versions incompatibles d'un même co
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
+| Manifeste signé Ed25519 versionné | T1565.001 | D3-MAN | SI-7 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1490 | — | SC-36 |

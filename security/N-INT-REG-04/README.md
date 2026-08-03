@@ -16,9 +16,9 @@ Un nœud inscrit dans le registre des événements qui n'ont jamais eu lieu (fau
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Corroboration croisée inter-pairs du ledger | — | AU-6 |
-| Sondes + défis de possession | — | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
+| Signatures / capacités Ed25519 | T1565.001 | D3-MAN | AU-10 |
+| Corroboration croisée inter-pairs du ledger | T1036 | — | AU-6 |
+| Sondes + défis de possession | T1036 | — | SI-7 |

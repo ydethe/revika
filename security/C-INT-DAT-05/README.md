@@ -16,8 +16,8 @@ Un attaquant insère dans le flux du client des données malveillantes destinée
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Recompute du hash à la réception | D3-FH | SI-7 |
-| Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 |
-| Nœud « dumb/untrusted » + re-vérification côté User | — | SA-8 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Recompute du hash à la réception | T1565.002 | D3-FH | SI-7 |
+| Chiffrement client-side AES-256-GCM | T1565.002 | D3-MENCR | SC-28 |
+| Nœud « dumb/untrusted » + re-vérification côté User | T1203 | — | SA-8 |

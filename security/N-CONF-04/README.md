@@ -16,8 +16,8 @@ L'analyse du trafic entrant/sortant d'un nœud (volumes, destinations, timing) r
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Transport libp2p chiffré / authentifié | T1040 | D3-MENCR | SC-8 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1590 | — | SC-36 |
+| Placement réparti sur owners indépendants | T1590 | — | SC-36 |

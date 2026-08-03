@@ -17,8 +17,8 @@ Un opérateur exécute une version altérée du logiciel de nœud qui dévie du 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Nœud « dumb/untrusted » + re-vérification côté User | — | SA-8 |
-| Build reproductible / chaîne d'appro. épinglée | — | SR-4 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Nœud « dumb/untrusted » + re-vérification côté User | T1554 | — | SA-8 |
+| Build reproductible / chaîne d'appro. épinglée | T1195.002 | — | SR-4 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1685 | — | SC-36 |

@@ -16,8 +16,8 @@ Un client s'entend avec des nœuds pour obtenir un traitement de faveur ou tromp
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Nœud « dumb/untrusted » + re-vérification côté User | — | SA-8 |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Recompute du hash à la réception | D3-FH | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Nœud « dumb/untrusted » + re-vérification côté User | T1199 | — | SA-8 |
+| Journaux append-only chaînés + seq signés | T1685.002 | — | AU-9 |
+| Recompute du hash à la réception | T1685.002 | D3-FH | SI-7 |

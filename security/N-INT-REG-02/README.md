@@ -16,7 +16,7 @@ Un nœud tente de modifier a posteriori des entrées déjà inscrites dans le re
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Journaux append-only chaînés + seq signés | — | AU-9 |
-| Corroboration croisée inter-pairs du ledger | — | AU-6 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Journaux append-only chaînés + seq signés | T1565.001 | — | AU-9 |
+| Corroboration croisée inter-pairs du ledger | T1070 | — | AU-6 |

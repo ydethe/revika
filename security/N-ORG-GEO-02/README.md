@@ -17,8 +17,8 @@ Un nœud masque sa localisation réelle via VPN ou proxy, faussant la diversité
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Diversité de placement mesurée par le réseau | — | SC-36 |
-| Placement réparti sur owners indépendants | — | SC-36 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Diversité de placement mesurée par le réseau | T1090.003, T1583.003 | — | SC-36 |
+| Placement réparti sur owners indépendants | T1036 | — | SC-36 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1036 | — | SC-36 |

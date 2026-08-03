@@ -17,9 +17,9 @@ En corrélant les propriétaires, les destinataires de partages et les schémas 
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
-| Signatures / capacités Ed25519 | D3-MAN | AU-10 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1589 | D3-MENCR | SC-12 |
+| Signatures / capacités Ed25519 | T1591 | D3-MAN | AU-10 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1119 | D3-ITF | SC-5 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1119 | — | SC-5 |

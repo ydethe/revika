@@ -16,8 +16,8 @@ Plusieurs nœuds coordonnent leurs actions pour tromper les mécanismes de place
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
-| Placement réparti sur owners indépendants | — | SC-36 |
-| Sondes + défis de possession | — | SI-7 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1199 | — | SC-36 |
+| Placement réparti sur owners indépendants | T1199 | — | SC-36 |
+| Sondes + défis de possession | T1585 | — | SI-7 |

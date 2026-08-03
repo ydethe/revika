@@ -16,8 +16,8 @@ Les métadonnées d'un manifeste client (structure, clés, pointeurs) sont falsi
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Manifeste signé Ed25519 versionné | D3-MAN | SI-7 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Manifeste signé Ed25519 versionné | T1565.001 | D3-MAN | SI-7 |
+| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
+| Encapsulation ML-KEM-768 (cap wrapping) | T1036 | D3-MENCR | SC-12 |

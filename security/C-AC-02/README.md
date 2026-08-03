@@ -15,7 +15,7 @@ Un client réutilise un droit ou un jeton dont la validité a expiré.
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Capacités TTL court + révocation | — | AC-3 |
-| Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Capacités TTL court + révocation | T1550.001 | — | AC-3 |
+| Anti-rejeu nonce/horloge/seq + TTL | T1550.001 | — | SC-23 |

@@ -17,10 +17,10 @@ Un nœud est ciblé (ou se sur-engage) jusqu'à épuisement de ses ressources, l
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 |
-| Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | — | SC-6 |
-| Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| ConnectionGater / ResourceManager / ConnManager | T1499 | D3-NTF | SC-7 |
+| Rate-limiting par-owner (pubkey Ed25519) | T1499.001 | D3-ITF | SC-5 |
+| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1499.001 | — | SC-5 |
+| Ledger SQLite par-owner + quotas/baux | T1498 | — | SC-6 |
+| Codage Reed-Solomon k=4/m=2 + réparation | T1498 | — | SC-36 |

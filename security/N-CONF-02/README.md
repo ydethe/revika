@@ -16,8 +16,8 @@ L'observation des motifs de lecture/écriture sur les shards (fréquence, séque
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Chunking taille fixe / normalisation des shards | — | SC-4 |
-| Adressage par hash de contenu | D3-FH | SI-7 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Chunking taille fixe / normalisation des shards | T1119 | — | SC-4 |
+| Adressage par hash de contenu | T1119 | D3-FH | SI-7 |
+| Placement réparti sur owners indépendants | T1005 | — | SC-36 |

@@ -16,7 +16,7 @@ Un nœud déclare une position géographique erronée pour satisfaire des contra
 
 ## Correspondance cadres de défense
 
-| Mesure de défense | D3FEND | NIST 800-53 |
-| --- | --- | --- |
-| Diversité de placement mesurée par le réseau | — | SC-36 |
-| Placement réparti sur owners indépendants | — | SC-36 |
+| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| --- | --- | --- | --- |
+| Diversité de placement mesurée par le réseau | T1036, T1565.002 | — | SC-36 |
+| Placement réparti sur owners indépendants | T1565.002 | — | SC-36 |
