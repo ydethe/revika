@@ -37,6 +37,11 @@ A row in the cadres table with `—` in *both* framework columns is a warning (t
 measure maps to no framework — usually a deliberate P2P state-of-the-art gap).
 `security/frameworks.md` is validated too, so no fiche can cite an ID it doesn't define.
 
+It also enforces **defensive coverage**: every ATT&CK technique a fiche cites must be
+countered by at least one control (D3FEND or NIST) in the cadres table. A technique
+mapped only to `—`/`—` gap rows — or not mapped at all — is a hard error (exit `1`),
+flagging an undefended threat in the model.
+
 The CI job `.github/workflows/attack-ids.yml` runs it on any change under
 `security/` or to this tool.
 

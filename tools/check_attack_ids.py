@@ -26,6 +26,11 @@ official knowledge bases:
 A row in the cadres table with ``—`` in *both* framework columns is a warning
 (the measure maps to no framework — usually a deliberate P2P state-of-the-art gap).
 
+**Coverage:** every ATT&CK technique a fiche cites must be countered by at least one
+defensive control — it has to appear in a cadres row carrying a D3FEND or NIST id.
+A technique defended by no recognized control (or only by ``—``/``—`` gap rows) is a
+hard error: an undefended threat in the model.
+
 Datasets are read from ``--data-dir`` (default ``$FRAMEWORK_DATA_DIR`` or
 ``tools/.frameworks``): ATT&CK STIX bundles (``{enterprise,mobile,ics}-attack.json``),
 ``d3fend.json``, ``nist-sp800-53-rev5.json``. See tools/README.md for how to fetch
@@ -90,8 +95,15 @@ def normalize_nist(token: str) -> str:
 
 
 def extract_ids(path: Path) -> dict[str, list[tuple[int, str]]]:
-    """Return {framework: [(lineno, id), ...]} for one fiche."""
+    """Return {framework: [(lineno, id), ...]} for one fiche.
+
+    Also returns ``"covered"``: the set of ATT&CK IDs that appear in a cadres-table
+    row carrying at least one defensive framework mapping (D3FEND or NIST). A
+    technique cited by the fiche but absent from this set is defended by no
+    recognized control (see the coverage check in :func:`main`).
+    """
     found: dict[str, list[tuple[int, str]]] = {"attack": [], "d3fend": [], "nist": []}
+    covered: set[str] = set()
     for header, rows in iter_tables(path):
         # First table: IDs live in the "ID" column (the "Technique ATT&CK" column
         # holds the technique *name*). Cadres table: IDs live in the
@@ -105,15 +117,26 @@ def extract_ids(path: Path) -> dict[str, list[tuple[int, str]]]:
         d3_col = column(header, "D3FEND")
         nist_col = column(header, "NIST 800-53")
         for lineno, cells in rows:
-            if att_col is not None and att_col < len(cells):
-                found["attack"] += [(lineno, m) for m in ATTACK_ID.findall(cells[att_col])]
+            row_attack = (
+                ATTACK_ID.findall(cells[att_col])
+                if att_col is not None and att_col < len(cells)
+                else []
+            )
+            found["attack"] += [(lineno, m) for m in row_attack]
             if d3_col is not None or nist_col is not None:
                 d3 = cells[d3_col] if d3_col is not None and d3_col < len(cells) else ""
                 nist = cells[nist_col] if nist_col is not None and nist_col < len(cells) else ""
-                found["d3fend"] += [(lineno, m) for m in D3FEND_ID.findall(d3)]
-                found["nist"] += [(lineno, normalize_nist(m)) for m in NIST_ID.findall(nist)]
-                if not D3FEND_ID.findall(d3) and not NIST_ID.findall(nist):
+                d3_ids = D3FEND_ID.findall(d3)
+                nist_ids = NIST_ID.findall(nist)
+                found["d3fend"] += [(lineno, m) for m in d3_ids]
+                found["nist"] += [(lineno, normalize_nist(m)) for m in nist_ids]
+                if not d3_ids and not nist_ids:
                     found.setdefault("gap", []).append((lineno, cells[0][:40]))
+                else:
+                    # This cadres row anchors its technique(s) to a real control:
+                    # every ATT&CK ID it names is now defensively covered.
+                    covered.update(row_attack)
+    found["covered"] = sorted(covered)  # type: ignore[assignment]
     return found
 
 
@@ -234,6 +257,18 @@ def main() -> int:
                 errors.append(f"{rel}:{lineno}: unknown NIST 800-53 control {nid.upper()}")
         for lineno, label in ids.get("gap", []):
             warnings.append(f"{rel}:{lineno}: no framework mapping for “{label}…”")
+        # Coverage: every ATT&CK technique cited must be countered by at least one
+        # defensive control (D3FEND or NIST) in the cadres table. A technique with
+        # no such mapping is an undefended threat — a hard error.
+        covered = set(ids.get("covered", []))
+        first_seen: dict[str, int] = {}
+        for lineno, tid in ids["attack"]:
+            first_seen.setdefault(tid, lineno)
+        for tid in sorted(set(first_seen) - covered):
+            errors.append(
+                f"{rel}:{first_seen[tid]}: ATT&CK {tid} is covered by no defense "
+                f"(no D3FEND/NIST mapping in the cadres table)"
+            )
 
     for w in warnings:
         print(f"warning: {w}")
