@@ -54,7 +54,7 @@ case "${1:-}" in
   store)
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
-    revika-ctl keygen -key /handoff/repair-user >/dev/null
+    revika-ctl keygen -key /handoff/repair-user -pow-difficulty 0 >/dev/null
     retry "put" revika-ctl put -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -manifest "$MANIFEST" "$SRC" \
       || { echo "FAIL: put never succeeded"; exit 1; }
     [ -s "$MANIFEST" ] || { echo "FAIL: no manifest written"; exit 1; }

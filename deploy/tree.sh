@@ -51,7 +51,7 @@ head -c 1048576 /dev/urandom >"$SRC/docs/nested/big.bin"
 
 # The client signs each PUT with its Ed25519 signing identity; generate one.
 echo ">> generating the client's signing identity"
-revika-ctl keygen -key "$WORK/user" >/dev/null
+revika-ctl keygen -key "$WORK/user" -pow-difficulty 0 >/dev/null
 SIGNKEY="$WORK/user.sign.key"
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }

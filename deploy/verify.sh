@@ -48,7 +48,7 @@ head -c 1048576 /dev/urandom >>"$SRC"
 # Ed25519 signing key (its storage owner identity), so generate one and pass it
 # to put/get via -signkey. This is also the key that authorizes a later delete.
 echo ">> generating the client's signing identity"
-revika-ctl keygen -key "$WORK/user" >/dev/null
+revika-ctl keygen -key "$WORK/user" -pow-difficulty 0 >/dev/null
 SIGNKEY="$WORK/user.sign.key"
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
@@ -154,7 +154,7 @@ fi
 # script is run standalone).
 if [ -d /handoff ]; then
   echo ">> preparing handoff for the unauthorized-access client"
-  revika-ctl keygen -key "$WORK/thirdparty" >/dev/null
+  revika-ctl keygen -key "$WORK/thirdparty" -pow-difficulty 0 >/dev/null
   revika-ctl share -manifest "$MANIFEST" -to "@$WORK/thirdparty.pub" -o /handoff/secret.cap >/dev/null
   printf '%s' "$MARKER" >/handoff/marker.txt
   echo "   wrote /handoff/secret.cap (wrapped for a third party) and /handoff/marker.txt"

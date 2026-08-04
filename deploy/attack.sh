@@ -41,7 +41,7 @@ fail=0
 
 # This attacker is its own client with its own fresh identity, unrelated to the
 # user who stored the data or the third party the cap was shared with.
-revika-ctl keygen -key "$WORK/attacker" >/dev/null
+revika-ctl keygen -key "$WORK/attacker" -pow-difficulty 0 >/dev/null
 
 echo "== unauthorized-access checks (every attempt MUST be denied) =="
 

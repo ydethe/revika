@@ -37,7 +37,7 @@ case "${1:-}" in
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
     # PUT is an authenticated write: sign it with a freshly generated owner key.
-    revika-ctl keygen -key /tmp/resilience-user >/dev/null
+    revika-ctl keygen -key /tmp/resilience-user -pow-difficulty 0 >/dev/null
     retry "put" revika-ctl put -bootstrap "$SEED_ADDR" -signkey /tmp/resilience-user.sign.key -manifest "$MANIFEST" "$SRC" \
       || { echo "FAIL: put never succeeded"; exit 1; }
     [ -s "$MANIFEST" ] || { echo "FAIL: no manifest written"; exit 1; }

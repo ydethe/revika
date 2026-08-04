@@ -51,8 +51,8 @@ retry() {
 # Two independent User identities, each with its own signing key. Only `owner`
 # will store the file; `mallory` is a legitimate other user (e.g. someone the
 # file was shared with) who must not be able to delete it.
-revika-ctl keygen -key "$WORK/owner"   >/dev/null
-revika-ctl keygen -key "$WORK/mallory" >/dev/null
+revika-ctl keygen -key "$WORK/owner"   -pow-difficulty 0 >/dev/null
+revika-ctl keygen -key "$WORK/mallory" -pow-difficulty 0 >/dev/null
 
 echo ">> owner stores a 1 MiB file across the nodes"
 head -c 1048576 /dev/urandom >"$SRC"
