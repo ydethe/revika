@@ -18,7 +18,10 @@ This script extracts every framework ID cited and checks it against the
 official knowledge bases:
 
 - **MITRE ATT&CK** (Enterprise + Mobile + ICS) via ``mitreattack-python`` — an
-  ID no matrix knows is a hard error; a deprecated/revoked ID is a warning.
+  ID no matrix knows is a hard error; a deprecated/revoked ID is a warning. The
+  ATT&CK release is pinned to **v16.1** (not latest): each STIX bundle's
+  ``x-mitre-collection`` version must be ``16.1`` or the check aborts as a setup
+  error, so the model is validated against one stable knowledge base.
 - **MITRE D3FEND** via the ontology JSON-LD — an unknown ``D3-XXXX`` id is an error.
 - **NIST SP 800-53 Rev 5** via the OSCAL catalog — an unknown control id is an
   error. Enhancements accepted as ``SC-7(3)`` or ``SC-7.3`` (normalized to ``sc-7.3``).
@@ -50,6 +53,12 @@ from pathlib import Path
 
 MITRE_SOURCES = {"mitre-attack", "mitre-mobile-attack", "mitre-ics-attack"}
 STIX_FILES = ("enterprise-attack.json", "mobile-attack.json", "ics-attack.json")
+# Pin the ATT&CK release the model is validated against (not "latest").
+ATTACK_VERSION = "16.1"
+# The x-mitre-collection object leads each STIX bundle; its x_mitre_version is
+# the ATT&CK release. Matched against the file head so we never parse the whole
+# multi-MB bundle twice just to read one field.
+COLLECTION_VERSION = re.compile(r'"x_mitre_version"\s*:\s*"([\d.]+)"')
 D3FEND_FILE = "d3fend.json"
 NIST_FILE = "nist-sp800-53-rev5.json"
 
@@ -150,6 +159,14 @@ def attack_external_id(obj) -> str | None:
     return None
 
 
+def bundle_version(bundle: Path) -> str | None:
+    """Return the ATT&CK release (x-mitre-collection x_mitre_version) of a bundle."""
+    with bundle.open(encoding="utf-8") as fh:
+        head = fh.read(4096)  # the collection object leads the bundle
+    m = COLLECTION_VERSION.search(head)
+    return m.group(1) if m else None
+
+
 def load_attack_ids(data_dir: Path) -> tuple[set[str], set[str]]:
     try:
         from mitreattack.stix20 import MitreAttackData
@@ -161,6 +178,12 @@ def load_attack_ids(data_dir: Path) -> tuple[set[str], set[str]]:
     valid: set[str] = set()
     deprecated: set[str] = set()
     for bundle in bundles:
+        ver = bundle_version(bundle)
+        if ver != ATTACK_VERSION:
+            sys.exit(
+                f"error: {bundle.name} is ATT&CK v{ver or '?'}, expected pinned "
+                f"v{ATTACK_VERSION}; re-fetch the v{ATTACK_VERSION} bundle (see tools/README.md)"
+            )
         data = MitreAttackData(str(bundle))
         for tech in data.get_techniques(remove_revoked_deprecated=False):
             ext_id = attack_external_id(tech)

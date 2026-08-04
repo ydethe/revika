@@ -11,12 +11,12 @@ Le nœud efface des entrées de son journal local de métadonnées pour dissimul
 
 | Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
 | --- | --- | --- | --- |
-| Disable or Modify Tools: Clear Linux or Mac System Logs | T1685.006 | Le nœud supprime des entrées de son journal local de métadonnées pour dissimuler des opérations effectuées. | Journaux d'audit append-only, signés et chaînés (hash-chain) : la suppression d'une entrée casse la continuité du chaînage et se détecte. |
-| Disable or Modify Tools: Disable or Modify Cloud Log | T1685.002 | Analogue de stockage : le nœud altère la journalisation qui documente son propre comportement pour échapper à l'audit. | Journal chaîné répliqué/vérifiable par les pairs + numéros de séquence signés rendant toute omission visible comme un trou dans la séquence. |
+| Indicator Removal: Clear Linux or Mac System Logs | T1070.002 | Le nœud supprime des entrées de son journal local de métadonnées pour dissimuler des opérations effectuées. | Journaux d'audit append-only, signés et chaînés (hash-chain) : la suppression d'une entrée casse la continuité du chaînage et se détecte. |
+| Impair Defenses: Disable or Modify Cloud Logs | T1562.008 | Analogue de stockage : le nœud altère la journalisation qui documente son propre comportement pour échapper à l'audit. | Journal chaîné répliqué/vérifiable par les pairs + numéros de séquence signés rendant toute omission visible comme un trou dans la séquence. |
 
 ## Correspondance cadres de défense
 
 | Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Journaux append-only chaînés + seq signés | T1685.006 | — | AU-9 |
-| Corroboration croisée inter-pairs du ledger | T1685.002 | — | AU-6 |
+| Journaux append-only chaînés + seq signés | T1070.002 | — | AU-9 |
+| Corroboration croisée inter-pairs du ledger | T1562.008 | — | AU-6 |

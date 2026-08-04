@@ -27,8 +27,10 @@ This script extracts every framework ID cited and checks it against the official
 knowledge bases:
 
 - **MITRE ATT&CK** (Enterprise + Mobile + ICS) via
-  [`mitreattack-python`](https://github.com/mitre-attack/mitreattack-python) —
-  unknown ID → error (exit `1`); deprecated/revoked ID → warning (exit `0`).
+  [`mitreattack-python`](https://github.com/mitre-attack/mitreattack-python),
+  pinned to **v16.1** (not latest) — unknown ID → error (exit `1`);
+  deprecated/revoked ID → warning (exit `0`). Each STIX bundle's
+  `x-mitre-collection` version must be `16.1` or the check aborts (setup error).
 - **MITRE D3FEND** via the ontology JSON-LD — unknown `D3-XXXX` id → error.
 - **NIST SP 800-53 Rev 5** via the OSCAL catalog — unknown control id → error.
   Enhancements accepted as `SC-7(3)` or `SC-7.3` (normalized to `sc-7.3`).
@@ -53,10 +55,12 @@ pip install -r tools/requirements.txt
 mkdir -p tools/.frameworks
 cd tools/.frameworks
 
-# MITRE ATT&CK STIX bundles (any subset works; enterprise covers all current IDs).
+# MITRE ATT&CK STIX bundles, pinned to v16.1 (any subset works; enterprise
+# covers all current IDs). The versioned file is saved under the unversioned
+# name the checker expects; it verifies the bundle really is v16.1.
 base=https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master
 for m in enterprise mobile ics; do
-  curl -fsSL "$base/$m-attack/$m-attack.json" -o "$m-attack.json"
+  curl -fsSL "$base/$m-attack/$m-attack-16.1.json" -o "$m-attack.json"
 done
 
 # MITRE D3FEND ontology.

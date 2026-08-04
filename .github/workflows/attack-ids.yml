@@ -49,9 +49,12 @@ jobs:
       - name: Download framework datasets
         run: |
           mkdir -p "$FRAMEWORK_DATA_DIR"
+          # Pin ATT&CK to v16.1 (not latest): fetch the versioned bundle, saved
+          # under the unversioned name check_attack_ids.py expects. The script
+          # verifies each bundle's x-mitre-collection version is 16.1.
           base=https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master
           for m in enterprise mobile ics; do
-            curl -fsSL "$base/$m-attack/$m-attack.json" -o "$FRAMEWORK_DATA_DIR/$m-attack.json"
+            curl -fsSL "$base/$m-attack/$m-attack-16.1.json" -o "$FRAMEWORK_DATA_DIR/$m-attack.json"
           done
           curl -fsSL https://d3fend.mitre.org/ontologies/d3fend.json \
             -o "$FRAMEWORK_DATA_DIR/d3fend.json"
