@@ -126,6 +126,15 @@ root cap and materializes the whole tree, restoring files, symlinks,
 sub-directories, empty directories, and per-entry metadata
 (`cmd/revika-ctl/tree.go`). Because it runs entirely through
 `pipeline.StoreBlob`/`LoadBlob` → `store.Put`/`Get`, it works unchanged over a
-single node or a DHT-spread network. Covered in-process by
-`cmd/revika-ctl/tree_test.go` and over a live multi-node network by
-`deploy/tree.sh` (docker-compose profile `tree`).
+single node or a DHT-spread network.
+
+Sharing composes directly on `Resolve` + `WrapCap`: `revika-ctl share -manifest
+<root-cap> -path <subpath> -to <pubkey>` resolves the subpath to a child
+`ReadCap` and wraps *that* (not the root) to the recipient — so you hand over a
+single file or one subdirectory of a stored tree, granting exactly that subtree
+and nothing outside it. `get -cap <file> -key <priv>` unwraps it and, reading the
+cap's `Kind`, restores either the single file or (with `-o <dir>`) the subtree;
+sharing a whole file manifest or the whole root cap works the same way without
+`-path`. Covered in-process by `cmd/revika-ctl/tree_test.go`
+(`TestShareGetSubpath`) and over a live multi-node network by `deploy/tree.sh`
+(docker-compose profile `tree`).

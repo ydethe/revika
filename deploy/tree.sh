@@ -16,8 +16,13 @@
 #      (files AND directories) spread across all nodes, not just the seed;
 #   4. `get -r` reconstructs the whole tree byte-identically, with the same set
 #      of files and directories (including empty ones) as the original.
+#   5. `share -path` carves a SINGLE file out of the stored tree, wrapped to a
+#      recipient's key, and `get -cap` reconstructs just that file (§3.5) —
+#      proving you can share one file from a tree without re-uploading it.
+#   6. `share -path` on a SUBDIRECTORY wraps that subtree cap, and `get -cap`
+#      restores only that subtree — nothing outside the shared path leaks.
 #
-# Exit status is 0 only if all four hold, so a compose run surfaces a failure as
+# Exit status is 0 only if all six hold, so a compose run surfaces a failure as
 # a non-zero exit for this service.
 set -euo pipefail
 
@@ -159,5 +164,95 @@ if [ "$src_dirs" != "$out_dirs" ]; then
 fi
 echo "OK: directory structure (including empty dirs) preserved"
 
+# --- share a SINGLE file out of the stored tree (Architecture §3.5) ----------
+# The tree is already stored and spread across the nodes; nothing is re-uploaded.
+# We resolve one file's cap through the DHT, wrap it to a fresh recipient key,
+# and reconstruct just that file from the -cap.
 echo
-echo "PASS: a directory tree was spread across all nodes and restored intact."
+echo ">> generating a recipient identity to share to"
+revika-ctl keygen -key "$WORK/recipient" -pow-difficulty 0 >/dev/null
+RCPT_PUB="$WORK/recipient.pub"
+RCPT_KEY="$WORK/recipient.key"
+
+SHARE_REL="docs/a.txt"
+FILE_CAP="$WORK/a.cap"
+FILE_OUT="$WORK/a.out"
+echo ">> share -path $SHARE_REL (wrap one file from the tree)"
+share_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl share -bootstrap "$SEED_ADDR" -manifest "$ROOTCAP" \
+      -path "$SHARE_REL" -to "@$RCPT_PUB" -o "$FILE_CAP"; then
+    share_ok=1
+    break
+  fi
+  echo "   share attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$share_ok" ] || { echo "FAIL: share -path (file) never succeeded"; exit 1; }
+[ -s "$FILE_CAP" ] || { echo "FAIL: no file cap written"; exit 1; }
+
+echo ">> get -cap (reconstruct the single shared file)"
+get_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl get -bootstrap "$SEED_ADDR" -cap "$FILE_CAP" -key "$RCPT_KEY" -o "$FILE_OUT"; then
+    get_ok=1
+    break
+  fi
+  echo "   get attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$get_ok" ] || { echo "FAIL: get -cap (file) never succeeded"; exit 1; }
+if ! cmp -s "$SRC/$SHARE_REL" "$FILE_OUT"; then
+  echo "FAIL: shared single file $SHARE_REL differs from the original"
+  exit 1
+fi
+echo "OK: a single file was shared from the tree and reconstructed byte-identically"
+
+# --- share a SUBDIRECTORY out of the stored tree -----------------------------
+SHARE_DIR="docs"
+DIR_CAP="$WORK/docs.cap"
+DIR_OUT="$WORK/docs.out"
+echo ">> share -path $SHARE_DIR (wrap a subtree from the tree)"
+share_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl share -bootstrap "$SEED_ADDR" -manifest "$ROOTCAP" \
+      -path "$SHARE_DIR" -to "@$RCPT_PUB" -o "$DIR_CAP"; then
+    share_ok=1
+    break
+  fi
+  echo "   share attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$share_ok" ] || { echo "FAIL: share -path (subtree) never succeeded"; exit 1; }
+
+echo ">> get -cap -o (restore only the shared subtree)"
+get_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl get -bootstrap "$SEED_ADDR" -cap "$DIR_CAP" -key "$RCPT_KEY" -o "$DIR_OUT"; then
+    get_ok=1
+    break
+  fi
+  echo "   get attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$get_ok" ] || { echo "FAIL: get -cap (subtree) never succeeded"; exit 1; }
+
+# The subtree is rooted at DIR_OUT: docs/a.txt appears as a.txt (no "docs/").
+if ! cmp -s "$SRC/$SHARE_DIR/a.txt" "$DIR_OUT/a.txt"; then
+  echo "FAIL: shared subtree file a.txt differs from the original"
+  exit 1
+fi
+if ! cmp -s "$SRC/$SHARE_DIR/nested/big.bin" "$DIR_OUT/nested/big.bin"; then
+  echo "FAIL: shared subtree file nested/big.bin differs from the original"
+  exit 1
+fi
+# Nothing outside the shared path may leak: root.txt lived above docs/.
+if [ -e "$DIR_OUT/root.txt" ]; then
+  echo "FAIL: shared subtree leaked root.txt from outside the shared path"
+  exit 1
+fi
+echo "OK: a subtree was shared from the tree and restored, leaking nothing outside it"
+
+echo
+echo "PASS: a directory tree was spread across all nodes, restored intact, and"
+echo "      single files and subtrees were shared out of it end-to-end encrypted."

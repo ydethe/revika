@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"revika/internal/cap"
+	"revika/internal/manifest"
 	"revika/internal/pipeline"
 	"revika/internal/store"
 )
@@ -278,17 +280,22 @@ func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool,
 	}
 }
 
-// cmdGet reconstructs a file, via a plaintext manifest or an unwrapped shared
-// cap, fetching shards from a single node (-node) or by discovering their
-// providers on the DHT (-bootstrap / -mdns).
+// cmdGet reconstructs what a capability addresses — a single file or a whole
+// directory tree — fetching shards from a single node (-node) or by discovering
+// their providers on the DHT (-bootstrap / -mdns). The source is either the
+// User's own plaintext manifest/root-cap (-manifest) or a shared, wrapped cap
+// (-cap, unwrapped with -key). Whether it is a file or a directory is decided by
+// the capability itself (its Kind), so a recipient need not know in advance
+// which they were sent — including a single file or subtree carved out of a tree
+// with `share -path`; -r stays accepted as an explicit hint.
 func cmdGet(args []string) error {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
 	node := fs.String("node", "", "fetch from this single node multiaddr (with /p2p/<peerid>)")
 	manifestPath := fs.String("manifest", "", "manifest / directory root cap file to read (your own data)")
 	capPath := fs.String("cap", "", "wrapped cap file to read (a shared file/tree); requires -key")
 	keyPath := fs.String("key", "", "your private key file, to unwrap -cap")
-	out := fs.String("o", "", "output file (default: the file's original name from the manifest, or stdout if it carries none); with -r, the destination directory (required)")
-	recursive := fs.Bool("r", false, "restore a directory tree stored with `put -r` (reads a root cap from -manifest/-cap) into -o")
+	out := fs.String("o", "", "output file (default: the file's original name from the manifest, or stdout if it carries none); for a directory, the destination directory (required)")
+	recursive := fs.Bool("r", false, "expect a directory tree (into -o); the capability's kind is auto-detected, so this is only a hint")
 	var bootstrap multiFlag
 	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); discovers shard providers")
 	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS on the LAN")
@@ -297,33 +304,30 @@ func cmdGet(args []string) error {
 	}
 
 	ctx := context.Background()
-
-	if *recursive {
-		if *out == "" {
-			return fmt.Errorf("get -r needs -o <destination directory>")
-		}
-		root, err := resolveRootCap(*manifestPath, *capPath, *keyPath)
-		if err != nil {
-			return err
-		}
-		s, closer, err := getBackend(ctx, *node, bootstrap, *mdns)
-		if err != nil {
-			return err
-		}
-		defer closer()
-		return getTree(ctx, s, root, *out)
-	}
-
-	m, err := resolveManifest(*manifestPath, *capPath, *keyPath)
-	if err != nil {
-		return err
-	}
-
 	s, closer, err := getBackend(ctx, *node, bootstrap, *mdns)
 	if err != nil {
 		return err
 	}
 	defer closer()
+
+	// Resolve the capability to exactly one of: a directory root/subtree cap
+	// (tree restore) or a file manifest (single-file restore). A -cap is
+	// unwrapped and its Kind sniffed here.
+	fm, dirCap, err := resolveGetTarget(ctx, s, *manifestPath, *capPath, *keyPath)
+	if err != nil {
+		return err
+	}
+
+	if dirCap != nil {
+		if *out == "" {
+			return fmt.Errorf("restoring a directory needs -o <destination directory>")
+		}
+		return getTree(ctx, s, *dirCap, *out)
+	}
+	if *recursive {
+		return fmt.Errorf("-r expects a directory tree, but this capability is a single file; drop -r")
+	}
+	m := *fm
 
 	// Choose the output path: an explicit -o wins; otherwise fall back to the
 	// original file name recorded in the manifest, using just its base so a
@@ -512,55 +516,126 @@ func cmdNodes(args []string) error {
 	return nil
 }
 
-// resolveManifest loads a manifest from either a plaintext manifest file or a
-// wrapped cap file (which is unwrapped with the given private key). Exactly one
-// source must be provided.
-func resolveManifest(manifestPath, capPath, keyPath string) (pipeline.FileManifest, error) {
+// resolveGetTarget resolves the flags of `get` to exactly one of a file manifest
+// (single-file restore) or a directory root/subtree cap (tree restore). The
+// source is a plaintext -manifest (the User's own file manifest or directory
+// root cap) or a wrapped -cap unwrapped with -key (a shared single file, whole
+// subtree, or a legacy file manifest). In every case the capability's own Kind —
+// not a flag — decides which it is; a KindFile cap is hydrated into its file
+// manifest via the store s, a KindDir cap is returned for getTree to walk.
+func resolveGetTarget(ctx context.Context, s store.Store, manifestPath, capPath, keyPath string) (*pipeline.FileManifest, *manifest.ReadCap, error) {
+	var raw []byte
 	switch {
 	case manifestPath != "" && capPath != "":
-		return pipeline.FileManifest{}, fmt.Errorf("use either -manifest or -cap, not both")
+		return nil, nil, fmt.Errorf("use either -manifest or -cap, not both")
 	case manifestPath != "":
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
-			return pipeline.FileManifest{}, err
+			return nil, nil, err
 		}
-		return decodeManifest(data)
+		raw = data
 	case capPath != "":
 		if keyPath == "" {
-			return pipeline.FileManifest{}, fmt.Errorf("-cap requires -key <privkey>")
+			return nil, nil, fmt.Errorf("-cap requires -key <privkey>")
 		}
-		return unwrapCap(capPath, keyPath)
+		data, err := unwrapCapBytes(capPath, keyPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		raw = data
 	default:
-		return pipeline.FileManifest{}, fmt.Errorf("provide -manifest <path> or -cap <path> -key <privkey>")
+		return nil, nil, fmt.Errorf("provide -manifest <path> or -cap <path> -key <privkey>")
 	}
+
+	// A cap-addressed blob capability (a directory root/subtree, or a single file
+	// carved from a tree by `share -path`) carries a "kind"; a legacy plaintext
+	// file manifest does not. Route on that.
+	if looksLikeReadCap(raw) {
+		var c manifest.ReadCap
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, nil, fmt.Errorf("parse cap: %w", err)
+		}
+		switch c.Kind {
+		case manifest.KindDir:
+			return nil, &c, nil
+		case manifest.KindFile:
+			m, err := manifest.LoadFileManifest(ctx, s, c)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &m, nil, nil
+		default:
+			return nil, nil, fmt.Errorf("capability has unknown kind %s", c.Kind)
+		}
+	}
+
+	m, err := decodeManifest(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &m, nil, nil
 }
 
-func unwrapCap(capPath, keyPath string) (pipeline.FileManifest, error) {
+// looksLikeReadCap reports whether data is a serialized manifest.ReadCap (a
+// cap-addressed file/directory capability) rather than a legacy plaintext file
+// manifest. A ReadCap always carries a "kind" and "shards"; a file manifest
+// carries "chunks" and no "kind". Sniffing lets a recipient of a -cap not have
+// to know in advance which they were sent.
+func looksLikeReadCap(data []byte) bool {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false
+	}
+	_, hasKind := probe["kind"]
+	_, hasShards := probe["shards"]
+	return hasKind && hasShards
+}
+
+// unwrapCapBytes unwraps the sealed cap file at capPath with the private key at
+// keyPath, returning the raw plaintext bytes (a ReadCap or a legacy manifest).
+func unwrapCapBytes(capPath, keyPath string) ([]byte, error) {
 	priv, err := readPrivateKey(keyPath)
 	if err != nil {
-		return pipeline.FileManifest{}, err
+		return nil, err
 	}
 	pub, err := priv.Public()
 	if err != nil {
-		return pipeline.FileManifest{}, err
+		return nil, err
 	}
 	sealed, err := os.ReadFile(capPath)
 	if err != nil {
-		return pipeline.FileManifest{}, err
+		return nil, err
 	}
 	data, err := cap.Unwrap(priv, pub, sealed)
 	if err != nil {
-		return pipeline.FileManifest{}, fmt.Errorf("unwrap cap (wrong key?): %w", err)
+		return nil, fmt.Errorf("unwrap cap (wrong key?): %w", err)
 	}
-	return decodeManifest(data)
+	return data, nil
 }
 
-// cmdShare wraps a manifest to a recipient's public key.
+// shareResult is the outcome of building a shareable cap: the sealed bytes plus
+// the Kind the recipient will receive, so the printed `get` hint matches.
+type shareResult struct {
+	sealed []byte
+	kind   manifest.Kind
+}
+
+// cmdShare wraps a read-capability to a recipient's public key so only they can
+// open it. The -manifest source may be a single-file manifest (from `put`) or a
+// directory root cap (from `put -r`); with -path it shares only the file or
+// subdirectory at that slash-separated path within a tree, resolving it through
+// a -node/-bootstrap/-mdns backend. Sharing a directory cap grants read access
+// to that whole subtree and nothing outside it (§3.5).
 func cmdShare(args []string) error {
 	fs := flag.NewFlagSet("share", flag.ExitOnError)
-	manifestPath := fs.String("manifest", "", "manifest file to share")
+	manifestPath := fs.String("manifest", "", "manifest or directory root cap to share")
 	to := fs.String("to", "", "recipient public key (base64) or @file")
 	out := fs.String("o", "", "output cap file (default <manifest>.cap)")
+	path := fs.String("path", "", "share only the file or subdirectory at this slash-separated path within a directory root cap (needs a -node/-bootstrap/-mdns backend to resolve)")
+	node := fs.String("node", "", "resolve -path via this single node multiaddr")
+	var bootstrap multiFlag
+	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); resolves -path via the DHT")
+	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS to resolve -path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -571,17 +646,25 @@ func cmdShare(args []string) error {
 	if err != nil {
 		return err
 	}
-
-	// Read the raw manifest bytes and wrap them verbatim; validate first so we
-	// don't wrap garbage.
 	data, err := os.ReadFile(*manifestPath)
 	if err != nil {
 		return err
 	}
-	if _, err := decodeManifest(data); err != nil {
-		return fmt.Errorf("not a valid manifest: %w", err)
+
+	// Only resolving a subpath touches the network; wrapping a whole manifest or
+	// root cap is a purely local operation.
+	ctx := context.Background()
+	var s store.Store
+	if *path != "" {
+		var closer func()
+		s, closer, err = getBackend(ctx, *node, bootstrap, *mdns)
+		if err != nil {
+			return fmt.Errorf("share -path needs a backend to resolve the tree: %w", err)
+		}
+		defer closer()
 	}
-	sealed, err := cap.Wrap(recipient, data)
+
+	res, err := buildShareCap(ctx, s, recipient, data, *path)
 	if err != nil {
 		return err
 	}
@@ -590,13 +673,73 @@ func cmdShare(args []string) error {
 	if outCap == "" {
 		outCap = *manifestPath + ".cap"
 	}
-	if err := os.WriteFile(outCap, sealed, 0o644); err != nil {
+	if err := os.WriteFile(outCap, res.sealed, 0o644); err != nil {
 		return fmt.Errorf("write cap: %w", err)
 	}
-	fmt.Printf("Wrapped %s for recipient %s\n", *manifestPath, recipient.String())
+
+	what := *manifestPath
+	if *path != "" {
+		what = fmt.Sprintf("%s in %s", *path, *manifestPath)
+	}
+	fmt.Printf("Wrapped %s [%s] for recipient %s\n", what, res.kind, recipient.String())
 	fmt.Printf("Cap: %s\n", outCap)
-	fmt.Println("Send the .cap file to the recipient; they read it with: revika-ctl get -node <ma> -cap <file> -key <their-privkey>")
+	if res.kind == manifest.KindDir {
+		fmt.Println("Send the .cap file to the recipient; they read the subtree with: revika-ctl get -node <ma> -cap <file> -key <their-privkey> -o <dir>")
+	} else {
+		fmt.Println("Send the .cap file to the recipient; they read it with: revika-ctl get -node <ma> -cap <file> -key <their-privkey>")
+	}
 	return nil
+}
+
+// buildShareCap produces the sealed bytes to hand a recipient for the given
+// source manifest bytes and optional subpath. With a subpath it resolves the
+// child cap through s (which must be non-nil), wrapping just that file or
+// subtree; otherwise it wraps the whole source — a directory root cap or a
+// legacy single-file manifest — with no network contact. It reports which Kind
+// the recipient receives.
+func buildShareCap(ctx context.Context, s store.Store, recipient cap.PublicKey, data []byte, path string) (shareResult, error) {
+	if path != "" {
+		if !looksLikeReadCap(data) {
+			return shareResult{}, fmt.Errorf("-path can only be used with a directory root cap (from `put -r`); this looks like a single-file manifest")
+		}
+		var root manifest.ReadCap
+		if err := json.Unmarshal(data, &root); err != nil {
+			return shareResult{}, fmt.Errorf("parse root cap: %w", err)
+		}
+		child, err := manifest.Resolve(ctx, s, root, path)
+		if err != nil {
+			return shareResult{}, fmt.Errorf("resolve %q: %w", path, err)
+		}
+		sealed, err := manifest.WrapCap(recipient, child)
+		if err != nil {
+			return shareResult{}, err
+		}
+		return shareResult{sealed: sealed, kind: child.Kind}, nil
+	}
+
+	// No subpath: wrap the whole source. A directory root cap is wrapped as a
+	// ReadCap (granting the entire subtree); a legacy single-file manifest is
+	// wrapped verbatim for backward compatibility.
+	if looksLikeReadCap(data) {
+		var c manifest.ReadCap
+		if err := json.Unmarshal(data, &c); err != nil {
+			return shareResult{}, fmt.Errorf("parse root cap: %w", err)
+		}
+		sealed, err := manifest.WrapCap(recipient, c)
+		if err != nil {
+			return shareResult{}, err
+		}
+		return shareResult{sealed: sealed, kind: c.Kind}, nil
+	}
+
+	if _, err := decodeManifest(data); err != nil {
+		return shareResult{}, fmt.Errorf("not a valid manifest: %w", err)
+	}
+	sealed, err := cap.Wrap(recipient, data)
+	if err != nil {
+		return shareResult{}, err
+	}
+	return shareResult{sealed: sealed, kind: manifest.KindFile}, nil
 }
 
 func readPrivateKey(path string) (cap.PrivateKey, error) {

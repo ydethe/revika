@@ -139,6 +139,25 @@ go run ./cmd/revika-ctl get -node "$NODE" -cap ./myfile.txt.rvk.json.cap -key bo
 `-to` accepts a literal base64 public key or `@file`. Run any command with `-h`, or
 `revika-ctl help`, for the full flag list.
 
+**Sharing one file from an uploaded directory.** If you stored a whole tree with `put -r`
+(the `-manifest` then holds the tree's root cap), `share -path <subpath>` wraps only the
+cap of the file or subdirectory at that path — the recipient gets exactly that and nothing
+else in the tree. Resolving the path walks the tree, so it needs a backend (`-node` or
+`-bootstrap`/`-mdns`):
+
+```bash
+# you (sender): store a directory, then share just one file out of it
+go run ./cmd/revika-ctl put -r -node "$NODE" -manifest ./tree.rvk.json ./mydir
+go run ./cmd/revika-ctl share -node "$NODE" -manifest ./tree.rvk.json \
+    -path docs/report.pdf -to @bob.pub -o ./report.cap
+
+# recipient: get -cap auto-detects it is a single file (no -r needed)
+go run ./cmd/revika-ctl get -node "$NODE" -cap ./report.cap -key bob.key -o ./report.pdf
+```
+
+Point `-path` at a subdirectory instead to share a whole subtree; the recipient restores it
+with `get -cap ... -o <dir>`.
+
 > **Note:** the manifest holds the file's decryption keys. Keep it secret, or hand it out
 > only via `share` wrapped to a specific recipient. Nodes never see it.
 

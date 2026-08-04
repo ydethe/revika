@@ -233,9 +233,16 @@ nodes rather than back into the same store, and the repair *cadence*/threshold p
 first cut of **cap delivery** (`internal/cap`): ML-KEM-768 recipient identities
 (NIST FIPS 203, `crypto/mlkem`) with `Wrap`/`Unwrap` (a KEM-DEM: ML-KEM encapsulation
 keying an AES-256-GCM seal), which `revika-ctl share` uses to encrypt a
-file's read-cap (its serialized manifest) to a recipient's public key. **Still
-planned:** the derivation chain (write-cap → read-cap → verify-cap), signing keys for
-mutable root pointers, and a compact string form for caps.
+read-cap to a recipient's public key. That read-cap is either a single file's
+serialized manifest or, for data stored as a tree (`put -r`), a directory
+`ReadCap` (§3.6). `share -path <subpath>` resolves the tree and wraps only the
+`ReadCap` of the file or subdirectory at that path, so you can hand over one file
+(or one subtree) from a larger stored tree without re-uploading it and without
+exposing anything outside the shared path — a directory cap grants exactly its
+subtree and everything reachable from it, no more. The recipient reconstructs it
+with `get -cap`, which auto-detects from the cap's `Kind` whether it is a single
+file or a subtree. **Still planned:** the derivation chain (write-cap → read-cap →
+verify-cap), signing keys for mutable root pointers, and a compact string form for caps.
 
 The **capability** ("cap") is how access is named and delegated:
 
@@ -361,7 +368,11 @@ cap layer rather than on content-addressed shards. Tracked in §10.
   filesystem directory as such a tree (writing the root cap to `-manifest`) and `get -r`
   restores it — files, symlinks, sub-directories, empty directories, and per-entry metadata
   included (`cmd/revika-ctl/tree.go`), exercised in-process (`tree_test.go`) and over a live
-  multi-node network (`deploy/tree.sh`, compose profile `tree`). Still **[planned]**: HAMT/B-tree
+  multi-node network (`deploy/tree.sh`, compose profile `tree`). Because `Resolve` yields a
+child's `ReadCap` and a cap is shareable on its own, `revika-ctl share -path <subpath>` wraps
+just one file's or subdirectory's cap out of a stored tree (§3.5) — the recipient's `get -cap`
+reconstructs exactly that file or subtree and nothing outside the shared path. Still
+**[planned]**: HAMT/B-tree
   sharding for very large directories (a blob is one erasure chunk today — see the size budget in
   `internal/manifest/README.md`).
 - **Root pointer** — **[partial]** (`internal/manifest`, `RootPointer`). The one mutable anchor
@@ -608,8 +619,12 @@ Prove the core loop before adding breadth. Each phase is independently testable.
    manifest blob, encrypted directories, and signed root pointers.
 5. 🟡 **Sharing** (in progress). Cap *delivery* is implemented (`internal/cap`:
    `Wrap`/`Unwrap` to a recipient's ML-KEM-768 key) and driven by `revika-ctl share` /
-   `get -cap`. **Still open:** the write-cap → read-cap → verify-cap derivation chain
-   and signing keys for mutable objects.
+   `get -cap`. `share` wraps a whole file manifest, a whole directory root cap, or —
+   via `share -path <subpath>` — the cap of a single file or subdirectory resolved out
+   of a stored tree, so a tree owner can share one file or subtree without re-uploading
+   it; `get -cap` auto-detects file vs. subtree from the cap's `Kind` (in-process
+   `TestShareGetSubpath`, end-to-end `deploy/tree.sh`). **Still open:** the write-cap →
+   read-cap → verify-cap derivation chain and signing keys for mutable objects.
 6. ⬜ **Sync daemon.** Folder watching, reconcile, conflict handling; optional embedded
    node.
 7. ⬜ **OS filesystem mount.** Expose the metadata tree from step 4 as a mounted filesystem

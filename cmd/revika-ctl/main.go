@@ -7,9 +7,9 @@
 // Usage:
 //
 //	revika-ctl keygen [-key <prefix>]
-//	revika-ctl put    -node <multiaddr> [-manifest <path>] <file>
+//	revika-ctl put    -node <multiaddr> [-manifest <path>] [-r] <file>
 //	revika-ctl get    -node <multiaddr> (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
-//	revika-ctl share  -manifest <path> -to <recipient-pubkey|@file> [-o <path>]
+//	revika-ctl share  -manifest <path> -to <recipient-pubkey|@file> [-path <subpath>] [-o <path>]
 //
 // A <multiaddr> is a node's full dial address including its peer ID, e.g.
 // /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW…, as printed by revika-node on startup.
@@ -100,22 +100,30 @@ Commands:
         directory blob), and -manifest receives the tree's root cap.
 
   get (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) [-o <out>] [-r]
-        Reconstruct a file. With -node, fetch from that node; with -bootstrap/-mdns,
-        discover each shard's providers via the DHT. Read your own file with
-        -manifest, or a shared file by unwrapping a -cap with your -key. Writes to
-        the file's original name (recorded in the manifest) unless -o is given;
-        falls back to stdout for older manifests that carry no name.
-        With -r, the -manifest/-cap holds a directory root cap (from 'put -r')
-        and the whole tree is restored into the -o directory (required).
+        Reconstruct a file or a directory tree. With -node, fetch from that node;
+        with -bootstrap/-mdns, discover each shard's providers via the DHT. Read
+        your own data with -manifest, or shared data by unwrapping a -cap with
+        your -key. Whether the capability is a single file or a directory is
+        auto-detected from the capability itself (its Kind), so it also restores a
+        single file or subtree carved out of a tree with 'share -path'. A single
+        file writes to its original name (recorded in the manifest) unless -o is
+        given, falling back to stdout when it carries none; a directory is
+        restored into the -o directory (required). -r is an optional hint.
 
   delete (-node <ma> | -bootstrap <ma>... | -mdns) -manifest <path> [-signkey <path>]
         Drop your ownership claim on every shard of the file. A node frees a
         shard's bytes only once its last owner deletes, so this never affects
         another User's copy of shared data. (Alias: rm)
 
-  share -manifest <path> -to <recipient-pubkey|@file> [-o <path>]
-        Wrap a manifest (read-capability) to a recipient's public key so only they
-        can open it. Writes <path>.cap by default. No node contact.
+  share -manifest <path> -to <recipient-pubkey|@file> [-path <subpath>] [-o <path>]
+        [-node <ma> | -bootstrap <ma>... | -mdns]
+        Wrap a read-capability to a recipient's public key so only they can open
+        it. The -manifest may be a single file's manifest (from 'put') or a
+        directory root cap (from 'put -r'); wrapping either is local, no node
+        contact. With -path, share only the file or subdirectory at that
+        slash-separated path within a tree — this resolves the tree, so it needs a
+        -node/-bootstrap/-mdns backend. Sharing a directory cap grants read access
+        to that whole subtree and nothing outside it. Writes <path>.cap by default.
 
   nodes (-bootstrap <ma>... | -mdns)
         List the storage nodes the client can discover on the DHT — the nodes it
