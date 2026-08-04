@@ -16,6 +16,12 @@ import (
 )
 
 // cmdKeygen generates and persists a recipient identity.
+//
+// Defence controls (security/Defence.md; primitives P24, P9 in security/frameworks.md):
+//   SC-12 (Cryptographic Key Establishment and Management) / SC-28 (Protection of Information at
+//         Rest) — private keys are written 0600 under a 0700 dir and never leave the machine.
+//   SC-5  (Denial-of-Service Protection) — the signing key is ground via proof-of-work so a banned
+//         owner identity cannot be cheaply re-minted (anti-Sybil floor).
 func cmdKeygen(args []string) error {
 	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
 	prefix := fs.String("key", filepath.Join(".revika", "keys", "user"), "path prefix for the identity (writes <prefix>.key and <prefix>.pub)")

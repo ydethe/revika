@@ -19,6 +19,12 @@ import (
 // mdnsServiceTag scopes LAN discovery to revika peers.
 const mdnsServiceTag = "revika"
 
+// Defence controls (security/Defence.md; primitives P17, P24 in security/frameworks.md):
+//   SC-8  (Transmission Confidentiality and Integrity) — partial: libp2p's default transport
+//         encryption/authentication (Noise/TLS) is inherited, not pinned here (see Defence.md notes).
+//   SC-12 (Cryptographic Key Establishment and Management) — the node identity key is persisted
+//         0600 under its own 0700 dir and never transmitted.
+
 // HostConfig configures a libp2p host.
 type HostConfig struct {
 	// ListenAddrs are multiaddrs to listen on. If empty, a sensible default

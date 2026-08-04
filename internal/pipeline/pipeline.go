@@ -8,6 +8,12 @@
 // reader needs besides access to the shards. In the full system a manifest is
 // itself encrypted and its location + keys form a read-capability; here it is
 // an in-memory value returned by StoreFile and consumed by LoadFile.
+//
+// Defence controls (security/Defence.md; primitives P1, P6, P23 in security/frameworks.md):
+//   SA-8  (Security and Privacy Engineering Principles) — all chunking, encryption, and erasure
+//         coding happen client-side here before any shard leaves the machine.
+//   SC-28 (Protection of Information at Rest)  — shards are AES-256-GCM ciphertext when stored (internal/crypto).
+//   SC-36 (Distributed Processing and Storage) — each chunk is erasure-coded into K+M dispersible shards.
 package pipeline
 
 import (

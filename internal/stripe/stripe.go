@@ -20,6 +20,13 @@
 // addressing bounds it tightly: the bearer can only store the exact bytes that hash
 // to one of the listed IDs, so a Grant confers no power to store arbitrary data or
 // to grow the stripe beyond its N shards.
+//
+// Defence controls (security/Defence.md; primitives P20, P21, P12 in security/frameworks.md):
+//   D3-MAN (Message Authentication)  — the Grant is an Ed25519-signed capability (BuildGrant/VerifyGrant).
+//   AC-3   (Access Enforcement)      — a Grant authorizes storing only the stripe's exact shard IDs; TTL re-authorizes.
+//   SI-7   (…Information Integrity)   — the signature binds the exact Descriptor, so falsification breaks it.
+//   SR-4   (Provenance)              — partial: the grant records origin, but the ledger keeps only current
+//          owners, not a signed origin chain (see Defence.md notes).
 package stripe
 
 import (

@@ -9,6 +9,10 @@ import (
 // shared between the GC loop (which records each cycle) and the MetricsServer
 // (which reads it for /status and /metrics). The zero value is not usable; build
 // one with NewGCStats.
+//
+// Defence controls (security/Defence.md; primitive P27 in security/frameworks.md):
+//   AU-6 (Audit Record Review, Analysis, and Reporting) — partial: GC activity counters feed the
+//        metrics/status surface for external review.
 type GCStats struct {
 	mu             sync.Mutex
 	runs           int64

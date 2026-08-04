@@ -18,6 +18,11 @@
 // shares. Unwrap decapsulates with the recipient's private key to recover the
 // same secret. cap does not know what it is wrapping — it moves opaque bytes —
 // so the read-cap serialization can evolve independently.
+//
+// Defence controls (security/Defence.md; primitive P2 in security/frameworks.md):
+//   D3-MENCR (Message Encryption)                            — KEM-DEM seals the cap; nodes never see it.
+//   SC-12    (Cryptographic Key Establishment and Management) — ML-KEM-768 (FIPS 203) encapsulates the DEM key.
+//   SC-13    (Cryptographic Protection)                       — AES-256-GCM DEM, PQC-safe.
 package cap
 
 import (

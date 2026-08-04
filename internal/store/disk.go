@@ -64,6 +64,11 @@ func (d *DiskStore) Put(_ context.Context, data []byte) (ShardID, error) {
 	return id, nil
 }
 
+// Get returns id's bytes, or ErrNotFound. It recomputes the hash of the stored
+// bytes and returns ErrCorrupt if they no longer match the content address.
+//
+// Defence controls (security/Defence.md; primitive P5 in security/frameworks.md):
+//   D3-FH (File Hashing) / SI-7 (…Information Integrity) — integrity re-check on every read.
 func (d *DiskStore) Get(_ context.Context, id ShardID) ([]byte, error) {
 	_, file := d.pathFor(id)
 	data, err := os.ReadFile(file)

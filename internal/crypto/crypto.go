@@ -6,6 +6,11 @@
 // AES-256-GCM is used purely from the standard library (crypto/aes,
 // crypto/cipher) to avoid an external dependency. The 12-byte random nonce is
 // prepended to the ciphertext; GCM's authentication tag is appended by Seal.
+//
+// Defence controls (security/Defence.md; primitive P1 in security/frameworks.md):
+//   D3-MENCR (Message Encryption)               — AES-256-GCM AEAD seals every chunk client-side.
+//   SC-28    (Protection of Information at Rest) — nodes only ever hold ciphertext at rest.
+//   SC-13    (Cryptographic Protection)          — AES-256 (PQC-safe), stdlib only.
 package crypto
 
 import (

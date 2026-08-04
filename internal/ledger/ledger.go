@@ -17,6 +17,12 @@
 //
 // Backend is SQLite via the pure-Go, cgo-free modernc.org/sqlite driver, keeping
 // revika's build cgo-free.
+//
+// Defence controls (security/Defence.md; primitives P13, P10 in security/frameworks.md):
+//   SC-6 (Resource Availability)            — per-owner quotas + leases bound storage per owner. Compl. AC-3.
+//   SC-5 (Denial-of-Service Protection)     — the byte quota caps how much one owner can store.
+//   AU-9 (Protection of Audit Information)   — partial: Reconcile/recomputeAccounts give structural
+//        integrity, but rows are not signed or append-only (see Defence.md notes).
 package ledger
 
 import (

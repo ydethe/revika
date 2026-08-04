@@ -35,6 +35,10 @@ const metricsShutdownTimeout = 5 * time.Second
 //
 // It reads live state from the host, the ledger, and (optionally) the DHT
 // Discovery; it holds no state of its own beyond the start time and version.
+//
+// Defence controls (security/Defence.md; primitive P27 in security/frameworks.md):
+//   AU-6 (Audit Record Review, Analysis, and Reporting) — partial: exposes Prometheus metrics
+//        and a JSON status snapshot for external review; no in-node analysis/alerting (Defence.md notes).
 type MetricsServer struct {
 	h       host.Host
 	led     *ledger.Ledger

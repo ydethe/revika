@@ -15,6 +15,11 @@ import (
 // migrate older files. v3 added compression flags; v2 added the original file
 // name; v1 manifests (no name) still decode. Older manifests predate
 // compression, so their absent flags correctly decode as uncompressed.
+//
+// Defence controls (security/Defence.md; primitive P19 in security/frameworks.md):
+//   SI-7 (Software, Firmware, and Information Integrity) — partial: the version tag detects
+//        rollback/format downgrade; manifest integrity and secrecy otherwise rest on the encrypted
+//        cap wrap (internal/cap) and per-shard content hashes, not a standalone manifest signature.
 const manifestVersion = 3
 
 // jsonManifest is the serialized form of a pipeline.FileManifest. It IS the

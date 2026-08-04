@@ -72,6 +72,10 @@ type DiscoveryConfig struct {
 // content (shard-provider) discovery. It is what lets a client find who holds a
 // shard, and lets nodes find one another, with no central server — only a
 // bootstrap peer to get in, after which the self-organising DHT takes over.
+//
+// Defence controls (security/Defence.md; primitive P15 in security/frameworks.md):
+//   SC-36 (Distributed Processing and Storage) — the /revika Kademlia DHT gives redundant,
+//         serverless discovery of shard providers and peers, with no single point.
 type Discovery struct {
 	h   host.Host
 	dht *dht.IpfsDHT

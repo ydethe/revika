@@ -10,6 +10,11 @@
 // A little framing is needed because Reed–Solomon works on fixed, equal-sized
 // shards and zero-pads the final one. Encode prepends an 8-byte big-endian
 // length header to the payload so Decode can recover the exact original length.
+//
+// Defence controls (security/Defence.md; primitives P6, P25 in security/frameworks.md):
+//   SC-36 (Distributed Processing and Storage)    — any K of K+M shards reconstruct; deterministic
+//         Encode lets repair regenerate lost shards without rewriting manifests. Compl. CP-10.
+//   SC-4  (Information in Shared System Resources) — equal-length shards normalize on-wire size.
 package erasure
 
 import (

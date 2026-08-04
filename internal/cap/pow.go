@@ -17,6 +17,10 @@ package cap
 // Quantum note: hash-based PoW stays PQC-class. Grover only halves the effective
 // difficulty (a D-bit proof costs ~2^(D/2) quantum evaluations), and memory
 // hardness blunts even that; budget by doubling D if it ever matters.
+//
+// Defence controls (security/Defence.md; primitive P9 in security/frameworks.md):
+//   SC-5 (Denial-of-Service Protection) — proof-of-work write admission raises the cost of
+//        flooding and of minting fresh identities to replace banned ones (anti-Sybil floor).
 
 import (
 	"context"

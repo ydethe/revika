@@ -7,6 +7,10 @@
 // coding, or the network. That is what lets the encode/repair stack be built
 // and tested against the in-memory or on-disk implementations here, then run
 // unchanged against a future libp2p-backed implementation.
+//
+// Defence controls (security/Defence.md; primitive P4 in security/frameworks.md):
+//   D3-FH (File Hashing)                                  — a shard's ID IS the SHA-256 of its bytes.
+//   SI-7  (Software, Firmware, and Information Integrity) — any tamper breaks the ID↔content match.
 package store
 
 import (

@@ -120,6 +120,10 @@ func (s *DHTStore) ensureConnected(ctx context.Context, pi peer.AddrInfo) error 
 //
 // Reads (Get/Has) are resolved via the DHT exactly like DHTStore: placement
 // decides where a shard goes, provider records record where it landed.
+//
+// Defence controls (security/Defence.md; primitive P16 in security/frameworks.md):
+//   SC-36 (Distributed Processing and Storage) — round-robin placement spreads a stripe's k+m
+//         shards across distinct nodes so no sub-k subset sits in one failure domain.
 type PlacementStore struct {
 	*DHTStore
 	nodes  []peer.ID

@@ -29,6 +29,11 @@ const connectTimeout = 30 * time.Second
 // Each operation opens a fresh stream, exchanges one request/response, and
 // closes it. NetStore holds no per-call state and is safe for concurrent use
 // (libp2p streams are independent).
+//
+// Defence controls (security/Defence.md; primitives P5, P23, P8 in security/frameworks.md):
+//   D3-FH (File Hashing) / SI-7 (…Integrity) — Get/putRaw re-verify bytes hash to the ID, catching a lying node.
+//   SA-8  (Security and Privacy Engineering Principles) — the client trusts nothing the node asserts.
+//   SC-23 (Session Authenticity) — Probe sends a fresh CSPRNG nonce, checked in constant time, to bar replay.
 type NetStore struct {
 	h    host.Host
 	peer peer.ID

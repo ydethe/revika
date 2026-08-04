@@ -30,6 +30,10 @@ import (
 // so a regenerated shard is always accompanied by the exact metadata the
 // receiving Node needs to verify the grant and, in turn, join the stripe's repair
 // itself.
+//
+// Defence controls (security/Defence.md; primitives P6, P20 in security/frameworks.md):
+//   SC-36 (Distributed Processing and Storage) — regenerated shards are placed on fresh nodes.
+//   AC-3  (Access Enforcement)                  — each regenerated write is authorized by the stripe's signed grant.
 type RepairStore struct {
 	*DHTStore
 	local store.Store // the repairing node's own blobs; consulted before the DHT

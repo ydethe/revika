@@ -15,6 +15,12 @@ package net
 // stale tokens (bounded replay window). Because writes are owner-scoped and
 // idempotent, replay within the window is harmless — it only re-asserts or
 // re-drops the caller's own claim.
+//
+// Defence controls (security/Defence.md; primitive P8 in security/frameworks.md):
+//   SC-23 (Session Authenticity) — the timestamp window + node-bound signature reject stale
+//         or cross-node replays of a write token.
+//   AU-10 (Non-repudiation)      — the Ed25519 token binds each write to its owner.
+//   AC-3  (Access Enforcement)   — the recovered owner is what the ledger authorizes against.
 
 import (
 	"encoding/binary"

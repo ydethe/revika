@@ -27,6 +27,15 @@ const serverStreamTimeout = 60 * time.Second
 // shards, return them, report possession, prove possession. Nodes are dumb and
 // untrusted — the Server never decrypts, interprets, or trusts payloads; it
 // only moves opaque, self-verifying blobs in and out of its store.
+//
+// Defence controls (security/Defence.md; primitives P23, P20, P9, P14, P18 in
+// security/frameworks.md) — the enforcement points the Node runs on writes/probes:
+//   SA-8  (Security and Privacy Engineering Principles) — the node never decrypts or trusts
+//         payloads; security does not depend on node good behaviour.
+//   AC-3  (Access Enforcement)          — PUT/DELETE require a signed owner token or a valid repair grant.
+//   SC-5  (Denial-of-Service Protection) — proof-of-work admission (enforcePoW) gates fresh owner writes.
+//   SI-7  (…Information Integrity)        — handleProbe answers fresh-nonce possession challenges.
+//   SI-10 (Information Input Validation)  — unknown ops and unauthorized writes fail closed.
 type Server struct {
 	store     store.Store
 	log       *slog.Logger

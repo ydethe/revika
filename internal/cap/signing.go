@@ -9,6 +9,11 @@ package cap
 // so only the holder of the signing key can delete or renew what they stored.
 // The public key is the User's stable owner identity, independent of the
 // (ephemeral) libp2p peer identity of whatever host they happen to dial from.
+//
+// Defence controls (security/Defence.md; primitive P3 in security/frameworks.md):
+//   D3-MAN (Message Authentication)  — Ed25519 Sign/Verify authenticates every request and token.
+//   AU-10  (Non-repudiation)         — the owner signature binds a write to its issuer.
+//   IA-5   (Authenticator Management) — the Ed25519 keypair is the owner's managed authenticator.
 
 import (
 	"crypto/ed25519"

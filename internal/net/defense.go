@@ -36,6 +36,12 @@ import (
 //
 // These pair with the write-path per-owner quota the ledger already enforces:
 // the quota bounds *storage*, the defences here bound *connections and flow*.
+//
+// Defence controls (security/Defence.md; primitive P11 in security/frameworks.md):
+//   D3-NTF (Network Traffic Filtering)   — ConnectionGater blocklist + rcmgr/connmgr caps.
+//   D3-ITF (Inbound Traffic Filtering)   — inbound connections from blocked peers/subnets refused.
+//   SC-7   (Boundary Protection)         — perimeter connection/flow limits. Compl. SC-5.
+//   SC-5   (Denial-of-Service Protection) — connection watermarks bound resource exhaustion.
 
 // Default connection-manager watermarks and grace period. Chosen to comfortably
 // cover a small revika deployment (a handful of storage peers plus DHT churn)

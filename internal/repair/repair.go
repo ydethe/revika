@@ -10,6 +10,11 @@
 //   - erasure.Encode is deterministic, so a regenerated shard reproduces its
 //     exact content address. Repair restores the *same* shard IDs, so the
 //     manifest never changes.
+//
+// Defence controls (security/Defence.md; primitives P6, P14 in security/frameworks.md):
+//   CP-10 (System Recovery and Reconstitution)           — regenerates lost shards from K survivors.
+//   SC-36 (Distributed Processing and Storage)           — restores erasure redundancy across nodes.
+//   SI-7  (Software, Firmware, and Information Integrity) — Check probes shard survival before loss.
 package repair
 
 import (

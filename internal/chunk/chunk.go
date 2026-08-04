@@ -7,6 +7,10 @@
 // the last, which holds the remainder. Content-defined chunking (a rolling
 // hash, so an edit only rewrites the affected chunk) is a planned upgrade that
 // can replace Fixed behind the same iterator contract.
+//
+// Defence controls (security/Defence.md; primitive P25 in security/frameworks.md):
+//   SC-4 (Information in Shared System Resources) — fixed-size chunks normalize shard sizes,
+//        limiting size/correlation analysis on the shared, untrusted blob stores.
 package chunk
 
 import (

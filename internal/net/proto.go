@@ -16,6 +16,10 @@
 // length-prefixed byte blobs (4-byte big-endian length). This is deliberately
 // minimal — no protobuf, no external codec — because the payloads are opaque
 // blobs and the verb set is tiny.
+//
+// Defence controls (security/Defence.md; primitive P18 in security/frameworks.md):
+//   SI-10 (Information Input Validation) — versioned protocol IDs, strict framing, and size caps
+//         (MaxShardSize, maxStripeBlob) reject malformed/oversized input, failing closed. Compl. SC-7.
 package net
 
 import (
