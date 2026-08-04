@@ -8,7 +8,7 @@ Create an identity :
      
 Put a file :
 
-     go run ./cmd/revika-ctl put -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx -signkey user.sign.key -manifest manifest.json /path/to/your/file
+     go run ./cmd/revika-ctl put -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx -signkey user.sign.key -r /path/to/your/root/folder
 
 retrieve a file :
 
