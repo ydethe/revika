@@ -17,7 +17,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"revika/internal/manifest"
@@ -154,10 +153,8 @@ func restoreDir(ctx context.Context, s store.Store, dirCap manifest.ReadCap, des
 	}
 	files := 0
 	for _, e := range d.Entries {
-		// e.Name is a single path component from a directory entry; refuse
-		// anything that could escape dest (a tampered directory blob).
-		if e.Name == "" || e.Name == "." || e.Name == ".." || strings.ContainsAny(e.Name, "/\\") {
-			return files, fmt.Errorf("unsafe entry name %q", e.Name)
+		if err := safeEntryName(e.Name); err != nil {
+			return files, err
 		}
 		target := filepath.Join(dest, e.Name)
 		switch e.Cap.Kind {

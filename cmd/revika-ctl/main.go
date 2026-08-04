@@ -7,9 +7,11 @@
 // Usage:
 //
 //	revika-ctl keygen [-key <prefix>]
-//	revika-ctl put    -node <multiaddr> [-manifest <path>] [-r] <file>
-//	revika-ctl get    -node <multiaddr> (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
-//	revika-ctl share  -manifest <path> -to <recipient-pubkey|@file> [-path <subpath>] [-o <path>]
+//	revika-ctl put     -node <multiaddr> [-manifest <path>] [-r] <file>
+//	revika-ctl get     -node <multiaddr> (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
+//	revika-ctl sync    -node <multiaddr> (-manifest <path> | -cap <path> -key <privkey>) -o <dir>
+//	revika-ctl hydrate -node <multiaddr> [-C <syncdir>] <path>...
+//	revika-ctl share   -manifest <path> -to <recipient-pubkey|@file> [-path <subpath>] [-o <path>]
 //
 // A <multiaddr> is a node's full dial address including its peer ID, e.g.
 // /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW…, as printed by revika-node on startup.
@@ -54,6 +56,10 @@ func main() {
 		err = cmdPut(args)
 	case "get":
 		err = cmdGet(args)
+	case "sync":
+		err = cmdSync(args)
+	case "hydrate":
+		err = cmdHydrate(args)
 	case "delete", "rm":
 		err = cmdDelete(args)
 	case "share":
@@ -109,6 +115,20 @@ Commands:
         file writes to its original name (recorded in the manifest) unless -o is
         given, falling back to stdout when it carries none; a directory is
         restored into the -o directory (required). -r is an optional hint.
+
+  sync (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) -o <dir>
+        Materialize the directory tree's namespace into -o WITHOUT downloading
+        file content: it fetches only the directory blobs and recreates the
+        folders, symlinks, and empty file placeholders, then writes a
+        .revika-sync.json index mapping each placeholder to its file cap. Cheap
+        to browse a whole tree; pull bytes later with 'hydrate'.
+
+  hydrate (-node <ma> | -bootstrap <ma>... | -mdns) [-C <syncdir>] <path>...
+        Fill previously-synced placeholders with real content. Each <path> is a
+        placeholder file or a directory (its whole subtree) inside a synced tree;
+        the sync root is found by ascending to the nearest .revika-sync.json, or
+        set it with -C. With -C and no <path>, the whole tree is hydrated. Only
+        the wanted files' shards are fetched.
 
   delete (-node <ma> | -bootstrap <ma>... | -mdns) -manifest <path> [-signkey <path>]
         Drop your ownership claim on every shard of the file. A node frees a

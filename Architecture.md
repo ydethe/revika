@@ -437,6 +437,17 @@ the network is untouched by `readdir`/`stat`. Only `open`/`read` triggers `LoadF
 shards. A file is never materialized whole before it is requested — the natural fit for
 erasure-coded, no-node-holds-a-whole-file storage (§2).
 
+**CLI stepping stone — `sync` / `hydrate` [implemented].** Ahead of the mount, `revika-ctl`
+already exposes this two-phase model over a plain folder (`cmd/revika-ctl/sync.go`): `sync`
+walks the directory DAG fetching **only directory blobs** and writes the namespace as folders +
+symlinks + empty file *placeholders*, plus a local `.revika-sync.json` index mapping each
+placeholder to its (nameless, content-addressed) file cap; `hydrate <path>` then pulls content
+for just the chosen file or subtree, resolving caps from that index (no directory re-walk) and
+fetching only those files' shards. `sync` is exactly the placeholder-materialization a mount does
+on `readdir`; `hydrate` is the `open`/`read` fetch, driven explicitly instead of by a page fault.
+The index holds read-capabilities (decryption keys), so it is written `0600` — as secret as a
+manifest.
+
 **Copy-on-write against immutable content.** Shards and manifests are immutable
 (content-addressed, §3.2/§4), yet a filesystem does random writes and renames. So a write
 rewrites the affected chunk(s) → a new file manifest → a new parent directory manifest → … → a
@@ -541,7 +552,7 @@ DHT usage:
 ```
 cmd/
   revika-node/     ✓ headless Node server binary
-  revika-ctl/      ✓ User client CLI (keygen/put[-r]/get[-r]/delete/share)
+  revika-ctl/      ✓ User client CLI (keygen/put[-r]/get[-r]/sync/hydrate/delete/share)
   revika-daemon/     # User background daemon (+ optional embedded node)  (planned)
 internal/
   store/     ✓ content-addressed blob store (Mem + Disk); leases/quotas/GC TBD

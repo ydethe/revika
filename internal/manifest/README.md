@@ -138,3 +138,13 @@ sharing a whole file manifest or the whole root cap works the same way without
 `-path`. Covered in-process by `cmd/revika-ctl/tree_test.go`
 (`TestShareGetSubpath`) and over a live multi-node network by `deploy/tree.sh`
 (docker-compose profile `tree`).
+
+Lazy materialization uses the same primitives (`cmd/revika-ctl/sync.go`,
+Architecture §3.8): `revika-ctl sync` walks the DAG via `LoadDir` fetching **only
+directory blobs**, recreating the namespace as folders + symlinks + empty file
+placeholders and writing a `.revika-sync.json` index of each placeholder's
+`ReadCap`; `revika-ctl hydrate <path>` then `LoadFileManifest`s just the wanted
+files and fetches their shards. `sync` is the `readdir`-time placeholder build
+and `hydrate` the `open`/`read` fetch of §3.8, driven explicitly from the CLI.
+Because the index stores `ReadCap`s (decryption keys), `sync`/`hydrate` write it
+`0600`. Covered in-process by `cmd/revika-ctl/sync_test.go`.

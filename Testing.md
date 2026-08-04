@@ -19,3 +19,10 @@ Retrieve a shared file :
 
      go run ./cmd/revika-ctl get -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx -cap share.cap -key @guest.key
      
+For a directory that has been shared in a share.cap, you can sync (without downloading the content) :
+
+     go run ./cmd/revika-ctl sync -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx -cap share.cap -key guest.key -o .guest_test
+
+Then hydrate files :
+     
+     go run ./cmd/revika-ctl hydrate -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx .guest_test/testfile.bin

@@ -15,6 +15,7 @@ manifest.json
 testfile.bin
 .test.rvk.json
 .test/
+.guest_test/
 
 # Test binary, built with `go test -c`
 *.test

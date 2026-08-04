@@ -21,8 +21,12 @@
 #      proving you can share one file from a tree without re-uploading it.
 #   6. `share -path` on a SUBDIRECTORY wraps that subtree cap, and `get -cap`
 #      restores only that subtree — nothing outside the shared path leaks.
+#   7. `sync` materializes the namespace as 0-byte placeholders fetching ONLY
+#      directory blobs (no file content), then `hydrate` pulls content for one
+#      file (leaving the rest placeholders) and finally for the whole tree —
+#      the on-demand hydration model of §3.8.
 #
-# Exit status is 0 only if all six hold, so a compose run surfaces a failure as
+# Exit status is 0 only if all seven hold, so a compose run surfaces a failure as
 # a non-zero exit for this service.
 set -euo pipefail
 
@@ -253,6 +257,72 @@ if [ -e "$DIR_OUT/root.txt" ]; then
 fi
 echo "OK: a subtree was shared from the tree and restored, leaking nothing outside it"
 
+# --- lazy sync + on-demand hydrate (Architecture §3.8) -----------------------
+# `sync` materializes the namespace fetching ONLY directory blobs — every file is
+# a 0-byte placeholder. `hydrate` then pulls content for just the wanted paths.
+SYNC="$WORK/synced"
 echo
-echo "PASS: a directory tree was spread across all nodes, restored intact, and"
-echo "      single files and subtrees were shared out of it end-to-end encrypted."
+echo ">> sync (materialize the namespace, no file content) into $SYNC"
+sync_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl sync -bootstrap "$SEED_ADDR" -manifest "$ROOTCAP" -o "$SYNC"; then
+    sync_ok=1
+    break
+  fi
+  echo "   sync attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$sync_ok" ] || { echo "FAIL: sync never succeeded"; exit 1; }
+
+# The namespace must exist, with the index and 0-byte placeholders (big.bin is
+# ~1 MiB in the original, so a nonzero placeholder would mean content leaked in).
+[ -f "$SYNC/.revika-sync.json" ] || { echo "FAIL: sync wrote no index"; exit 1; }
+for rel in root.txt docs/a.txt docs/nested/big.bin; do
+  [ -f "$SYNC/$rel" ] || { echo "FAIL: placeholder $rel missing after sync"; exit 1; }
+  sz=$(wc -c <"$SYNC/$rel" | tr -d ' ')
+  [ "$sz" = "0" ] || { echo "FAIL: placeholder $rel is $sz bytes, want 0 (content must not be synced)"; exit 1; }
+done
+[ -d "$SYNC/empty" ] || { echo "FAIL: empty directory not recreated by sync"; exit 1; }
+echo "OK: sync recreated the namespace as 0-byte placeholders (no file content fetched)"
+
+echo ">> hydrate a single file (docs/a.txt)"
+hyd_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl hydrate -bootstrap "$SEED_ADDR" -C "$SYNC" docs/a.txt; then
+    hyd_ok=1
+    break
+  fi
+  echo "   hydrate attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$hyd_ok" ] || { echo "FAIL: hydrate (single file) never succeeded"; exit 1; }
+cmp -s "$SRC/docs/a.txt" "$SYNC/docs/a.txt" || { echo "FAIL: hydrated docs/a.txt differs"; exit 1; }
+# The other files must still be un-hydrated placeholders.
+sz=$(wc -c <"$SYNC/docs/nested/big.bin" | tr -d ' ')
+[ "$sz" = "0" ] || { echo "FAIL: hydrating one file also fetched big.bin ($sz bytes)"; exit 1; }
+echo "OK: only the requested file was hydrated; the rest stayed placeholders"
+
+echo ">> hydrate the whole tree (-C with no path)"
+hyd_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl hydrate -bootstrap "$SEED_ADDR" -C "$SYNC"; then
+    hyd_ok=1
+    break
+  fi
+  echo "   hydrate attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$hyd_ok" ] || { echo "FAIL: hydrate (whole tree) never succeeded"; exit 1; }
+while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
+  if ! cmp -s "$SRC/$rel" "$SYNC/$rel"; then
+    echo "FAIL: hydrated $rel differs from the original"
+    exit 1
+  fi
+done <<<"$src_files"
+echo "OK: hydrating the whole tree reproduced every file byte-identically"
+
+echo
+echo "PASS: a directory tree was spread across all nodes, restored intact, shared"
+echo "      out of (single files and subtrees) end-to-end encrypted, and lazily"
+echo "      synced then hydrated on demand."
