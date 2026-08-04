@@ -30,8 +30,6 @@ jobs:
         include:
           - target: node   # headless storage Node
             image: revika-node
-          - target: ctl    # User client CLI
-            image: revika-ctl
     steps:
       - uses: actions/checkout@v4
 
