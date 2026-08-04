@@ -55,6 +55,8 @@ addressing (IPFS-style provider records).
 
 ```
 ┌─────────────────────────────────────────────┐
+│ OS filesystem integration (mount)             │  FUSE / File Provider / Cloud Filter [planned]
+├─────────────────────────────────────────────┤
 │ Sync engine (daemon only)                     │  watch folder ⇄ network        [planned]
 ├─────────────────────────────────────────────┤
 │ Filesystem / metadata layer                   │  dirs, manifests, mutable root [partial]
@@ -323,14 +325,54 @@ cap layer rather than on content-addressed shards. Tracked in §10.
 
 - **File manifest** — **[partial]**. `pipeline.FileManifest` exists today as an in-memory
   value: the original file name, ordered `ChunkRef`s (per-chunk key + ordered shard IDs),
-  the `Config`, and total size. The name lets `get` restore the file under its original
-  name without being told it. Still **[planned]**: encrypting it, storing it as an immutable
-  blob whose read-cap is the file's read-cap, provider hints, and moving the type into
-  `internal/manifest`.
-- **Directory** — **[planned]**. An encrypted map of names → child caps (files or
-  subdirectories), itself an immutable blob. A directory tree is thus a Merkle-ish DAG of
-  encrypted blobs.
-- **Root pointer** — **[planned]**. The one mutable anchor per User (see §4).
+  the `Config`, total size, and a `Metadata` record. The name lets `get` restore the file
+  under its original name without being told it; the metadata makes the manifest
+  **mount-ready** (§3.8). `Metadata` carries the POSIX/stat attributes and the cross-platform
+  fields the native cloud-provider frameworks require — `Mode`, `Uid`/`Gid`, the four times
+  (`ModTime`/`ChangeTime`/`AccessTime`/`BirthTime`, all ns), attribute `Flags`
+  (hidden/read-only/system/archive), `ContentType`, `SymlinkTarget`, extended attributes
+  (`Xattr`), and deterministic `ContentVersion`/`MetaVersion` change tokens
+  (`pipeline.DeriveVersions`) matching File Provider's `NSFileProviderItemVersion` and Cloud
+  Filter's drift detection. The stable *item identifier* (FP `itemIdentifier` / CF
+  `FileIdentity`) is intentionally left to the directory manifest, being a namespace concern,
+  not a content property. `revika-ctl` captures metadata on `put` (portable subset everywhere;
+  uid/gid/atime/ctime/xattrs on Linux via `meta_linux.go`) and restores it on `get`
+  (chmod/chtimes/chown/setxattr, plus symlink recreation), serializing it as manifest **v4**
+  (`meta` object; v1–v3 still decode with zero metadata). Still **[planned]**: encrypting the
+  manifest, storing it as an immutable blob whose read-cap is the file's read-cap, richer
+  per-OS capture (darwin/windows uid/gid/btime/xattr, arriving with the native bindings), and
+  moving the type into `internal/manifest`.
+- **Cap-addressed blob layer** — **[implemented]** (`internal/manifest`). The manifest is now
+  storable as an immutable, encrypted, content-addressed **blob**: `pipeline.StoreBlob`/`LoadBlob`
+  run a single serialized object through the same compress → encrypt → erasure → store path as
+  file data, and the result is named by a **`ReadCap`** — a per-blob AES-256 key + the ordered
+  content addresses of its shards, tagged with a `Kind` (file/dir). A `ReadCap` *is* the file's
+  read-capability, and because it carries content-addressed shard IDs it commits to the blob's
+  exact bytes.
+- **Directory** — **[implemented]** (`internal/manifest`, `DirManifest`). An encrypted map of
+  names → child caps (files or subdirectories), itself stored as a `KindDir` blob. Since a
+  directory's cap commits to its children's caps, a directory tree is a **Merkle DAG of encrypted
+  blobs**: `Resolve` walks a path from a root cap; `Graft`/`GraftRemove` mutate **copy-on-write**
+  (rewrite only the path from the changed node to the root, sharing every untouched sibling
+  subtree). Names live in the directory `Entry`, not in the (nameless, content-addressed) file
+  blob, so a rename rewrites one directory blob and never re-addresses the file. Each `Entry`
+  carries a small `StatCache` (kind/size/mode/mtime/version tokens) so a mount serves
+  `readdir`/`getattr` without hydrating the child (§3.8). `revika-ctl put -r` stores a whole
+  filesystem directory as such a tree (writing the root cap to `-manifest`) and `get -r`
+  restores it — files, symlinks, sub-directories, empty directories, and per-entry metadata
+  included (`cmd/revika-ctl/tree.go`), exercised in-process (`tree_test.go`) and over a live
+  multi-node network (`deploy/tree.sh`, compose profile `tree`). Still **[planned]**: HAMT/B-tree
+  sharding for very large directories (a blob is one erasure chunk today — see the size budget in
+  `internal/manifest/README.md`).
+- **Root pointer** — **[partial]** (`internal/manifest`, `RootPointer`). The one mutable anchor
+  per User (see §4): a signed `owner-pubkey → root-directory cap` record with a monotonic
+  sequence, `SignRoot`/`Verify` over a domain-separated Ed25519 payload. The type + anti-rollback
+  semantics exist; **[planned]** is publishing/fetching it over the DHT and the `/revika/root`
+  protocol.
+
+These three types are exactly what the mount layer (§3.8) resolves against: the file manifest
+plays the role of an inode, the directory the namespace, and the root pointer the mutable
+superblock.
 
 ### 3.7 Sync engine (daemon only) — **[planned]**
 
@@ -342,19 +384,78 @@ and reconcile:
 - conflicts → resolved by sequence number + a conflict-copy fallback (never silently lose
   data).
 
+### 3.8 OS filesystem integration (mount layer) — **[planned]**
+
+Where the sync engine (§3.7) mirrors the network into a *plain local folder*, the mount layer
+exposes revika *directly as a mounted filesystem* with on-demand hydration — the model
+Dropbox/OneDrive/Google Drive use for "files on demand". The two are complementary surfaces on
+the same metadata layer (§3.6), not alternatives; the daemon can offer either.
+
+**There is no single international standard for filesystem integration** — it is three families,
+and revika targets them in order:
+
+1. **POSIX / VFS semantics** — the abstract contract (`open`/`read`/`stat`/`readdir`/`write`)
+   every backend must honour. Not an integration API; the conformance reference.
+2. **FUSE — the cross-platform de-facto standard, and revika's first target.**
+   Filesystem-in-userspace: revika implements the VFS callbacks in-process and the OS mounts a
+   mountpoint. Linux `libfuse` (kernel-native), macOS **macFUSE**, Windows **WinFsp**
+   (FUSE-API-compatible). Fastest path to a working mount from one Go codebase (`internal/mount`,
+   pure-Go via `hanwen/go-fuse`). Exposes a classic mountpoint, *not* the placeholder/sync-badge
+   UX. Note Apple is progressively locking down kernel extensions, so macFUSE is a PoC vehicle,
+   not the long-term macOS surface.
+3. **Native "cloud provider" frameworks — the production surface, per-OS.** macOS
+   `FileProvider.framework` (`NSFileProviderReplicatedExtension`), Windows **Cloud Filter API**
+   (`cldapi.dll` / Sync Root, "Files On-Demand"), Linux GIO/GVfs or KIO. These give placeholder
+   files, on-demand hydration, eviction to reclaim space, and status badges in the file manager.
+   Not pure Go and not portable — a per-OS binding layer, deferred behind the FUSE PoC.
+
+**The manifest is the inode.** revika's per-file `FileManifest` (§3.6) already carries everything
+an inode needs — size, name, and the recipe (per-chunk keys + ordered shard IDs) to produce
+content — so "one manifest per file" is not a mismatch with a filesystem, it *is* the resolution
+target:
+
+| VFS op | Served from |
+|---|---|
+| `getattr` / `stat` | manifest `Size` + metadata (mode/mtime — to add) |
+| `readdir` | directory manifest (§3.6): names → child caps |
+| `open` + `read` | `pipeline.LoadFile` — fetch `k` shards → decode → decrypt |
+| `write` + `close` | `pipeline.StoreFile` → new manifest (COW, below) |
+
+**On-demand hydration.** The mount holds only the (tiny) manifest tree locally as *placeholders*;
+the network is untouched by `readdir`/`stat`. Only `open`/`read` triggers `LoadFile` to fetch
+shards. A file is never materialized whole before it is requested — the natural fit for
+erasure-coded, no-node-holds-a-whole-file storage (§2).
+
+**Copy-on-write against immutable content.** Shards and manifests are immutable
+(content-addressed, §3.2/§4), yet a filesystem does random writes and renames. So a write
+rewrites the affected chunk(s) → a new file manifest → a new parent directory manifest → … → a
+**new root**, and the signed **root pointer** (§4) is advanced to it. This is COW up the Merkle
+tree: free versioning, a single mutable anchor, and every version signed so a node cannot serve a
+rolled-back root. Content-defined chunking (§3.3) matters here so an in-place edit rewrites one
+chunk, not the whole file.
+
+This layer is **daemon-only** (`revika-daemon`, §1) and sits on top of the metadata layer; it adds
+no new trust assumptions — all chunking, encryption, and erasure coding still happen client-side
+before any shard moves (§2).
+
 ## 4. Mutable state without global consensus — **[planned]**
 
 Distributed *mutable* state is the hardest part. **Do not use a blockchain** — it is
-overkill for this workload and for a PoC. (None of this is built yet; the current
-pipeline returns an in-memory manifest with no persisted root.)
+overkill for this workload and for a PoC. (The immutable half is now built:
+`internal/manifest` stores chunks, file manifests, and directories as
+content-addressed encrypted blobs with copy-on-write mutation. What remains is
+*publishing* the one mutable pointer over the network.)
 
 Design:
 
 - Everything content-addressed (chunks, manifests, directories) is **immutable** and
-  freely cacheable/dedup-able.
+  freely cacheable/dedup-able. **[implemented]** in `internal/manifest`: a `ReadCap`
+  (per-blob key + content-addressed shard IDs) names each blob; a directory cap commits
+  to its children's caps, so the tree is a Merkle DAG (§3.6).
 - The only mutable thing is a small, per-User **root pointer**: a signed record mapping
-  `user-signing-pubkey → latest-root-directory-hash`, carrying a **monotonic sequence
-  number** and timestamp.
+  `user-signing-pubkey → latest-root-directory cap`, carrying a **monotonic sequence
+  number** and timestamp. **[implemented]** as `manifest.RootPointer` (`SignRoot`/`Verify`,
+  Ed25519, domain-separated); **[planned]** is its DHT/`/revika/root` publication below.
 - Publish it IPNS-style: store on the DHT keyed by the pubkey, and/or on a set of the
   user's chosen nodes. Readers verify the signature and take the highest sequence number.
 - Conflict resolution is single-writer-per-key by construction (only the holder of the
@@ -429,24 +530,28 @@ DHT usage:
 ```
 cmd/
   revika-node/     ✓ headless Node server binary
-  revika-ctl/      ✓ User client CLI (keygen/put/get/share)
+  revika-ctl/      ✓ User client CLI (keygen/put[-r]/get[-r]/delete/share)
   revika-daemon/     # User background daemon (+ optional embedded node)  (planned)
 internal/
   store/     ✓ content-addressed blob store (Mem + Disk); leases/quotas/GC TBD
   crypto/    ✓ AES-256-GCM AEAD; key derivation, signing TBD
   erasure/   ✓ Reed–Solomon encode/decode
   chunk/     ✓ fixed-size chunking (CDC planned)
-  pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory)
+  pipeline/  ✓ StoreFile/LoadFile + FileManifest (in-memory); StoreBlob/LoadBlob primitive
   repair/    ✓ availability probes + shard regeneration (local store)
   net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client,
              Kademlia DHT (Discovery: bootstrap/provider records/node advertise),
              DHTStore + PlacementStore (discovery-backed store.Store's)
   cap/       ✓ ML-KEM-768 capability wrapping (Wrap/Unwrap, FIPS 203) for sharing read-caps
-  manifest/    # file/dir manifest & capability types + serialization     (planned)
+  manifest/  ✓ ReadCap + cap-addressed file/dir blobs (Merkle DAG), COW Graft,
+             signed RootPointer; recursive put/get + DHT root publish planned
   placement/   # richer node selection & redundancy policy (v1 round-robin
                # lives in internal/net for now)                            (planned)
   ledger/      # per-user index/accounting, root-pointer management        (planned)
   sync/        # daemon folder-watch + reconcile (daemon only)            (planned)
+  mount/       # OS filesystem integration: FUSE mountpoint (hanwen/go-fuse),
+               # manifest-as-inode, LoadFile-on-open hydration, COW writes;
+               # native File Provider / Cloud Filter bindings later        (planned)
 ```
 
 ## 8. Libraries
@@ -470,6 +575,7 @@ Planned as later layers land:
 | Local metadata DB  | `go.etcd.io/bbolt` (or SQLite) |
 | Filesystem watching (daemon) | `github.com/fsnotify/fsnotify` |
 | Content-defined chunking | a FastCDC implementation |
+| OS filesystem mount (FUSE) | `github.com/hanwen/go-fuse` (Linux/macFUSE/WinFsp); native `FileProvider` (macOS) / Cloud Filter (Windows) per-OS, later |
 
 > **Toolchain:** `go.mod` declares `go 1.26`; the environment's base `go` may be older, so
 > `GOTOOLCHAIN=auto` (the default) fetches 1.26 on first build. Module path is `revika`.
@@ -494,14 +600,23 @@ Prove the core loop before adding breadth. Each phase is independently testable.
    (`DHTStore`) with no explicit `-node` — verified end-to-end across a 3-node DHT and by
    `TestPlacementEndToEnd`. **Still open:** richer placement policy and repairing onto
    *fresh* nodes.
-4. ⬜ **Metadata + mutable root.** Serialize/encrypt manifests, encrypted directories,
-   signed root pointers.
+4. 🟡 **Metadata + mutable root** (in progress). The file manifest now serializes to JSON
+   (manifest v4) carrying a full `Metadata` record — mode, owner, the four timestamps,
+   attribute flags, content type, symlink target, xattrs, and content/metadata version
+   tokens — so a manifest is mount-ready for the native cloud-provider frameworks (§3.6, §3.8);
+   `revika-ctl` captures it on `put` and restores it on `get`. **Still open:** encrypting the
+   manifest blob, encrypted directories, and signed root pointers.
 5. 🟡 **Sharing** (in progress). Cap *delivery* is implemented (`internal/cap`:
    `Wrap`/`Unwrap` to a recipient's ML-KEM-768 key) and driven by `revika-ctl share` /
    `get -cap`. **Still open:** the write-cap → read-cap → verify-cap derivation chain
    and signing keys for mutable objects.
 6. ⬜ **Sync daemon.** Folder watching, reconcile, conflict handling; optional embedded
    node.
+7. ⬜ **OS filesystem mount.** Expose the metadata tree from step 4 as a mounted filesystem
+   via FUSE (`internal/mount`, `hanwen/go-fuse`): manifest-as-inode for `stat`/`readdir`,
+   `LoadFile`-on-`open` hydration, and COW writes that advance the signed root pointer. Native
+   File Provider (macOS) / Cloud Filter (Windows) surfaces follow. Depends on step 4;
+   complements the sync daemon (step 6) as a second user-facing surface (§3.8).
 
 **Deliberately deferred:** payments/incentives, global consensus, Byzantine reputation,
 anti-Sybil. Revisit once the core storage guarantees are solid.
@@ -532,6 +647,10 @@ Still open:
 - Lease durations and garbage-collection policy on nodes.
 - How multi-device access for a single User shares the signing key (or delegates via
   additional caps).
+- Mount-layer (§3.8) specifics: write semantics against immutable, content-addressed content
+  (per-`close` COW vs. a write-back buffer that batches dirty chunks), local placeholder-cache
+  and hydration/eviction policy, and how far the FUSE PoC goes before the native File Provider /
+  Cloud Filter bindings are worth their per-OS cost.
 - Fine-grained / revocable sharing beyond handing over a read-cap. **Proxy re-encryption
   (incl. IB-CPRE) is rejected for v1** (§3.5: breaks content-addressing/repair, needs a
   trusted PKG, and has no PQC-class standardized scheme); the near-term path is revocation

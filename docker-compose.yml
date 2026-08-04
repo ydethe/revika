@@ -34,6 +34,14 @@
 #
 #   docker compose run --build --rm deleter
 #
+# The `tree` service (profile `tree`) exercises directory support: it stores a
+# nested directory tree with `put -r` (a Merkle DAG of cap-addressed encrypted
+# blobs), asserts every node received shards, restores it with `get -r`, and
+# checks the whole tree — files and directories, empty ones included — came
+# back byte-identical. It is self-contained (needs only the nodes):
+#
+#   docker compose run --build --rm tree
+#
 # These runs share one seed/nodes network; tear it down with:
 #
 #   docker compose down -v
@@ -181,6 +189,36 @@ services:
       # rw: after the round-trip, verify.sh drops artifacts here for the attacker
       # (a cap wrapped for a third party + the plaintext canary — never the keys).
       - handoff:/handoff
+    restart: "no"
+
+  # Directory round-trip client (profile: tree). Reuses the same image but runs
+  # tree.sh: it stores a nested directory tree with `put -r` (a Merkle DAG of
+  # cap-addressed encrypted blobs), asserts every node received shards, restores
+  # it with `get -r`, and checks the tree came back byte-identical — files and
+  # directories (including empty ones) alike. Self-contained (needs only the
+  # nodes); the node data volumes are mounted read-only so it can count shards.
+  # Run it with:
+  #   docker compose run --build --rm tree
+  tree:
+    profiles: ["tree"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/tree.sh"]
+    depends_on:
+      seed:
+        condition: service_started
+      node2:
+        condition: service_started
+      node3:
+        condition: service_started
+    environment:
+      SEED_ADDR: *seed_addr
+    volumes:
+      - seed-data:/nodes/seed:ro
+      - node2-data:/nodes/node2:ro
+      - node3-data:/nodes/node3:ro
     restart: "no"
 
   # A separate, unauthorized client. It reuses the same image (target: client)

@@ -39,6 +39,13 @@ shard access) a reader needs.
 - **`LoadFile(ctx, s store.Store, m FileManifest, w io.Writer) error`** —
   reconstructs the file described by `m` and writes it to `w`, tolerating
   missing shards up to the erasure margin.
+- **`StoreBlob(ctx, s, cfg, data []byte) (ChunkRef, error)`** /
+  **`LoadBlob(ctx, s, p erasure.Params, ref ChunkRef) (data []byte, error)`** —
+  the single-chunk primitive under [`internal/manifest`](../manifest/README.md):
+  it runs one blob (a serialized file manifest or directory) through the same
+  compress → encrypt → erasure-code → put path and returns a `ChunkRef`, so a
+  manifest or directory becomes an immutable, content-addressed, encrypted blob
+  that a `ReadCap` can point at. The caller keeps each blob within one chunk.
 
 ## FileManifest structure
 
@@ -47,15 +54,61 @@ type FileManifest struct {
     Name   string       // original file name (set by the caller after StoreFile)
     Params Config       // encoding config used (chunk size + K/M + compression)
     Size   int64        // original plaintext size in bytes
+    Meta   Metadata     // filesystem attributes (set by the caller after StoreFile)
     Chunks []ChunkRef   // ordered per-chunk recipes (key + compressed flag + shard IDs)
 }
 ```
 
 Each `ChunkRef` carries the chunk's encryption `Key`, its `Compressed` flag, and
 its ordered `Shards`.
-`StoreFile` takes an `io.Reader` and cannot know the name, so the caller sets
-`Name` after storing (see `revika-ctl`'s `runStore`); it lets a reader restore
-the file under its original name without being told it out of band.
+`StoreFile` takes an `io.Reader` and cannot know the name or on-disk attributes,
+so the caller sets `Name` and `Meta` after storing (see `revika-ctl`'s
+`runStore`); they let a reader restore the file under its original name and
+attributes without being told them out of band.
+
+### Metadata
+
+`Metadata` is the filesystem attribute set carried alongside the chunk recipe so
+a stored file round-trips back into a real filesystem and so the **native
+cloud-provider frameworks** (macOS `FileProvider.framework`, Windows Cloud Filter
+`cldapi`; see [Architecture §3.8](../../Architecture.md)) have every field they
+need to present the file as a placeholder without hydrating its shards:
+
+```go
+type Metadata struct {
+    Mode           uint32            // Go io/fs.FileMode bits (portable type+perm)
+    Uid, Gid       uint32            // POSIX owner/group
+    ModTimeNS      int64             // mtime  → FP contentModificationDate / CF LastWriteTime
+    ChangeTimeNS   int64             // ctime  → CF ChangeTime
+    AccessTimeNS   int64             // atime  → FP lastUsedDate / CF LastAccessTime
+    BirthTimeNS    int64             // btime  → FP creationDate / CF CreationTime
+    Flags          uint32            // cross-platform attribute bits (see Flag*)
+    ContentType    string            // IANA MIME type → FP typeIdentifier (advisory)
+    SymlinkTarget  string            // non-empty iff a symlink → FP symlinkTargetPath
+    Xattr          map[string][]byte // extended attributes → FP extendedAttributes
+    ContentVersion []byte            // opaque change tokens matching
+    MetaVersion    []byte            //   FP NSFileProviderItemVersion (content + metadata)
+}
+```
+
+The `Flag*` constants (`FlagHidden`, `FlagReadOnly`, `FlagSystem`, `FlagArchive`)
+carry attributes that have no POSIX mode bit but that File Provider / Cloud Filter
+express, so a Windows-origin "system" flag survives a round-trip.
+
+`DeriveVersions(&m)` fills the two version tokens deterministically:
+`ContentVersion` hashes the ordered shard IDs (changes iff the bytes change) and
+`MetaVersion` hashes the attribute fields (changes iff an attribute changes) —
+exactly what a native provider needs to tell "renamed" from "re-uploaded"
+without fetching a shard.
+
+The stable *item identifier* (FP `itemIdentifier` / CF `FileIdentity`) is
+deliberately **not** here: it is a namespace concern owned by the directory
+manifest (Architecture §3.6/§3.8), not a property of a file's content. Capturing
+`Metadata` from disk and restoring it (chmod/chtimes/chown/setxattr, symlink
+recreation) lives in `revika-ctl` (`meta.go` + per-OS `meta_linux.go` /
+`meta_other.go`), since it touches the OS; the portable subset (mode, mtime,
+content type, symlink, flags) is captured everywhere and the richer POSIX fields
+where the platform exposes them.
 
 ## How it ties the pieces together
 

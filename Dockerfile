@@ -91,20 +91,22 @@ CMD ["-data", "/data", \
 # scripts. Unlike the distroless node it needs a shell and coreutils (cmp, find,
 # grep) to drive put/get and assert results, so it is based on debian-slim. Used
 # by the `client` service (authorized round-trip, verify.sh — the default
-# entrypoint), the `attacker` service (unauthorized-access checks, attack.sh),
-# and the `deleter` service (delete-protection checks, delete-protection.sh),
-# each selecting its script via an entrypoint override in docker-compose.yml.
+# entrypoint), the `tree` service (directory round-trip, tree.sh), the
+# `attacker` service (unauthorized-access checks, attack.sh), and the `deleter`
+# service (delete-protection checks, delete-protection.sh), each selecting its
+# script via an entrypoint override in docker-compose.yml.
 FROM debian:bookworm-slim AS client
 LABEL org.opencontainers.image.title="revika-ctl-testharness" \
       org.opencontainers.image.description="revika multi-node verify/attack harness (test-only, not published)"
 
 COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
 COPY deploy/verify.sh /usr/local/bin/verify.sh
+COPY deploy/tree.sh /usr/local/bin/tree.sh
 COPY deploy/attack.sh /usr/local/bin/attack.sh
 COPY deploy/delete-protection.sh /usr/local/bin/delete-protection.sh
 COPY deploy/resilience-client.sh /usr/local/bin/resilience-client.sh
 COPY deploy/repair-client.sh /usr/local/bin/repair-client.sh
-RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/attack.sh \
+RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/tree.sh /usr/local/bin/attack.sh \
       /usr/local/bin/delete-protection.sh /usr/local/bin/resilience-client.sh \
       /usr/local/bin/repair-client.sh
 

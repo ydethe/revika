@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -88,19 +89,24 @@ Commands:
         verify — a banned owner cannot re-mint an identity for free. Default
         argon2id (memory-hard) at 12 bits; -pow-difficulty 0 disables it.
 
-  put (-node <ma> | -bootstrap <ma>... | -mdns) [-manifest <path>] [-signkey <path>] <file>
+  put (-node <ma> | -bootstrap <ma>... | -mdns) [-manifest <path>] [-signkey <path>] [-r] <file>
         Chunk, encrypt, erasure-code and store <file>. With -node, store on that
         single node; with -bootstrap/-mdns, join the DHT and spread the shards
         across discovered storage nodes. Writes the file's manifest (its
         read-capability) to <path> (default <file>.rvk.json). Signs the store
         with your signing key so you (and only you) can later delete it.
+        With -r, <file> is a directory: it is stored as a Merkle DAG of
+        cap-addressed encrypted blobs (each file a manifest blob, each folder a
+        directory blob), and -manifest receives the tree's root cap.
 
-  get (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
+  get (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) [-o <out>] [-r]
         Reconstruct a file. With -node, fetch from that node; with -bootstrap/-mdns,
         discover each shard's providers via the DHT. Read your own file with
         -manifest, or a shared file by unwrapping a -cap with your -key. Writes to
         the file's original name (recorded in the manifest) unless -o is given;
         falls back to stdout for older manifests that carry no name.
+        With -r, the -manifest/-cap holds a directory root cap (from 'put -r')
+        and the whole tree is restored into the -o directory (required).
 
   delete (-node <ma> | -bootstrap <ma>... | -mdns) -manifest <path> [-signkey <path>]
         Drop your ownership claim on every shard of the file. A node frees a
@@ -348,17 +354,41 @@ func discoverNodeInfos(ctx context.Context, h host.Host, disc *net.Discovery) []
 // runStore stores the file at path into s and returns its manifest. Split out
 // so tests can drive it with an in-process store.
 func runStore(ctx context.Context, s store.Store, cfg pipeline.Config, path string) (pipeline.FileManifest, error) {
-	f, err := os.Open(path)
+	// Lstat (not Stat) so a symlink is captured as a link rather than followed:
+	// its "content" is its target path, stored so `get` can recreate the link.
+	fi, err := os.Lstat(path)
 	if err != nil {
 		return pipeline.FileManifest{}, err
 	}
-	defer f.Close()
-	m, err := pipeline.StoreFile(ctx, s, cfg, f)
-	if err != nil {
-		return pipeline.FileManifest{}, err
+
+	var m pipeline.FileManifest
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return pipeline.FileManifest{}, err
+		}
+		m, err = pipeline.StoreFile(ctx, s, cfg, strings.NewReader(target))
+		if err != nil {
+			return pipeline.FileManifest{}, err
+		}
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return pipeline.FileManifest{}, err
+		}
+		defer f.Close()
+		m, err = pipeline.StoreFile(ctx, s, cfg, f)
+		if err != nil {
+			return pipeline.FileManifest{}, err
+		}
 	}
-	// Record the original file name so `get` can restore it without being told.
+
+	// Record the original file name and filesystem attributes so `get` (and a
+	// native cloud-provider mount, §3.8) can restore the file faithfully, then
+	// derive the content/metadata version tokens from the finished manifest.
 	m.Name = filepath.Base(path)
+	m.Meta = captureMetadata(path, fi)
+	pipeline.DeriveVersions(&m)
 	return m, nil
 }
 

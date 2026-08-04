@@ -104,7 +104,8 @@ internal/
              (Discovery), DHTStore + PlacementStore + RepairStore, signed auth tokens
   cap/       ML-KEM-768 cap wrapping (Wrap/Unwrap) + Ed25519 signing identity
   ledger/    per-node SQLite ownership/lease/quota + stripe index
-  manifest/  on-disk/on-wire manifest (planned)
+  manifest/  cap-addressed encrypted file/dir blobs = Merkle DAG (ReadCap, DirManifest,
+             COW Graft, signed RootPointer); reuses pipeline blobs + cap wrapping
   placement/ node selection policy (round-robin cut lives in net/ for now; richer policy planned)
   sync/      daemon folder-watch + reconcile (planned)
 ```

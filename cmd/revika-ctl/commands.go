@@ -18,10 +18,11 @@ import (
 // cmdKeygen generates and persists a recipient identity.
 //
 // Defence controls (security/Defence.md; primitives P24, P9 in security/frameworks.md):
-//   SC-12 (Cryptographic Key Establishment and Management) / SC-28 (Protection of Information at
-//         Rest) — private keys are written 0600 under a 0700 dir and never leave the machine.
-//   SC-5  (Denial-of-Service Protection) — the signing key is ground via proof-of-work so a banned
-//         owner identity cannot be cheaply re-minted (anti-Sybil floor).
+//
+//	SC-12 (Cryptographic Key Establishment and Management) / SC-28 (Protection of Information at
+//	      Rest) — private keys are written 0600 under a 0700 dir and never leave the machine.
+//	SC-5  (Denial-of-Service Protection) — the signing key is ground via proof-of-work so a banned
+//	      owner identity cannot be cheaply re-minted (anti-Sybil floor).
 func cmdKeygen(args []string) error {
 	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
 	prefix := fs.String("key", filepath.Join(".revika", "keys", "user"), "path prefix for the identity (writes <prefix>.key and <prefix>.pub)")
@@ -185,9 +186,10 @@ func loadSignKey(path string) (cap.SignKey, error) {
 func cmdPut(args []string) error {
 	fs := flag.NewFlagSet("put", flag.ExitOnError)
 	node := fs.String("node", "", "store on this single node multiaddr (with /p2p/<peerid>)")
-	manifestPath := fs.String("manifest", "", "where to write the file manifest (default <file>.rvk.json)")
+	manifestPath := fs.String("manifest", "", "where to write the file manifest / directory root cap (default <file>.rvk.json)")
 	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the store")
 	grantTTL := fs.Duration("grant-ttl", 0, "expiry of the repair grants attached to shards (0 = never expire)")
+	recursive := fs.Bool("r", false, "store <file> as a directory tree (Merkle DAG of cap-addressed blobs); writes the root cap to -manifest")
 	var bootstrap multiFlag
 	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); spreads shards across discovered nodes")
 	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
@@ -219,6 +221,10 @@ func cmdPut(args []string) error {
 		return err
 	}
 	defer closer()
+
+	if *recursive {
+		return putTree(ctx, s, cfg, file, outManifest)
+	}
 
 	start := time.Now()
 	m, err := runStore(ctx, s, cfg, file)
@@ -278,10 +284,11 @@ func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool,
 func cmdGet(args []string) error {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
 	node := fs.String("node", "", "fetch from this single node multiaddr (with /p2p/<peerid>)")
-	manifestPath := fs.String("manifest", "", "manifest file to read (your own file)")
-	capPath := fs.String("cap", "", "wrapped cap file to read (a shared file); requires -key")
+	manifestPath := fs.String("manifest", "", "manifest / directory root cap file to read (your own data)")
+	capPath := fs.String("cap", "", "wrapped cap file to read (a shared file/tree); requires -key")
 	keyPath := fs.String("key", "", "your private key file, to unwrap -cap")
-	out := fs.String("o", "", "output file (default: the file's original name from the manifest, or stdout if it carries none)")
+	out := fs.String("o", "", "output file (default: the file's original name from the manifest, or stdout if it carries none); with -r, the destination directory (required)")
+	recursive := fs.Bool("r", false, "restore a directory tree stored with `put -r` (reads a root cap from -manifest/-cap) into -o")
 	var bootstrap multiFlag
 	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); discovers shard providers")
 	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS on the LAN")
@@ -289,12 +296,29 @@ func cmdGet(args []string) error {
 		return err
 	}
 
+	ctx := context.Background()
+
+	if *recursive {
+		if *out == "" {
+			return fmt.Errorf("get -r needs -o <destination directory>")
+		}
+		root, err := resolveRootCap(*manifestPath, *capPath, *keyPath)
+		if err != nil {
+			return err
+		}
+		s, closer, err := getBackend(ctx, *node, bootstrap, *mdns)
+		if err != nil {
+			return err
+		}
+		defer closer()
+		return getTree(ctx, s, root, *out)
+	}
+
 	m, err := resolveManifest(*manifestPath, *capPath, *keyPath)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
 	s, closer, err := getBackend(ctx, *node, bootstrap, *mdns)
 	if err != nil {
 		return err
@@ -310,20 +334,60 @@ func cmdGet(args []string) error {
 		outPath = filepath.Base(m.Name)
 	}
 
-	w := os.Stdout
-	if outPath != "" {
-		f, err := os.Create(outPath)
-		if err != nil {
+	// No output path: stream the bytes to stdout; there is nowhere to restore
+	// filesystem metadata to, so it is ignored.
+	if outPath == "" {
+		if err := runLoad(ctx, s, m, os.Stdout); err != nil {
+			return fmt.Errorf("retrieve: %w", err)
+		}
+		return nil
+	}
+
+	// A symlink's content is its target path (recorded in the manifest as
+	// metadata, §3.8), so recreate the link rather than writing a file.
+	if m.Meta.IsSymlink() {
+		if err := restoreSymlink(outPath, m.Meta); err != nil {
 			return err
 		}
-		defer f.Close()
-		w = f
+		fmt.Fprintf(os.Stderr, "Wrote symlink %s -> %s\n", outPath, m.Meta.SymlinkTarget)
+		return nil
 	}
-	if err := runLoad(ctx, s, m, w); err != nil {
+
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	if err := runLoad(ctx, s, m, f); err != nil {
+		f.Close()
 		return fmt.Errorf("retrieve: %w", err)
 	}
-	if outPath != "" {
-		fmt.Fprintf(os.Stderr, "Wrote %s (%d bytes)\n", outPath, m.Size)
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// Restore mode/times/owner/xattrs after the content is fully written and
+	// closed; a partial restore (e.g. chown without privilege) warns but does
+	// not fail the retrieval.
+	if err := restoreMetadata(outPath, m.Meta); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", outPath, err)
+	}
+	fmt.Fprintf(os.Stderr, "Wrote %s (%d bytes)\n", outPath, m.Size)
+	return nil
+}
+
+// restoreSymlink recreates the symbolic link described by meta at path,
+// replacing any existing entry, then restores its ownership/xattrs.
+func restoreSymlink(path string, meta pipeline.Metadata) error {
+	if meta.SymlinkTarget == "" {
+		return fmt.Errorf("manifest marks a symlink but carries no target")
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Symlink(meta.SymlinkTarget, path); err != nil {
+		return fmt.Errorf("recreate symlink: %w", err)
+	}
+	if err := restoreMetadata(path, meta); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", path, err)
 	}
 	return nil
 }

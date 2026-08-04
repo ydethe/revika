@@ -10,10 +10,11 @@
 // an in-memory value returned by StoreFile and consumed by LoadFile.
 //
 // Defence controls (security/Defence.md; primitives P1, P6, P23 in security/frameworks.md):
-//   SA-8  (Security and Privacy Engineering Principles) — all chunking, encryption, and erasure
-//         coding happen client-side here before any shard leaves the machine.
-//   SC-28 (Protection of Information at Rest)  — shards are AES-256-GCM ciphertext when stored (internal/crypto).
-//   SC-36 (Distributed Processing and Storage) — each chunk is erasure-coded into K+M dispersible shards.
+//
+//	SA-8  (Security and Privacy Engineering Principles) — all chunking, encryption, and erasure
+//	      coding happen client-side here before any shard leaves the machine.
+//	SC-28 (Protection of Information at Rest)  — shards are AES-256-GCM ciphertext when stored (internal/crypto).
+//	SC-36 (Distributed Processing and Storage) — each chunk is erasure-coded into K+M dispersible shards.
 package pipeline
 
 import (
@@ -56,14 +57,18 @@ type ChunkRef struct {
 }
 
 // FileManifest is the ordered list of chunk recipes plus the encoding
-// parameters, original size, and the file's original name. StoreFile takes an
-// io.Reader and cannot know the name, so the caller sets Name after storing
-// (see revika-ctl's runStore); it lets a reader restore the file under its
-// original name without being told it out of band.
+// parameters, original size, the file's original name, and its filesystem
+// metadata. StoreFile takes an io.Reader and cannot know the name or the
+// on-disk attributes, so the caller sets Name and Meta after storing (see
+// revika-ctl's runStore); together they let a reader restore the file under its
+// original name and attributes — and let a native cloud-provider mount (macOS
+// File Provider, Windows Cloud Filter; Architecture §3.8) present it as a
+// placeholder without hydrating the shards.
 type FileManifest struct {
 	Name   string
 	Params Config
 	Size   int64
+	Meta   Metadata
 	Chunks []ChunkRef
 }
 
@@ -147,6 +152,24 @@ func storeChunk(ctx context.Context, s store.Store, cfg Config, plain []byte) (C
 		}
 	}
 	return ChunkRef{Key: key, Compressed: compressed, Shards: ids}, nil
+}
+
+// StoreBlob stores data as a single self-contained erasure-coded chunk and
+// returns the ChunkRef needed to reload it. It is the base primitive under
+// cap-addressed manifests and directories (internal/manifest): a small immutable
+// blob — a serialized file manifest or directory — referenced compactly by its
+// ChunkRef (per-blob key + ordered shard IDs). Unlike StoreFile it does not
+// chunk: the caller is responsible for keeping a blob within one chunk (see
+// internal/manifest for the size budget and the sharding path for larger ones).
+func StoreBlob(ctx context.Context, s store.Store, cfg Config, data []byte) (ChunkRef, error) {
+	return storeChunk(ctx, s, cfg, data)
+}
+
+// LoadBlob reverses StoreBlob: it fetches the blob's shards (tolerating missing
+// ones up to the erasure margin), erasure-decodes, decrypts, and decompresses,
+// returning the original bytes.
+func LoadBlob(ctx context.Context, s store.Store, p erasure.Params, ref ChunkRef) ([]byte, error) {
+	return loadChunk(ctx, s, p, ref)
 }
 
 // LoadFile reconstructs the file described by m and writes it to w. For each
