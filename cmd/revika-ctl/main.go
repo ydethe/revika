@@ -32,6 +32,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"revika/internal/cap"
+	"revika/internal/fsmeta"
 	"revika/internal/net"
 	"revika/internal/pipeline"
 	"revika/internal/store"
@@ -415,7 +416,7 @@ func runStore(ctx context.Context, s store.Store, cfg pipeline.Config, path stri
 	// native cloud-provider mount, §3.8) can restore the file faithfully, then
 	// derive the content/metadata version tokens from the finished manifest.
 	m.Name = filepath.Base(path)
-	m.Meta = captureMetadata(path, fi)
+	m.Meta = fsmeta.Capture(path, fi)
 	pipeline.DeriveVersions(&m)
 	return m, nil
 }

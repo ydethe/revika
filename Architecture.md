@@ -456,6 +456,24 @@ tree: free versioning, a single mutable anchor, and every version signed so a no
 rolled-back root. Content-defined chunking (§3.3) matters here so an in-place edit rewrites one
 chunk, not the whole file.
 
+**Framework-neutral API — `internal/provider` [implemented].** The three native families above
+speak different dialects but require the *same shape*: a rename-stable item identity, a
+content/metadata version pair, container enumeration with a delta cursor, on-demand fetch
+(hydration) and eviction, and create/modify/delete/rename mutations. `internal/provider` expresses
+that union once in Go as the `Provider` interface, so a single core serves all of them and a
+per-OS binding layer (the not-pure-Go shim) only has to translate native callbacks into these
+method calls. Its default implementation, `provider.Manifest`, resolves every call against the
+cap-addressed Merkle DAG (§3.6) over any `store.Store`: reads load directory/manifest blobs
+(enumeration touches no content), fetch runs `pipeline.LoadFile`, and each mutation is the
+copy-on-write `Graft` above, advancing the signed root pointer (§4). Two pieces are owned here
+that the DAG does not yet provide: **stable `ItemID`s** (the frameworks demand identifiers that
+survive rename/move; the provider, sole mutator of its domain, keeps an authoritative path⇄ID map
+— a future `Entry.ID`, §3.6, could make this intrinsic) and **change enumeration** (diffing two
+root caps, pruning unchanged subtrees by cap equality). The one un-networked seam — publishing the
+signed root pointer — is isolated behind a `RootStore` interface (in-memory today, DHT-backed when
+§4 lands), so the API is complete now. Live-file attribute capture/restore for this and for
+`revika-ctl` is shared in `internal/fsmeta`.
+
 This layer is **daemon-only** (`revika-daemon`, §1) and sits on top of the metadata layer; it adds
 no new trust assumptions — all chunking, encryption, and erasure coding still happen client-side
 before any shard moves (§2).
@@ -567,13 +585,18 @@ internal/
   cap/       ✓ ML-KEM-768 capability wrapping (Wrap/Unwrap, FIPS 203) for sharing read-caps
   manifest/  ✓ ReadCap + cap-addressed file/dir blobs (Merkle DAG), COW Graft,
              signed RootPointer; recursive put/get + DHT root publish planned
+  fsmeta/    ✓ capture/restore live-file attributes ⇄ pipeline.Metadata
+             (POSIX split: Linux uid/gid/times/xattr, portable mode/mtime)
+  provider/  ✓ framework-neutral OS-integration API (Provider iface) mapping
+             File Provider / Cloud Filter / GVfs; Manifest impl over the DAG,
+             stable ItemIDs + DAG-diff change enum, RootStore seam (§3.8)
   placement/   # richer node selection & redundancy policy (v1 round-robin
                # lives in internal/net for now)                            (planned)
   ledger/      # per-user index/accounting, root-pointer management        (planned)
   sync/        # daemon folder-watch + reconcile (daemon only)            (planned)
   mount/       # OS filesystem integration: FUSE mountpoint (hanwen/go-fuse),
                # manifest-as-inode, LoadFile-on-open hydration, COW writes;
-               # native File Provider / Cloud Filter bindings later        (planned)
+               # drives internal/provider; native bindings later          (planned)
 ```
 
 ## 8. Libraries

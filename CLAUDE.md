@@ -106,6 +106,12 @@ internal/
   ledger/    per-node SQLite ownership/lease/quota + stripe index
   manifest/  cap-addressed encrypted file/dir blobs = Merkle DAG (ReadCap, DirManifest,
              COW Graft, signed RootPointer); reuses pipeline blobs + cap wrapping
+  fsmeta/    capture/restore live-file attributes ⇄ pipeline.Metadata (Linux + portable split);
+             shared by revika-ctl and provider
+  provider/  framework-neutral OS filesystem-integration API (Provider iface) mapping macOS File
+             Provider / Windows Cloud Filter / Linux GVfs; Manifest impl over the manifest DAG with
+             stable ItemIDs, DAG-diff change enumeration, and a RootStore seam for the (planned) DHT
+             root publish
   placement/ node selection policy (round-robin cut lives in net/ for now; richer policy planned)
   sync/      daemon folder-watch + reconcile (planned)
 ```

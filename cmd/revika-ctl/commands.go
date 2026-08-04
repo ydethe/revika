@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"revika/internal/cap"
+	"revika/internal/fsmeta"
 	"revika/internal/manifest"
 	"revika/internal/pipeline"
 	"revika/internal/store"
@@ -350,7 +351,7 @@ func cmdGet(args []string) error {
 	// A symlink's content is its target path (recorded in the manifest as
 	// metadata, §3.8), so recreate the link rather than writing a file.
 	if m.Meta.IsSymlink() {
-		if err := restoreSymlink(outPath, m.Meta); err != nil {
+		if err := fsmeta.RestoreSymlink(outPath, m.Meta); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Wrote symlink %s -> %s\n", outPath, m.Meta.SymlinkTarget)
@@ -371,28 +372,10 @@ func cmdGet(args []string) error {
 	// Restore mode/times/owner/xattrs after the content is fully written and
 	// closed; a partial restore (e.g. chown without privilege) warns but does
 	// not fail the retrieval.
-	if err := restoreMetadata(outPath, m.Meta); err != nil {
+	if err := fsmeta.Restore(outPath, m.Meta); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", outPath, err)
 	}
 	fmt.Fprintf(os.Stderr, "Wrote %s (%d bytes)\n", outPath, m.Size)
-	return nil
-}
-
-// restoreSymlink recreates the symbolic link described by meta at path,
-// replacing any existing entry, then restores its ownership/xattrs.
-func restoreSymlink(path string, meta pipeline.Metadata) error {
-	if meta.SymlinkTarget == "" {
-		return fmt.Errorf("manifest marks a symlink but carries no target")
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Symlink(meta.SymlinkTarget, path); err != nil {
-		return fmt.Errorf("recreate symlink: %w", err)
-	}
-	if err := restoreMetadata(path, meta); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", path, err)
-	}
 	return nil
 }
 

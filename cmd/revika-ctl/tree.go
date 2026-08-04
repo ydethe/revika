@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"revika/internal/fsmeta"
 	"revika/internal/manifest"
 	"revika/internal/pipeline"
 	"revika/internal/store"
@@ -40,7 +41,7 @@ func storeTree(ctx context.Context, s store.Store, cfg pipeline.Config, src stri
 	}
 
 	// Start from an empty root directory carrying src's own attributes.
-	root, err := manifest.StoreDir(ctx, s, cfg, manifest.NewDir(captureMetadata(src, rootFI)))
+	root, err := manifest.StoreDir(ctx, s, cfg, manifest.NewDir(fsmeta.Capture(src, rootFI)))
 	if err != nil {
 		return manifest.ReadCap{}, 0, err
 	}
@@ -64,7 +65,7 @@ func storeTree(ctx context.Context, s store.Store, cfg pipeline.Config, src stri
 		}
 
 		if d.IsDir() {
-			sub, err := manifest.StoreDir(ctx, s, cfg, manifest.NewDir(captureMetadata(p, fi)))
+			sub, err := manifest.StoreDir(ctx, s, cfg, manifest.NewDir(fsmeta.Capture(p, fi)))
 			if err != nil {
 				return err
 			}
@@ -178,7 +179,7 @@ func restoreDir(ctx context.Context, s store.Store, dirCap manifest.ReadCap, des
 		}
 	}
 	// Restore the directory's own metadata after its children are in place.
-	if err := restoreMetadata(dest, d.Meta); err != nil {
+	if err := fsmeta.Restore(dest, d.Meta); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", dest, err)
 	}
 	return files, nil
@@ -192,7 +193,7 @@ func restoreFile(ctx context.Context, s store.Store, fc manifest.ReadCap, target
 		return 0, err
 	}
 	if fm.Meta.IsSymlink() {
-		if err := restoreSymlink(target, fm.Meta); err != nil {
+		if err := fsmeta.RestoreSymlink(target, fm.Meta); err != nil {
 			return 0, err
 		}
 		return 1, nil
@@ -208,7 +209,7 @@ func restoreFile(ctx context.Context, s store.Store, fc manifest.ReadCap, target
 	if err := f.Close(); err != nil {
 		return 0, err
 	}
-	if err := restoreMetadata(target, fm.Meta); err != nil {
+	if err := fsmeta.Restore(target, fm.Meta); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", target, err)
 	}
 	return 1, nil

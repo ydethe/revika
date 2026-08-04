@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"revika/internal/fsmeta"
 	"revika/internal/manifest"
 	"revika/internal/pipeline"
 	"revika/internal/store"
@@ -184,7 +185,7 @@ func syncDir(ctx context.Context, s store.Store, dirCap manifest.ReadCap, destAb
 		}
 	}
 	// Restore the directory's own metadata after its children exist.
-	if err := restoreMetadata(destAbs, d.Meta); err != nil {
+	if err := fsmeta.Restore(destAbs, d.Meta); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", destAbs, err)
 	}
 	return nDirs, nFiles, nil
@@ -204,7 +205,7 @@ func writePlaceholder(path string, stat manifest.StatCache) error {
 	// Only mode/mtime are known from the parent's StatCache; the full metadata
 	// (owner/xattrs) is restored on hydrate, when the file manifest is fetched.
 	meta := pipeline.Metadata{Mode: stat.Mode, ModTimeNS: stat.ModTimeNS}
-	if err := restoreMetadata(path, meta); err != nil {
+	if err := fsmeta.Restore(path, meta); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", path, err)
 	}
 	return nil
