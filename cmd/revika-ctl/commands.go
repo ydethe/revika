@@ -220,10 +220,12 @@ func cmdPut(args []string) error {
 	}
 	defer closer()
 
+	start := time.Now()
 	m, err := runStore(ctx, s, cfg, file)
 	if err != nil {
 		return fmt.Errorf("store %s: %w", file, err)
 	}
+	elapsed := time.Since(start)
 	data, err := encodeManifest(m)
 	if err != nil {
 		return err
@@ -237,6 +239,8 @@ func cmdPut(args []string) error {
 		shardCount += len(ch.Shards)
 	}
 	fmt.Printf("Stored %s: %d bytes, %d chunks, %d shards\n", file, m.Size, len(m.Chunks), shardCount)
+	throughputMBps := (float64(m.Size) / (1024 * 1024)) / elapsed.Seconds()
+	fmt.Printf("Transferred to revika in %s (~%.2f MB/s)\n", elapsed.Round(time.Millisecond), throughputMBps)
 	fmt.Printf("Manifest: %s\n", outManifest)
 	fmt.Fprintln(os.Stderr, "warning: the manifest contains the file's decryption keys — keep it secret, or `share` it wrapped to a recipient.")
 	return nil
