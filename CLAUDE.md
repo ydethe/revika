@@ -70,7 +70,8 @@ go test -run TestName ./path/to/pkg
 go vet ./...
 go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -mdns -dht -bootstrap
                           #   -advertise -quota -lease-ttl -gc-interval -gc-expired-leases
-                          #   -repair -repair-interval -metrics -blocklist -conn-low
+                          #   -repair -repair-interval -rebalance -rebalance-interval
+                          #   -rebalance-threshold -capacity -metrics -blocklist -conn-low
                           #   -conn-high -conn-grace -pow-difficulty -pow-puzzle -v)
 go run ./cmd/revika-ctl   # User client: keygen | cp | ls | rm | share | node (see -h)
 ```
@@ -124,7 +125,8 @@ internal/
              stable ItemIDs, DAG-diff change enumeration, and a RootStore seam for the (planned) DHT
              root publish
   placement/ node selection policy — pluggable Selector (round-robin, smooth weighted
-             round-robin) + failure-domain Spread; wired into net.PlacementStore
+             round-robin) + failure-domain Spread; wired into net.PlacementStore.
+             OffloadBytes = the pure pairwise-diffusion rebalancing decision (§3.4)
   sync/      poll-based folder-watch daemon + three-way reconcile engine over a
              provider.Provider (bidirectional, conflict policies)
 ```

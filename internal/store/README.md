@@ -52,6 +52,17 @@ records on startup and on a periodic reprovide cadence.
 
 - `List(ctx) ([]ShardID, error)` — returns the IDs of every shard held.
 
+## Disk capacity (`diskusage.go`)
+
+`DiskUsage(path) (Usage, error)` reports the `Total`/`Avail` bytes of the
+filesystem backing a directory — the capacity signal the rebalancer needs to
+equalize how *full* nodes are rather than how many shards they hold
+([Architecture §3.4](../../Architecture.md)). It is a per-OS split:
+`syscall.Statfs` on Linux (`diskusage_linux.go`), a portable stub returning
+`ErrUnsupported` elsewhere (`diskusage_other.go`), mirroring the split in
+[`internal/fsmeta`](../fsmeta/). A node folds this with its ledger byte total and
+the operator `-capacity` budget into the `LoadReport` it advertises.
+
 ## Backends
 
 ### `MemStore` (`mem.go`)

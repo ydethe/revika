@@ -19,10 +19,11 @@
 // revika's build cgo-free.
 //
 // Defence controls (security/Defence.md; primitives P13, P10 in security/frameworks.md):
-//   SC-6 (Resource Availability)            — per-owner quotas + leases bound storage per owner. Compl. AC-3.
-//   SC-5 (Denial-of-Service Protection)     — the byte quota caps how much one owner can store.
-//   AU-9 (Protection of Audit Information)   — partial: Reconcile/recomputeAccounts give structural
-//        integrity, but rows are not signed or append-only (see Defence.md notes).
+//
+//	SC-6 (Resource Availability)            — per-owner quotas + leases bound storage per owner. Compl. AC-3.
+//	SC-5 (Denial-of-Service Protection)     — the byte quota caps how much one owner can store.
+//	AU-9 (Protection of Audit Information)   — partial: Reconcile/recomputeAccounts give structural
+//	     integrity, but rows are not signed or append-only (see Defence.md notes).
 package ledger
 
 import (
@@ -429,7 +430,36 @@ func (l *Ledger) Stripes() ([]StripeRow, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanStripeRows(rows)
+}
 
+// ColdShards returns up to limit stripe contexts for the shards this node holds,
+// oldest-stored first, so a rebalancer offloads its *coldest* shards — the
+// least-recently written, least likely to be in active use — to an emptier peer
+// (Architecture §3.4). Only shards with a recorded stripe row are returned: the
+// repair grant on that row is exactly what authorizes moving the shard to another
+// node without the User's signing key. A limit <= 0 returns all such shards.
+func (l *Ledger) ColdShards(limit int) ([]StripeRow, error) {
+	q := `SELECT st.shard_id, st.k, st.m, st.siblings, st.grant
+	      FROM stripes st JOIN shards s ON s.id = st.shard_id
+	      ORDER BY s.created ASC, st.shard_id ASC`
+	var args []any
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := l.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanStripeRows(rows)
+}
+
+// scanStripeRows decodes a result set of (shard_id, k, m, siblings, grant) rows
+// into StripeRows, unpacking the flat 32-byte-per-id siblings blob back into
+// position order. Shared by Stripes and ColdShards.
+func scanStripeRows(rows *sql.Rows) ([]StripeRow, error) {
 	idLen := len(store.ShardID{})
 	var out []StripeRow
 	for rows.Next() {

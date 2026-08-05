@@ -30,12 +30,13 @@ const serverStreamTimeout = 60 * time.Second
 //
 // Defence controls (security/Defence.md; primitives P23, P20, P9, P14, P18 in
 // security/frameworks.md) — the enforcement points the Node runs on writes/probes:
-//   SA-8  (Security and Privacy Engineering Principles) — the node never decrypts or trusts
-//         payloads; security does not depend on node good behaviour.
-//   AC-3  (Access Enforcement)          — PUT/DELETE require a signed owner token or a valid repair grant.
-//   SC-5  (Denial-of-Service Protection) — proof-of-work admission (enforcePoW) gates fresh owner writes.
-//   SI-7  (…Information Integrity)        — handleProbe answers fresh-nonce possession challenges.
-//   SI-10 (Information Input Validation)  — unknown ops and unauthorized writes fail closed.
+//
+//	SA-8  (Security and Privacy Engineering Principles) — the node never decrypts or trusts
+//	      payloads; security does not depend on node good behaviour.
+//	AC-3  (Access Enforcement)          — PUT/DELETE require a signed owner token or a valid repair grant.
+//	SC-5  (Denial-of-Service Protection) — proof-of-work admission (enforcePoW) gates fresh owner writes.
+//	SI-7  (…Information Integrity)        — handleProbe answers fresh-nonce possession challenges.
+//	SI-10 (Information Input Validation)  — unknown ops and unauthorized writes fail closed.
 type Server struct {
 	store     store.Store
 	log       *slog.Logger
@@ -48,6 +49,12 @@ type Server struct {
 	// replace a banned one (see internal/cap/pow.go). Zero disables the check.
 	powPuzzle cap.Puzzle
 	powMin    cap.Difficulty
+
+	// loadSource, when set, reports this node's storage load for the balance
+	// protocol (Architecture §3.4). Left nil, the node answers load queries with
+	// an error — it advertises no capacity signal and neither attracts nor sheds
+	// shards via rebalancing.
+	loadSource LoadSource
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -118,6 +125,7 @@ func (srv *Server) enforcePoW(owner []byte) error {
 func (srv *Server) Register(h host.Host) {
 	h.SetStreamHandler(ShardProtocol, srv.handleShard)
 	h.SetStreamHandler(ProbeProtocol, srv.handleProbe)
+	h.SetStreamHandler(BalanceProtocol, srv.handleLoad)
 }
 
 // handleShard serves one shard-protocol request on s. The wire contract is one

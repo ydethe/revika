@@ -80,6 +80,30 @@ Assigns all `n` shards of one stripe at once, so it can guarantee distinct
 Within a domain, roomier nodes (higher `Free`) come first, and the result is
 **deterministic** for a given candidate set (ties broken by `NodeID`).
 
+## `OffloadBytes` — the rebalancing decision
+
+Placement above picks where a *new* shard lands. `OffloadBytes` is the pure
+decision behind **rebalancing** the *standing* distribution (Architecture §3.4):
+given this node's and a peer's `Load` (bytes `Used` out of a `Capacity` budget),
+it returns how many bytes this node should push to the peer this round.
+
+```go
+type Load struct { Used, Capacity int64 } // Frac() = Used/Capacity clamped to [0,1]; Free() = remaining
+
+func OffloadBytes(self, peer Load, threshold float64) int64
+```
+
+It balances the **fraction** full (`Load.Frac`), never raw counts, so a
+Raspberry Pi and a cloud server converge on the same fullness rather than the
+same shard count. It returns 0 unless `self` is fuller than `peer` by more than
+`threshold` — the dead-band (hysteresis) that stops two near-equal nodes
+ping-ponging a shard — and otherwise aims to close *half* the gap, capped by what
+the peer can accept (`peer.Free`) and what this node holds. This is the
+pairwise dimension-exchange step that, applied across a connected graph, drives
+every node toward the global mean load. [`internal/net`](../net/README.md)'s
+`Rebalancer` drives it: it queries peer load over `/revika/balance`, calls
+`OffloadBytes`, and moves the node's coldest shards make-before-break.
+
 ## How it fits into revika
 
 [`internal/net`](../net/README.md)'s `PlacementStore` (the write-side

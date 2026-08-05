@@ -19,6 +19,10 @@ through libp2p's multistream muxer:
   repair grant) after the auth token on PUT.
 - `ProbeProtocol` = `/revika/probe/1.0.0` — proof-of-possession challenge/response
   used by repair.
+- `BalanceProtocol` = `/revika/balance/1.0.0` — read-only load report used by
+  rebalancing (`balance.go`): a peer replies with its self-declared `LoadReport`
+  (`used`/`capacity`/`shards` as JSON) so a sampling node can compare normalized
+  load before shedding shards to it. Carries no shard content and needs no auth.
 
 **Framing.** One request/response per stream, then the stream closes. A message is
 a single opcode/status byte, followed by fixed-width 32-byte IDs and
@@ -226,26 +230,51 @@ authorization error. See Architecture.md §5.
   discovered node that isn't already a provider, round-robining the start; if every
   node already holds it, that's a no-op success.
 
+## Rebalancing (`balance.go`, `rebalance.go`)
+
+Corrects the *standing* shard distribution so that, asymptotically, every node
+holds the same **fraction of its own capacity** — not the same shard count
+(Architecture §3.4). Repair only ever *adds* a shard; rebalancing *moves* one.
+
+- `LoadReport` / `LoadSource` / `QueryLoad` (`balance.go`) — a node's `LoadSource`
+  closure reports its `LoadReport` (`used`/`capacity`/`shards`); `SetLoadSource`
+  wires it to both the `BalanceProtocol` handler and the `MetricsServer`.
+  `QueryLoad(ctx, h, peer)` fetches a peer's report. `LoadReport.Load()` projects
+  onto [`placement.Load`](../placement/README.md) for the `Frac`/`Free` math.
+- `Rebalancer` (`rebalance.go`) — one round of `RunOnce(ctx, now)`: report our
+  load; sample a few peers (a pluggable `peers` func, e.g. over `Discovery.FindNodes`);
+  `QueryLoad` each and pick the emptiest (power-of-k choices); `placement.OffloadBytes`
+  decides the byte budget (0 within the threshold dead-band — the anti-thrash guard);
+  then move the coldest shards (`ledger.ColdShards`) **make-before-break** — `putGrant`
+  to the peer first (the peer records ownership + re-announces the CID), then
+  `release` (drop the local blob + `ledger.DropRecord`). A per-shard cooldown pins a
+  just-moved shard so it can't bounce back; a peer's `statusQuotaExceeded` stops
+  shedding to it. Moves are authorized by the stripe's stored repair grant, so no
+  User signing key is needed — the same trust path as repair.
+
 ## Metrics / status (`metrics.go`, `gcstats.go`)
 
 `MetricsServer` exposes a node's operational state over plain HTTP (meant to sit
 behind a TLS-terminating reverse proxy). `NewMetricsServer(h, ledger, disc, version,
-buildDate, started, log)`; `disc`, the GC stats (`SetGCStats`), and the proof-of-work
-policy (`SetPoW`) are optional. `Serve(ctx, addr)` runs it with graceful shutdown;
-`Handler()` exposes the mux for tests. Endpoints:
+buildDate, started, log)`; `disc`, the GC stats (`SetGCStats`), the proof-of-work
+policy (`SetPoW`), and the storage-load reporter (`SetLoadSource`, feeding the
+capacity/free/load fields) are optional. `Serve(ctx, addr)` runs it with graceful
+shutdown; `Handler()` exposes the mux for tests. Endpoints:
 
 - `GET /healthz` — liveness.
 - `GET /readyz` — readiness (DHT routing table non-empty when the DHT is on; always
   ready otherwise).
 - `GET /status` — JSON `Status` snapshot: general info (including `build_date`, the
   `bootstrap` strings, and the `PoWInfo` admission policy — enabled, puzzle name,
-  difficulty bits), `StorageInfo` (shards, bytes, quota, per-`OwnerInfo` breakdown
-  from the ledger), `NetworkInfo` (connected peers, routing-table size, per-`PeerInfo`
-  cartography), and `GCSnapshot`. `bootstrap` mirrors `listen_addrs` with the node's
-  `/p2p/<peer-id>` appended — each entry is ready to paste into `revika-ctl -bootstrap`.
+  difficulty bits), `StorageInfo` (shards, bytes, quota, the rebalancing signal
+  `capacity_bytes`/`free_bytes`/`load` when a load source is set, and a per-`OwnerInfo`
+  breakdown from the ledger), `NetworkInfo` (connected peers, routing-table size,
+  per-`PeerInfo` cartography), and `GCSnapshot`. `bootstrap` mirrors `listen_addrs` with
+  the node's `/p2p/<peer-id>` appended — each entry is ready to paste into `revika-ctl -bootstrap`.
 - `GET /metrics` — Prometheus text exposition of the same snapshot, including
   `revika_build_info{version,build_date}`, `revika_bootstrap_info{addr}`,
-  `revika_pow_enabled{puzzle}`, and `revika_pow_difficulty_bits`.
+  `revika_pow_enabled{puzzle}`, `revika_pow_difficulty_bits`, and the load gauges
+  `revika_capacity_bytes` / `revika_free_bytes` / `revika_load_ratio`.
 
 `GCStats` (`gcstats.go`) is a thread-safe counter shared between a node's GC loop
 (`Record`) and the MetricsServer (`Snapshot` → `GCSnapshot`), reporting cycles run,

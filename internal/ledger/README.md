@@ -72,6 +72,9 @@ Functions / methods:
 - `(*Ledger) PutStripe(id, k, m, siblings, grant)` — record/replace stripe context.
 - `(*Ledger) Stripes() ([]StripeRow, error)` — all stripe contexts (repair loop
   enumerates these).
+- `(*Ledger) ColdShards(limit) ([]StripeRow, error)` — up to `limit` stripe contexts
+  oldest-stored first, so the rebalancer (Architecture §3.4) offloads its coldest
+  shards; the grant on each row authorizes moving the shard to another node.
 - `(*Ledger) Reconcile(ctx, blobs) (ReconcileReport, error)` — align the ledger
   with blobs on disk at startup: drop records whose blob is gone (crediting owners),
   retain and report orphan blobs, and recompute account totals.

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	"revika/internal/cap"
 	"revika/internal/erasure"
@@ -94,6 +95,10 @@ func run() error {
 		gcExpired   = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
 		repairOn    = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
 		repairEvery = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
+		rebalanceOn = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
+		rebalEvery  = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
+		rebalThresh = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
+		capacity    = flag.Int64("capacity", 0, "usable storage budget in bytes for load balancing (0 = use the shard filesystem's total capacity)")
 		metricsAddr = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics over plain HTTP — put TLS on a reverse proxy")
 		blocklist   = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
 		connLow     = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
@@ -181,6 +186,36 @@ func run() error {
 	srv := net.NewServer(blobs, log)
 	srv.SetLedger(led)
 
+	// Storage-load reporter for rebalancing (§3.4): capacity is the usable budget
+	// this node advertises, the min of the operator budget (-capacity) and the
+	// filesystem's total capacity; used is the ledger's byte total. It backs both
+	// the /revika/balance protocol and the metrics surface. A disk probe that the
+	// platform does not support leaves capacity to the operator budget (or unknown,
+	// in which case the node neither attracts nor sheds shards).
+	loadSource := func() (net.LoadReport, error) {
+		ls, err := led.Stats()
+		if err != nil {
+			return net.LoadReport{}, err
+		}
+		var budget int64
+		if u, derr := store.DiskUsage(shardsDir); derr == nil && u.Total > 0 {
+			// Usable budget = what we already hold plus what the filesystem can still
+			// give us, so capacity tracks real headroom as the disk fills.
+			budget = ls.BytesUsed + int64(u.Avail)
+		}
+		if *capacity > 0 && (budget == 0 || *capacity < budget) {
+			budget = *capacity
+		}
+		if budget < ls.BytesUsed {
+			budget = ls.BytesUsed // never report negative free space
+		}
+		return net.LoadReport{UsedBytes: ls.BytesUsed, CapacityBytes: budget, Shards: ls.Shards}, nil
+	}
+	srv.SetLoadSource(loadSource)
+	if _, derr := store.DiskUsage(shardsDir); errors.Is(derr, store.ErrUnsupported) && *capacity == 0 {
+		log.Warn("rebalance: disk-capacity probe unsupported on this platform and no -capacity budget set; load balancing is disabled until a budget is configured")
+	}
+
 	// Proof-of-work identity admission: when enabled, an owner's Ed25519 key must
 	// be self-certifying (hash under the difficulty target) to store shards, so a
 	// banned owner cannot re-mint a fresh identity for free. Off by default.
@@ -223,6 +258,25 @@ func run() error {
 		if *repairOn {
 			go repairLoop(ctx, h, blobs, disc, led, log, *repairEvery)
 		}
+		// Rebalancing likewise needs the DHT: it discovers candidate targets and
+		// relies on provider records to keep a moved shard addressable.
+		if *rebalanceOn {
+			peersFn := func(ctx context.Context) ([]peer.ID, error) {
+				infos, err := disc.FindNodes(ctx, 0)
+				if err != nil {
+					return nil, err
+				}
+				ids := make([]peer.ID, len(infos))
+				for i, pi := range infos {
+					ids[i] = pi.ID
+				}
+				return ids, nil
+			}
+			rb := net.NewRebalancer(h, blobs, led, net.LoadSource(loadSource), peersFn, log)
+			rb.SetThreshold(*rebalThresh)
+			rb.SetCooldown(2 * *rebalEvery)
+			go rebalanceLoop(ctx, rb, log, *rebalEvery)
+		}
 	}
 
 	srv.Register(h)
@@ -239,6 +293,7 @@ func run() error {
 		ms := net.NewMetricsServer(h, led, disc, version, buildDate, startedAt, log)
 		ms.SetGCStats(gcStats)
 		ms.SetPoW(*powPuzzle, *powDiff)
+		ms.SetLoadSource(net.LoadSource(loadSource))
 		go func() {
 			if err := ms.Serve(ctx, *metricsAddr); err != nil {
 				log.Error("metrics: server stopped", "err", err)
@@ -431,6 +486,39 @@ func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Di
 			log.Info("repair: stripe restored", "total", st.Total)
 		} else {
 			log.Info("repair: stripe partially repaired", "still_missing", fixed.MissingShards())
+		}
+	}
+}
+
+// rebalanceLoop is the node-side load-balancing loop (Architecture §3.4). On each
+// cycle — after a small jitter to decorrelate concurrent movers — it samples a few
+// DHT-discovered peers, and if this node is fuller (by fraction of capacity) than
+// the emptiest by more than the threshold, it moves its coldest shards there
+// make-before-break. It runs until ctx is cancelled.
+//
+// Like repair it needs no coordinator: every node runs the same pairwise rule, and
+// the per-shard cooldown plus the make-before-break re-provide make concurrent or
+// repeated moves harmless. Moves are authorized by each stripe's stored repair
+// grant, so the node never needs a User's signing key.
+func rebalanceLoop(ctx context.Context, rb *net.Rebalancer, log *slog.Logger, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !sleepJitter(ctx, interval) {
+				return
+			}
+			moved, err := rb.RunOnce(ctx, time.Now())
+			if err != nil {
+				log.Warn("rebalance: cycle", "err", err)
+				continue
+			}
+			if moved > 0 {
+				log.Info("rebalance: cycle complete", "moved", moved)
+			}
 		}
 	}
 }

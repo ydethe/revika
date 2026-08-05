@@ -49,7 +49,8 @@ type MetricsServer struct {
 	version   string
 	buildDate string
 	started   time.Time
-	pow       PoWInfo // proof-of-work admission policy this node enforces on writes
+	pow       PoWInfo    // proof-of-work admission policy this node enforces on writes
+	loadSrc   LoadSource // optional: reports storage capacity/load for rebalancing (§3.4)
 	log       *slog.Logger
 }
 
@@ -66,6 +67,12 @@ func NewMetricsServer(h host.Host, led *ledger.Ledger, disc *Discovery, version,
 // SetGCStats attaches a garbage-collector stats collector so /status and
 // /metrics report GC activity. Optional; call before Serve.
 func (m *MetricsServer) SetGCStats(gc *GCStats) { m.gc = gc }
+
+// SetLoadSource attaches the node's storage-load reporter so /status and
+// /metrics expose the capacity, free bytes, and normalized load the rebalancer
+// balances on (Architecture §3.4). Optional; call before Serve. Left unset, the
+// capacity/free/load fields report 0 (capacity unknown).
+func (m *MetricsServer) SetLoadSource(src LoadSource) { m.loadSrc = src }
 
 // SetPoW records the proof-of-work admission policy the node enforces on writes
 // so it is reported on /status and /metrics. puzzle is the puzzle name (e.g.
@@ -144,11 +151,18 @@ type PoWInfo struct {
 
 // StorageInfo is the accounting side of /status: what this node holds and for whom.
 type StorageInfo struct {
-	Shards     int64       `json:"shards"`      // distinct shards stored
-	BytesUsed  int64       `json:"bytes_used"`  // physical bytes across all shards
-	QuotaBytes int64       `json:"quota_bytes"` // per-owner quota (0 = unlimited)
-	Clients    int         `json:"clients"`     // distinct owners storing shards
-	Owners     []OwnerInfo `json:"owners"`      // per-owner breakdown, largest first
+	Shards     int64 `json:"shards"`      // distinct shards stored
+	BytesUsed  int64 `json:"bytes_used"`  // physical bytes across all shards
+	QuotaBytes int64 `json:"quota_bytes"` // per-owner quota (0 = unlimited)
+	Clients    int   `json:"clients"`     // distinct owners storing shards
+	// Capacity/Free/Load are the rebalancing signal (§3.4), populated when a load
+	// source is configured: CapacityBytes is the usable storage budget
+	// (min of free disk / operator budget; 0 = unknown), FreeBytes the remainder,
+	// and Load the normalized fraction used in [0,1] the diffusion balancer equalizes.
+	CapacityBytes int64       `json:"capacity_bytes"`
+	FreeBytes     int64       `json:"free_bytes"`
+	Load          float64     `json:"load"`
+	Owners        []OwnerInfo `json:"owners"` // per-owner breakdown, largest first
 }
 
 // OwnerInfo is one client's accounting; Owner is the base64 (raw std) public key.
@@ -205,6 +219,18 @@ func (m *MetricsServer) snapshot() (Status, error) {
 			BytesUsed:  o.BytesUsed,
 			ShardCount: o.ShardCount,
 		})
+	}
+	// Rebalancing signal (§3.4): capacity/free/load from the configured load
+	// source. A load-source error is non-fatal — the node simply reports unknown
+	// capacity (0) rather than failing the whole snapshot.
+	if m.loadSrc != nil {
+		if rep, lerr := m.loadSrc(); lerr == nil {
+			st.Storage.CapacityBytes = rep.CapacityBytes
+			st.Storage.FreeBytes = rep.FreeBytes()
+			st.Storage.Load = rep.Frac()
+		} else {
+			m.log.Debug("metrics: load source", "err", lerr)
+		}
 	}
 
 	st.Network = m.networkInfo()
@@ -328,6 +354,9 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	metric("revika_shards_total", "Distinct shards stored on this node.", "gauge", float64(st.Storage.Shards))
 	metric("revika_bytes_used", "Physical bytes stored across all shards.", "gauge", float64(st.Storage.BytesUsed))
 	metric("revika_quota_bytes", "Configured per-owner storage quota in bytes (0 = unlimited).", "gauge", float64(st.Storage.QuotaBytes))
+	metric("revika_capacity_bytes", "Usable storage budget for load balancing in bytes (0 = unknown).", "gauge", float64(st.Storage.CapacityBytes))
+	metric("revika_free_bytes", "Remaining storage budget in bytes (capacity minus used; 0 when unknown/full).", "gauge", float64(st.Storage.FreeBytes))
+	metric("revika_load_ratio", "Normalized storage load used/capacity in [0,1] the rebalancer equalizes (0 when capacity unknown).", "gauge", st.Storage.Load)
 	metric("revika_clients_total", "Distinct owners (clients) storing shards here.", "gauge", float64(st.Storage.Clients))
 	metric("revika_connected_peers", "Currently connected libp2p peers.", "gauge", float64(st.Network.Connected))
 	metric("revika_routing_table_size", "Peers in the DHT routing table.", "gauge", float64(st.Network.RoutingTableSize))

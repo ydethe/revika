@@ -226,6 +226,83 @@ proves possession without shipping the shard), placing regenerated shards on *fr
 nodes rather than back into the same store, and the repair *cadence*/threshold policy
 (who runs it, how often, what margin triggers it).
 
+**Rebalancing — [implemented]** (`internal/placement.OffloadBytes` + `internal/store.DiskUsage`
++ `internal/net/{balance,rebalance}.go`, protocol `/revika/balance/1.0.0`, driven by
+`revika-node`'s `rebalanceLoop`). Placement decides where a *new* shard lands; rebalancing
+corrects the *standing* distribution as nodes join, leave, fill up, or differ in capacity. It
+is distinct from repair: repair restores lost redundancy and only ever *adds* a shard onto a
+fresh node (`RepairStore.Put`), so on its own it lets early and small nodes saturate while
+later/larger nodes stay empty. The target is that, asymptotically, every node carries the
+same **fraction of its own capacity** — not the same absolute shard count.
+
+- **Model — normalized load, not shard count.** Balancing by count is wrong under
+  heterogeneity: a Raspberry Pi and a cloud server should not hold the same number of shards.
+  Each node's load is `L_i = used_i / capacity_i ∈ [0,1]` (`placement.Load.Frac`), with
+  `capacity_i = min(free-disk, operator budget)`; the network converges `L`, not counts.
+  Because chunking is fixed-size (§3.3) a shard is ~constant-size, so "same fraction of
+  capacity" and "count proportional to capacity" coincide once normalized. The capacity signal
+  is now sensed end-to-end: a node samples free/total disk on its shard dir
+  (`store.DiskUsage` → `syscall.Statfs`, with a portable stub returning `ErrUnsupported`),
+  the node's `LoadSource` closure folds that with the ledger's `bytes_used` and the
+  operator `-capacity` budget into a `LoadReport`, and this is exposed on the `/status` +
+  `/metrics` surface (`StorageInfo.{CapacityBytes,FreeBytes,Load}` + the
+  `revika_capacity_bytes`/`revika_free_bytes`/`revika_load_ratio` gauges) and gossiped (below).
+  *Still deferred:* feeding this back into `placement.Node.{Free,Weight,Domain}` /
+  `WeightByFree` / `Spread` at *placement* time — the rebalancer computes moves directly from
+  normalized load and the ledger, and does not yet enforce the failure-**domain** `Spread`
+  invariant on a move.
+- **Mechanism — pairwise diffusion (dimension-exchange).** Rather than compute a global
+  average and chase an absolute target, each node runs a periodic, jittered round
+  (`Rebalancer.RunOnce`): sample a few storage peers (`Discovery.FindNodes`), query normalized
+  load over `/revika/balance` (`QueryLoad`), pick the emptiest sampled peer (*power-of-k
+  choices*), and push cold shards toward it. `placement.OffloadBytes` is the pure decision
+  function — how many bytes to shed to close half the load gap. Pairwise load diffusion
+  provably converges to uniform load on a connected graph with no coordinator or global view,
+  and maps cleanly onto libp2p gossip. It converges to *within* the threshold band below, which
+  is the point.
+- **Thrashing control — threshold + hysteresis + cooldown + jitter.** Node A offloads to B
+  only when `L_A − L_B > θ` (a dead-band, default `0.10` = 10 percentage points, the
+  `-rebalance-threshold` flag), and then moves only enough to close *half* the gap before
+  stopping. The dead-band makes the system settle "to within θ" instead of chasing the last
+  shard, killing the ping-pong by construction. Three guards back it: a per-shard **cooldown**
+  (a just-moved shard is pinned for `2×` the rebalance interval so it can't bounce A→B→A — an
+  in-memory map on the `Rebalancer` today, not yet ledger-persisted across restarts),
+  **jitter** on the rebalance tick (via the same `sleepJitter` `reprovideLoop`/`repairLoop`
+  use) to avoid synchronized herds, and the recipient's **quota** check (B rejects with
+  `statusQuotaExceeded` if the shard would push it over, which the mover treats as "peer full"
+  and stops shedding to it) so rebalancing never violates the per-owner storage cap (§3.2).
+  Which shards move: coldest-first — `ledger.ColdShards` returns the least-recently-stored
+  shards first — to minimize disruption. (Enforcing that a move never co-locates two shards of
+  one stripe in a failure **domain** — the `Spread` invariant — is deferred with the
+  `Node.Domain` wiring above.)
+- **Addressing — make-before-break re-provide.** Moving a shard must not lose it. revika is
+  spared the usual pain because **location is a DHT provider record, not a hash-into-a-ring**:
+  a shard is found because its holder *announces* the CID (`Discovery.Announce`/`FindProviders`,
+  §6), an explicit indirection, so relocating a shard is just *changing who announces it*. The
+  move is copy-then-drop with a grace window:
+  1. A streams the shard to B over the existing grant-authorized `PUT`
+     (`NetStore.putGrant`, the same call repair uses), replaying the stripe descriptor and the
+     repair grant recorded at store time — so A moves the shard without ever holding the User's
+     signing key.
+  2. B re-hashes it — shards are content-addressed and self-verifying (§3.2), so B never trusts
+     A — then records ownership/lease/stripe in **its** ledger (charged to the shard's original
+     owner, whose Ed25519 key travels in the repair grant) and calls `Discovery.Announce` for
+     the new provider record.
+  3. Only *after* B accepts does A release its copy: `Rebalancer.release` drops A's owner claim
+     (`ledger.DropRecord`, crediting the quota back) and deletes the local blob —
+     *make-before-break*. A's ~12 h reprovide / ~24 h record TTL means A's stale provider record
+     lingers harmlessly during DHT propagation, so the shard is announced by both for a window
+     (never neither).
+
+  Even a transient stale record is covered by erasure coding, since `DHTStore.Get` already maps
+  a provider miss to one lost shard, reconstructible from any `k`. This is the
+  repair-onto-fresh-node primitive plus the *source-side drop* that turns a *copy* into a
+  *move* — so rebalancing lands as an extension of repair, not a new subsystem.
+- **Trust.** Gossiped load is a *declared* value: a node can lie about `L` to attract or shed
+  shards. Content is safe regardless (shards stay self-verifying ciphertext), but a liar can
+  distort placement — so binding declared load to reputation/anti-Sybil is deferred with the
+  rest of the economic layer (§5, §10).
+
 ### 3.5 Capability & crypto layer — **[partial]** (`internal/crypto`, `internal/cap`)
 
 **Implemented:** symmetric authenticated encryption — `NewKey`, `Seal`, `Open`
@@ -560,6 +637,11 @@ Versioned stream protocols (semantic-versioned IDs so upgrades are negotiable):
 - `/revika/probe/1.0.0` — proof-of-possession challenge/response for the repair loop.
 - `/revika/root/1.0.0` — optional direct fetch/publish of a User's signed root pointer
   (complements DHT publication).
+- `/revika/balance/1.0.0` — **[implemented]:** load report — a node answers a `QueryLoad`
+  with its self-declared `LoadReport` (`used`/`capacity`/`shards`), letting a sampling peer
+  compare normalized load `L = used/capacity` before deciding to shed to it (diffusion
+  rebalancing, §3.4). Read-only and unauthenticated (a report reveals only aggregate counters,
+  never shard content); the move itself rides the grant-authorized `PUT` on `/revika/shard`.
 
 DHT usage:
 
@@ -598,7 +680,8 @@ internal/
              File Provider / Cloud Filter / GVfs; Manifest impl over the DAG,
              stable ItemIDs + DAG-diff change enum, RootStore seam (§3.8)
   placement/   # richer node selection & redundancy policy (v1 round-robin
-               # lives in internal/net for now)                            (planned)
+               # lives in internal/net for now); capacity-aware weights +
+               # diffusion rebalancing (§3.4)                              (planned)
   ledger/      # per-user index/accounting, root-pointer management        (planned)
   sync/        # daemon folder-watch + reconcile (daemon only)            (planned)
   mount/       # OS filesystem integration: FUSE mountpoint (hanwen/go-fuse),
@@ -701,6 +784,12 @@ Still open:
 - How User identity keys relate to libp2p peer identity keys.
 - Placement policy details: diversity signals available in a libp2p network, reputation
   inputs, and repair thresholds/cadence.
+- Rebalancing tuning and hardening (§3.4): default values for the load threshold `θ`, peer
+  sample size, round period, and per-shard cooldown are shipped but unvalidated at scale;
+  still open are persisting the cooldown across restarts (it is in-memory today), enforcing the
+  failure-domain `Spread` invariant on a move, wiring the sensed capacity back into
+  placement-time `WeightByFree`/`Spread`, and sourcing a *trustworthy* capacity figure given
+  that a `LoadReport` is self-declared (ties into anti-Sybil and reputation, deferred).
 - Lease durations and garbage-collection policy on nodes.
 - How multi-device access for a single User shares the signing key (or delegates via
   additional caps).
