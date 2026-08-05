@@ -59,10 +59,21 @@ versioning, and identity live here on the User side.
 Advancing the namespace means publishing a new signed `RootPointer`. Persisting /
 publishing that pointer is the single piece of the mount stack **not yet
 networked** (DHT `/revika/root` publication, §4/§6), so it is isolated behind the
-`RootStore` interface. `MemRootStore` (in-memory, with the anti-rollback `Seq`
-check a networked store will enforce) makes the API complete today; dropping in a
-DHT-backed store is the only change needed to make the namespace multi-device and
-network-visible.
+`RootStore` interface. Two implementations exist today:
+
+- **`MemRootStore`** — in-memory, for tests and a single-process mount.
+- **`FileRootStore`** (`file_rootstore.go`) — persists the signed pointer to a
+  local JSON file (default `.revika/root.json`), the durable anchor `revika-ctl`
+  reads and advances between invocations. It writes `0600` under a `0700` dir
+  (SC-28: the file names the root cap, which unlocks the whole namespace) and
+  enforces the same anti-rollback `Seq` and owner-match checks (SC-8) a networked
+  store will. Its `EncodeRootPointer`/`DecodeRootPointer` codec is reused to build
+  a **sealed shared root**: a `RootPointer` anchored at a shared subtree, wrapped
+  to a recipient with ML-KEM-768 so only they can open it (`revika-ctl share`).
+
+Both carry the anti-rollback `Seq` check a networked store will enforce, so the
+API is complete today; dropping in a DHT-backed store is the only change needed to
+make the namespace multi-device and network-visible.
 
 ## Item identity
 
@@ -95,6 +106,9 @@ directories they are derived from the blob cap (which commits to the subtree).
 
 - ✅ Full `Provider` surface over the manifest DAG + `MemRootStore`, round-trip
   tested (`provider_test.go`).
-- ⏳ DHT-backed `RootStore` (§4/§6).
+- ✅ `FileRootStore` — durable local `RootPointer`, backing `revika-ctl`'s
+  namespace commands and sealed shared roots (`file_rootstore_test.go`).
+- ⏳ DHT-backed `RootStore` (§4/§6) — publishing the pointer network-wide so a
+  shared root need not travel as a file.
 - ⏳ Per-OS binding layer (`internal/mount` FUSE PoC first, then the native
   shims — a cgo/Swift/C# decision for the maintainer, §3.8).

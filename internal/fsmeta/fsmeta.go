@@ -1,7 +1,7 @@
 // Package fsmeta bridges a real filesystem and revika's pipeline.Metadata: it
 // captures a path's attributes into a Metadata record and restores a Metadata
 // record back onto a path. It is the shared, OS-facing half of the metadata
-// layer (Architecture §3.6/§3.8) — used both by revika-ctl (put/get/put -r) and
+// layer (Architecture §3.6/§3.8) — used both by revika-ctl (cp store/retrieve) and
 // by the OS filesystem-integration surface (internal/provider) so the two never
 // diverge on how a mode, mtime, owner, symlink, or xattr round-trips.
 //

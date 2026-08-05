@@ -35,10 +35,10 @@
 #   docker compose run --build --rm deleter
 #
 # The `tree` service (profile `tree`) exercises directory support: it stores a
-# nested directory tree with `put -r` (a Merkle DAG of cap-addressed encrypted
-# blobs), asserts every node received shards, restores it with `get -r`, and
-# checks the whole tree — files and directories, empty ones included — came
-# back byte-identical. It is self-contained (needs only the nodes):
+# nested directory tree with `cp <dir> rvk:tree` (a Merkle DAG of cap-addressed
+# encrypted blobs), asserts every node received shards, restores it with
+# `cp rvk:tree <out>`, and checks the whole tree — files and directories, empty
+# ones included — came back byte-identical. It is self-contained (needs only the nodes):
 #
 #   docker compose run --build --rm tree
 #
@@ -192,9 +192,9 @@ services:
     restart: "no"
 
   # Directory round-trip client (profile: tree). Reuses the same image but runs
-  # tree.sh: it stores a nested directory tree with `put -r` (a Merkle DAG of
-  # cap-addressed encrypted blobs), asserts every node received shards, restores
-  # it with `get -r`, and checks the tree came back byte-identical — files and
+  # tree.sh: it stores a nested directory tree with `cp <dir> rvk:tree` (a Merkle
+  # DAG of cap-addressed encrypted blobs), asserts every node received shards,
+  # restores it with `cp rvk:tree <out>`, and checks the tree came back byte-identical — files and
   # directories (including empty ones) alike. Self-contained (needs only the
   # nodes); the node data volumes are mounted read-only so it can count shards.
   # Run it with:
@@ -286,7 +286,7 @@ services:
   #   ./deploy/resilience.sh
   # (it brings the nodes up, runs `store`, stops a node, then runs `retrieve`).
 
-  # Stores the file and leaves the source + manifest on the handoff volume.
+  # Stores the file and leaves the source + root pointer on the handoff volume.
   store:
     profiles: ["resilience"]
     build:
@@ -308,7 +308,7 @@ services:
       - handoff:/handoff
     restart: "no"
 
-  # Retrieves the file from the handoff manifest while a node is down. It depends
+  # Retrieves the file from the handoff root pointer while a node is down. It depends
   # ONLY on the seed (its bootstrap) — deliberately NOT on node2/node3, so that
   # `docker compose run retrieve` does not restart the node the orchestrator just
   # stopped.

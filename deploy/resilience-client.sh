@@ -9,15 +9,15 @@
 #
 # It is deliberately split into two one-shot invocations, `store` and `get`, so
 # the orchestrator can stop a node *in between*:
-#   * store — writes a random file and its manifest to the shared /handoff volume,
-#   * get   — reads that manifest back (with a node down) and asserts the file is
+#   * store — writes a random file and its root pointer to the shared /handoff volume,
+#   * get   — reads that root back (with a node down) and asserts the file is
 #             recovered byte-identically.
 set -euo pipefail
 
 : "${SEED_ADDR:?SEED_ADDR must point at the seed node /p2p multiaddr}"
 
 SRC=/handoff/resilience-src.bin
-MANIFEST=/handoff/resilience.rvk.json
+ROOTFILE=/handoff/resilience-root.json
 
 # DHT discovery + provider records are eventually consistent, so allow a few
 # attempts before giving up.
@@ -36,19 +36,19 @@ case "${1:-}" in
   store)
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
-    # PUT is an authenticated write: sign it with a freshly generated owner key.
+    # Storing is an authenticated write: sign it with a freshly generated owner key.
     revika-ctl keygen -key /tmp/resilience-user -pow-difficulty 0 >/dev/null
-    retry "put" revika-ctl put -bootstrap "$SEED_ADDR" -signkey /tmp/resilience-user.sign.key -manifest "$MANIFEST" "$SRC" \
-      || { echo "FAIL: put never succeeded"; exit 1; }
-    [ -s "$MANIFEST" ] || { echo "FAIL: no manifest written"; exit 1; }
-    echo "OK: stored; source + manifest saved under /handoff"
+    retry "store" revika-ctl cp -bootstrap "$SEED_ADDR" -signkey /tmp/resilience-user.sign.key -root "$ROOTFILE" "$SRC" rvk:resilience.bin \
+      || { echo "FAIL: store never succeeded"; exit 1; }
+    [ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }
+    echo "OK: stored; source + root pointer saved under /handoff"
     ;;
 
   get)
     echo ">> [get] retrieving with a node DOWN (any k=4 of 6 shards suffice)"
-    [ -s "$MANIFEST" ] || { echo "FAIL: /handoff manifest missing (did 'store' run?)"; exit 1; }
+    [ -s "$ROOTFILE" ] || { echo "FAIL: /handoff root pointer missing (did 'store' run?)"; exit 1; }
     OUT=/tmp/resilience-out.bin
-    retry "get" revika-ctl get -bootstrap "$SEED_ADDR" -manifest "$MANIFEST" -o "$OUT" \
+    retry "get" revika-ctl cp -bootstrap "$SEED_ADDR" -root "$ROOTFILE" rvk:resilience.bin "$OUT" \
       || { echo "FAIL: get never succeeded (could not gather k shards from the survivors)"; exit 1; }
     if cmp -s "$SRC" "$OUT"; then
       echo

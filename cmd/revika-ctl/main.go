@@ -1,19 +1,25 @@
-// Command revika-ctl is the User-side client: it stores files on a revika Node,
-// retrieves them, and shares them end-to-end encrypted with other users. All
-// the intelligence lives here on the client — chunking, encryption, erasure
-// coding, and capability wrapping — so the node it talks to only ever sees
-// opaque, content-addressed shards.
+// Command revika-ctl is the User-side client: it stores files in a revika
+// namespace, retrieves them, and shares subtrees end-to-end encrypted with other
+// users. All the intelligence lives here on the client — chunking, encryption,
+// erasure coding, and capability wrapping — so the node it talks to only ever
+// sees opaque, content-addressed shards.
+//
+// The namespace is one mutable root directory per User, addressed by rvk: paths
+// into whichever root file is in effect (-root, default .revika/root.json). Your
+// own root is mutable; a root someone shared with you is read-only.
 //
 // Usage:
 //
 //	revika-ctl keygen [-key <prefix>]
-//	revika-ctl put     -node <multiaddr> [-manifest <path>] [-r] <file>
-//	revika-ctl get     -node <multiaddr> (-manifest <path> | -cap <path> -key <privkey>) [-o <out>]
-//	revika-ctl sync    -node <multiaddr> (-manifest <path> | -cap <path> -key <privkey>) -o <dir>
-//	revika-ctl hydrate -node <multiaddr> [-C <syncdir>] <path>...
-//	revika-ctl share   -manifest <path> -to <recipient-pubkey|@file> [-path <subpath>] [-o <path>]
+//	revika-ctl cp    (-node <ma> | -bootstrap <ma>… | -mdns) <local> rvk:<path>       # store
+//	revika-ctl cp    (-node <ma> | -bootstrap <ma>… | -mdns) rvk:<path> <local>       # retrieve
+//	revika-ctl ls    (-node <ma> | -bootstrap <ma>… | -mdns) [-l] [-R] [rvk:<path>]   # browse
+//	revika-ctl rm    (-node <ma> | -bootstrap <ma>… | -mdns) rvk:<path>               # delete
+//	revika-ctl share (-node <ma> | -bootstrap <ma>… | -mdns) rvk:<path> -to <pubkey|@file> [-o <file>]
+//	revika-ctl node  (-bootstrap <ma>… | -mdns)                                       # list nodes
 //
-// A <multiaddr> is a node's full dial address including its peer ID, e.g.
+// A shared root file is opened with -root <file> -key <privkey>. A <multiaddr> is
+// a node's full dial address including its peer ID, e.g.
 // /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW…, as printed by revika-node on startup.
 package main
 
@@ -40,7 +46,7 @@ import (
 
 // ctlLog is the client's logger. It reports discovery activity (each new storage
 // node found via the DHT or mDNS) to stderr so the User can see the network
-// forming under put/get/nodes.
+// forming under cp/ls/node.
 var ctlLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 func main() {
@@ -53,20 +59,16 @@ func main() {
 	switch cmd {
 	case "keygen":
 		err = cmdKeygen(args)
-	case "put":
-		err = cmdPut(args)
-	case "get":
-		err = cmdGet(args)
-	case "sync":
-		err = cmdSync(args)
-	case "hydrate":
-		err = cmdHydrate(args)
-	case "delete", "rm":
-		err = cmdDelete(args)
+	case "cp":
+		err = cmdCp(args)
+	case "ls":
+		err = cmdLs(args)
+	case "rm":
+		err = cmdRm(args)
 	case "share":
 		err = cmdShare(args)
-	case "nodes":
-		err = cmdNodes(args)
+	case "node":
+		err = cmdNode(args)
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -84,6 +86,14 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `revika-ctl — revika User client
 
+Your files live in a namespace: one mutable root directory addressed by rvk: paths
+(e.g. rvk:docs/report.pdf). The tree in effect is the -root file (default
+$REVIKA_ROOT, else .revika/root.json). Your own root is mutable; a root someone
+shared with you (opened with -root <file> -key <privkey>) is read-only.
+
+Every rvk: command takes a backend: -node <ma> for one node, or -bootstrap <ma>…
+/ -mdns to reach nodes over the DHT.
+
 Commands:
   keygen [-key <prefix>] [-pow-puzzle argon2id|sha256] [-pow-difficulty <bits>]
         Generate the User identity: an ML-KEM-768 (FIPS 203) keypair for receiving shared files
@@ -96,57 +106,38 @@ Commands:
         verify — a banned owner cannot re-mint an identity for free. Default
         argon2id (memory-hard) at 12 bits; -pow-difficulty 0 disables it.
 
-  put (-node <ma> | -bootstrap <ma>... | -mdns) [-manifest <path>] [-signkey <path>] [-r] <file>
-        Chunk, encrypt, erasure-code and store <file>. With -node, store on that
-        single node; with -bootstrap/-mdns, join the DHT and spread the shards
-        across discovered storage nodes. Writes the file's manifest (its
-        read-capability) to <path> (default <file>.rvk.json). Signs the store
-        with your signing key so you (and only you) can later delete it.
-        With -r, <file> is a directory: it is stored as a Merkle DAG of
-        cap-addressed encrypted blobs (each file a manifest blob, each folder a
-        directory blob), and -manifest receives the tree's root cap.
+  cp (backend) [-root <file>] [-key <privkey>] [-signkey <path>] <src> <dst>
+        Copy between the local filesystem and the namespace; exactly one of <src>/<dst>
+        carries the rvk: prefix.
+          cp report.pdf rvk:docs/      store report.pdf as docs/report.pdf
+          cp report.pdf rvk:docs/r.pdf store under a chosen name
+          cp rvk:docs/report.pdf .     retrieve into the current directory
+          cp rvk:docs ./out            retrieve a whole subtree into ./out
+        Storing chunks, encrypts, erasure-codes and grafts the file (or directory
+        subtree) into your -root, then advances the root's sequence — signed with your
+        signing key. Retrieving resolves the rvk: path and reconstructs it. A trailing
+        slash (or an existing rvk: directory) means "into that directory".
 
-  get (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) [-o <out>] [-r]
-        Reconstruct a file or a directory tree. With -node, fetch from that node;
-        with -bootstrap/-mdns, discover each shard's providers via the DHT. Read
-        your own data with -manifest, or shared data by unwrapping a -cap with
-        your -key. Whether the capability is a single file or a directory is
-        auto-detected from the capability itself (its Kind), so it also restores a
-        single file or subtree carved out of a tree with 'share -path'. A single
-        file writes to its original name (recorded in the manifest) unless -o is
-        given, falling back to stdout when it carries none; a directory is
-        restored into the -o directory (required). -r is an optional hint.
+  ls (backend) [-root <file>] [-key <privkey>] [-l] [-R] [rvk:<path>]
+        List a directory in the namespace. Reads directory blobs only — no file
+        content is fetched. Plain output is one name per line (directories end in /);
+        -l adds kind, size and mtime; -R recurses. 'ls' or 'ls rvk:' lists the root.
 
-  sync (-node <ma> | -bootstrap <ma>... | -mdns) (-manifest <path> | -cap <path> -key <privkey>) -o <dir>
-        Materialize the directory tree's namespace into -o WITHOUT downloading
-        file content: it fetches only the directory blobs and recreates the
-        folders, symlinks, and empty file placeholders, then writes a
-        .revika-sync.json index mapping each placeholder to its file cap. Cheap
-        to browse a whole tree; pull bytes later with 'hydrate'.
+  rm (backend) [-root <file>] [-signkey <path>] rvk:<path>
+        Remove <path> from your -root (a file or a whole subtree) and drop your
+        ownership claim on its shards. A node frees a shard's bytes only once its last
+        owner leaves, so this never affects another User's shared copy. Owned root only.
 
-  hydrate (-node <ma> | -bootstrap <ma>... | -mdns) [-C <syncdir>] <path>...
-        Fill previously-synced placeholders with real content. Each <path> is a
-        placeholder file or a directory (its whole subtree) inside a synced tree;
-        the sync root is found by ascending to the nearest .revika-sync.json, or
-        set it with -C. With -C and no <path>, the whole tree is hydrated. Only
-        the wanted files' shards are fetched.
+  share (backend) [-root <file>] [-key <privkey>] [-signkey <path>] rvk:<path>
+        -to <recipient-pubkey|@file> [-o <file>]
+        Wrap a read-capability to the subtree at rvk:<path> for a recipient: it builds
+        a RootPointer anchored there, signed by you, and SEALS it to the recipient's
+        public key (only they can open it). Writes a shared root file (default
+        <name>.root.json). The recipient reads it with:
+          revika-ctl ls -root <file> -key <their-privkey>
+          revika-ctl cp -root <file> -key <their-privkey> rvk:… <dst>
 
-  delete (-node <ma> | -bootstrap <ma>... | -mdns) -manifest <path> [-signkey <path>]
-        Drop your ownership claim on every shard of the file. A node frees a
-        shard's bytes only once its last owner deletes, so this never affects
-        another User's copy of shared data. (Alias: rm)
-
-  share -manifest <path> -to <recipient-pubkey|@file> [-path <subpath>] [-o <path>]
-        [-node <ma> | -bootstrap <ma>... | -mdns]
-        Wrap a read-capability to a recipient's public key so only they can open
-        it. The -manifest may be a single file's manifest (from 'put') or a
-        directory root cap (from 'put -r'); wrapping either is local, no node
-        contact. With -path, share only the file or subdirectory at that
-        slash-separated path within a tree — this resolves the tree, so it needs a
-        -node/-bootstrap/-mdns backend. Sharing a directory cap grants read access
-        to that whole subtree and nothing outside it. Writes <path>.cap by default.
-
-  nodes (-bootstrap <ma>... | -mdns)
+  node (-bootstrap <ma>... | -mdns)
         List the storage nodes the client can discover on the DHT — the nodes it
         is aware of and could place shards on. Reports each node's peer ID,
         reachability, and advertised addresses. No file contact.
@@ -155,6 +146,9 @@ A <multiaddr> includes the node's peer ID, e.g.
   /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW...
 as printed by revika-node on startup. A -bootstrap peer is any running node; the
 client joins the revika DHT through it and needs no central server.
+
+Note: a root file is currently local only. Sharing across machines (DHT root
+publish) is planned; until then a shared root travels as the sealed file above.
 `)
 }
 
@@ -249,7 +243,7 @@ func joinDHT(ctx context.Context, bootstrap []string, mdns bool) (host.Host, *ne
 }
 
 // dialDHT returns a read store that retrieves shards by discovering their
-// providers on the DHT — no explicit node needed. Used by `get`.
+// providers on the DHT — no explicit node needed. Used by `cp` (retrieve)/`ls`.
 func dialDHT(ctx context.Context, bootstrap []string, mdns bool) (store.Store, func(), error) {
 	h, disc, closer, err := joinDHT(ctx, bootstrap, mdns)
 	if err != nil {
@@ -260,7 +254,7 @@ func dialDHT(ctx context.Context, bootstrap []string, mdns bool) (store.Store, f
 
 // dialPlacement joins the DHT, discovers storage nodes, and returns a
 // PlacementStore that spreads shards across them, signing writes with signer.
-// Used by `put` and `delete`.
+// Used by `cp` (store) and `rm`.
 func dialPlacement(ctx context.Context, bootstrap []string, mdns bool, signer cap.SignKey) (*net.PlacementStore, func(), error) {
 	h, disc, closer, err := joinDHT(ctx, bootstrap, mdns)
 	if err != nil {

@@ -118,33 +118,26 @@ mutable anchor, and a node cannot serve a rolled-back root (lower `Seq`).
 
 ## Driving it from the CLI
 
-`revika-ctl put -r <dir>` walks a filesystem directory and builds the tree with
-this package — each file becomes a `KindFile` manifest blob, each folder a
-`KindDir` blob, grafted together copy-on-write — then writes the root directory
-cap to `-manifest` (the tree's read-capability). `get -r -o <dir>` resolves that
-root cap and materializes the whole tree, restoring files, symlinks,
+`revika-ctl cp <dir> rvk:<path>` walks a filesystem directory and builds the tree
+with this package — each file becomes a `KindFile` manifest blob, each folder a
+`KindDir` blob, grafted together copy-on-write — then `Graft`s it into the User's
+namespace under `<path>` and `SignRoot`s an advanced `RootPointer`, persisted to
+the `-root` file (default `.revika/root.json`). `cp rvk:<path> <dir>` resolves the
+path and materializes the file or whole subtree, restoring files, symlinks,
 sub-directories, empty directories, and per-entry metadata
 (`cmd/revika-ctl/tree.go`). Because it runs entirely through
 `pipeline.StoreBlob`/`LoadBlob` → `store.Put`/`Get`, it works unchanged over a
-single node or a DHT-spread network.
+single node or a DHT-spread network. `ls rvk:<path>` browses via `LoadDir`,
+fetching **only directory blobs** (no file content) — the `readdir`/`stat` half of
+the on-demand model (Architecture §3.8).
 
-Sharing composes directly on `Resolve` + `WrapCap`: `revika-ctl share -manifest
-<root-cap> -path <subpath> -to <pubkey>` resolves the subpath to a child
-`ReadCap` and wraps *that* (not the root) to the recipient — so you hand over a
-single file or one subdirectory of a stored tree, granting exactly that subtree
-and nothing outside it. `get -cap <file> -key <priv>` unwraps it and, reading the
-cap's `Kind`, restores either the single file or (with `-o <dir>`) the subtree;
-sharing a whole file manifest or the whole root cap works the same way without
-`-path`. Covered in-process by `cmd/revika-ctl/tree_test.go`
-(`TestShareGetSubpath`) and over a live multi-node network by `deploy/tree.sh`
-(docker-compose profile `tree`).
-
-Lazy materialization uses the same primitives (`cmd/revika-ctl/sync.go`,
-Architecture §3.8): `revika-ctl sync` walks the DAG via `LoadDir` fetching **only
-directory blobs**, recreating the namespace as folders + symlinks + empty file
-placeholders and writing a `.revika-sync.json` index of each placeholder's
-`ReadCap`; `revika-ctl hydrate <path>` then `LoadFileManifest`s just the wanted
-files and fetches their shards. `sync` is the `readdir`-time placeholder build
-and `hydrate` the `open`/`read` fetch of §3.8, driven explicitly from the CLI.
-Because the index stores `ReadCap`s (decryption keys), `sync`/`hydrate` write it
-`0600`. Covered in-process by `cmd/revika-ctl/sync_test.go`.
+Sharing composes directly on `Resolve` + a signed, sealed `RootPointer`:
+`revika-ctl share rvk:<subpath> -to <pubkey>` resolves the subpath to a child
+`ReadCap`, wraps it in a `RootPointer` anchored there, signs it, and seals it to
+the recipient's ML-KEM-768 key — so you hand over a single file or one
+subdirectory of a stored tree, granting exactly that subtree and nothing outside
+it. The recipient uses the sealed file as their `-root` (opened with `-key`) and,
+reading the cap's `Kind`, `ls`/`cp` restore either the single file or the subtree.
+Covered in-process by `cmd/revika-ctl/namespace_e2e_test.go` (`TestNamespaceE2E`)
+and over a live multi-node network by `deploy/tree.sh` (docker-compose profile
+`tree`).

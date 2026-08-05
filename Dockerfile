@@ -119,10 +119,10 @@ ENTRYPOINT ["/usr/local/bin/verify.sh"]
 # the `client` stage above is the test harness and is not published. Run e.g.:
 #
 #   docker run --rm -v "$PWD:/work" -w /work ghcr.io/ydethe/revika-ctl \
-#     put -bootstrap <multiaddr> -manifest f.json file.bin
+#     cp -bootstrap <multiaddr> -root root.json file.bin rvk:file.bin
 FROM gcr.io/distroless/static-debian12:nonroot AS ctl
 LABEL org.opencontainers.image.title="revika-ctl" \
-      org.opencontainers.image.description="revika User client (keygen/put/get/delete/share)"
+      org.opencontainers.image.description="revika User client (keygen/cp/ls/rm/share/node)"
 
 COPY --from=build /out/revika-ctl /usr/local/bin/revika-ctl
 USER nonroot:nonroot

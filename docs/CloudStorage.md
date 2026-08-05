@@ -2,7 +2,7 @@
 
 Specification, API reference, and implementation guidelines for **`revika-daemon`** and its
 OS filesystem-integration surface. This is the document to build against when the daemon is
-implemented; it makes concrete what [Architecture.md](Architecture.md) §1/§3.7/§3.8 describes.
+implemented; it makes concrete what [Architecture.md](../Architecture.md) §1/§3.7/§3.8 describes.
 
 - **Status of the code today:** the framework-neutral API (`internal/provider`) and the
   metadata bridge (`internal/fsmeta`) are **implemented and tested**. The daemon binary
@@ -298,9 +298,9 @@ type RootStore interface {
 
 > **Implementation guideline.** The daemon should treat `RootStore` as its persistence boundary.
 > A local-first daemon can start with a **disk-backed** `RootStore` (the signed pointer written
-> `0600` to `.revika/`, mirroring the `.revika-sync.json` secrecy rule) and layer DHT publish on
-> top later — a `RootStore` that writes locally *and* publishes, reconciling by highest valid
-> `Seq` on `Load`.
+> `0600` to `.revika/root.json`, as `provider.FileRootStore` already does since the pointer names
+> the root cap that unlocks the whole namespace) and layer DHT publish on top later — a
+> `RootStore` that writes locally *and* publishes, reconciling by highest valid `Seq` on `Load`.
 
 ---
 
@@ -409,9 +409,10 @@ local watcher (`fsnotify`):
   refetch the current anchor, re-diff, and if a true divergence exists, write the local version
   as a conflict copy (`name (conflicted copy <seq>).ext`).
 
-The CLI already ships a stepping-stone of this two-phase model over a plain folder
-(`revika-ctl sync`/`hydrate`, Architecture §3.8): `sync` = placeholder materialization
-(`readdir`), `hydrate` = the `open`/`read` fetch, driven explicitly instead of by a page fault.
+The CLI already ships a stepping-stone of this two-phase model over the namespace
+(`revika-ctl ls`/`cp`, Architecture §3.8): `ls rvk:<path>` fetches **only directory blobs**
+(the `readdir`/`stat` half), and `cp rvk:<path> <local>` then pulls content for just the
+chosen file or subtree (the `open`/`read` fetch), driven explicitly instead of by a page fault.
 
 ### 6.3 Concurrency & consistency
 

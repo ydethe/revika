@@ -72,8 +72,19 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -mdns -dht -bootstrap -ad
                           #   -quota -lease-ttl -gc-interval -gc-expired-leases -repair
                           #   -repair-interval -metrics -blocklist -conn-low -conn-high
                           #   -conn-grace -pow-difficulty -pow-puzzle -v)
-go run ./cmd/revika-ctl   # User client: keygen | put | get | delete | share (see -h)
+go run ./cmd/revika-ctl   # User client: keygen | cp | ls | rm | share | node (see -h)
 ```
+
+The client is **namespace-centric**: a User's files live under one mutable root
+directory addressed by `rvk:` paths (e.g. `rvk:docs/report.pdf`), anchored by a
+signed `manifest.RootPointer` persisted via `provider.FileRootStore` (default
+`.revika/root.json`, overridable with `-root`/`$REVIKA_ROOT`). `cp` writes/reads
+scp-style (`cp file rvk:docs/` stores, `cp rvk:docs/file .` retrieves); `ls`
+browses (dir blobs only, `-l`/`-R`); `rm` grafts-out a subtree and releases its
+shards; `share rvk:PATH -to <key>` seals a `RootPointer` anchored at that subtree
+to the recipient's ML-KEM key (a *sealed shared root* file the recipient uses as
+`-root … -key <priv>` — never a bearer token); `node` lists DHT-discovered nodes.
+Own root = mutable; a shared root = read-only.
 
 `keygen` writes two keypairs: `<prefix>.key/.pub` (ML-KEM-768, receiving shares) and
 `<prefix>.sign.key/.sign.pub` (Ed25519, the storage owner identity). The signing key is
@@ -81,8 +92,8 @@ go run ./cmd/revika-ctl   # User client: keygen | put | get | delete | share (se
 argon2id@12) until its pubkey hashes under the target, so re-minting a banned identity costs
 CPU, not milliseconds (`internal/cap/pow.go`). Nodes admit writes only from owners meeting
 their own `-pow-difficulty` (default 0 = off), so client and node must use a matching puzzle
-and the client's difficulty must be ≥ the node's. `put`/`delete` sign with `-signkey`
-(default `.revika/keys/user.sign.key`).
+and the client's difficulty must be ≥ the node's. `cp` (store)/`rm`/`share` sign with
+`-signkey` (default `.revika/keys/user.sign.key`).
 
 Runtime state lives under `.revika/` (git-ignored): node shares, SQLite ledger, keys, mock store.
 

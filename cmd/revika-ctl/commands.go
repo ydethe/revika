@@ -2,19 +2,20 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"revika/internal/cap"
-	"revika/internal/fsmeta"
 	"revika/internal/manifest"
 	"revika/internal/pipeline"
+	"revika/internal/provider"
 	"revika/internal/store"
 )
 
@@ -164,7 +165,7 @@ func mintFailingSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, ca
 	return cap.SignKey{}, cap.SignPubKey{}, fmt.Errorf("could not find a key failing difficulty %d after 1e6 attempts", d)
 }
 
-// defaultSignKeyPath is where put/delete look for the User's signing key.
+// defaultSignKeyPath is where cp/rm/share look for the User's signing key.
 const defaultSignKeyPath = ".revika/keys/user.sign.key"
 
 // loadSignKey reads the User's Ed25519 signing key from path.
@@ -183,84 +184,140 @@ func loadSignKey(path string) (cap.SignKey, error) {
 	return k, nil
 }
 
-// cmdPut stores a file and writes its manifest. It targets either a single node
-// (-node) or, via the DHT, a set of discovered nodes across which the shards are
-// spread (-bootstrap / -mdns).
-func cmdPut(args []string) error {
-	fs := flag.NewFlagSet("put", flag.ExitOnError)
-	node := fs.String("node", "", "store on this single node multiaddr (with /p2p/<peerid>)")
-	manifestPath := fs.String("manifest", "", "where to write the file manifest / directory root cap (default <file>.rvk.json)")
-	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the store")
-	grantTTL := fs.Duration("grant-ttl", 0, "expiry of the repair grants attached to shards (0 = never expire)")
-	recursive := fs.Bool("r", false, "store <file> as a directory tree (Merkle DAG of cap-addressed blobs); writes the root cap to -manifest")
-	var bootstrap multiFlag
-	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); spreads shards across discovered nodes")
-	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("put takes exactly one <file> argument")
-	}
-	file := fs.Arg(0)
-	outManifest := *manifestPath
-	if outManifest == "" {
-		outManifest = file + ".rvk.json"
-	}
+// --- namespace addressing -------------------------------------------------
 
-	signer, err := loadSignKey(*signKeyPath)
-	if err != nil {
-		return err
-	}
+// rvkScheme prefixes an address that names the namespace rather than the local
+// filesystem, e.g. rvk:docs/report.pdf.
+const rvkScheme = "rvk:"
 
-	cfg := pipeline.DefaultConfig()
-	var grantExpiry int64
-	if *grantTTL > 0 {
-		grantExpiry = time.Now().Add(*grantTTL).Unix()
-	}
-	ctx := context.Background()
-	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, cfg, signer, grantExpiry)
-	if err != nil {
-		return err
-	}
-	defer closer()
+// defaultRootPath is where a User's namespace anchor lives when neither -root nor
+// $REVIKA_ROOT is set.
+const defaultRootPath = ".revika/root.json"
 
-	if *recursive {
-		return putTree(ctx, s, cfg, file, outManifest)
-	}
+// isRvk reports whether s addresses the namespace (carries the rvk: scheme).
+func isRvk(s string) bool { return strings.HasPrefix(s, rvkScheme) }
 
-	start := time.Now()
-	m, err := runStore(ctx, s, cfg, file)
-	if err != nil {
-		return fmt.Errorf("store %s: %w", file, err)
-	}
-	elapsed := time.Since(start)
-	data, err := encodeManifest(m)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(outManifest, data, 0o600); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
-	}
+// rvkPath strips the rvk: scheme, returning the slash-separated namespace path
+// (empty for the root itself).
+func rvkPath(s string) string { return strings.TrimPrefix(s, rvkScheme) }
 
-	shardCount := 0
-	for _, ch := range m.Chunks {
-		shardCount += len(ch.Shards)
+// rootPath resolves the namespace anchor file to use: the -root flag if set, else
+// $REVIKA_ROOT, else the default .revika/root.json.
+func rootPath(flagVal string) string {
+	if flagVal != "" {
+		return flagVal
 	}
-	fmt.Printf("Stored %s: %d bytes, %d chunks, %d shards\n", file, m.Size, len(m.Chunks), shardCount)
-	throughputMBps := (float64(m.Size) / (1024 * 1024)) / elapsed.Seconds()
-	fmt.Printf("Transferred to revika in %s (~%.2f MB/s)\n", elapsed.Round(time.Millisecond), throughputMBps)
-	fmt.Printf("Manifest: %s\n", outManifest)
-	fmt.Fprintln(os.Stderr, "warning: the manifest contains the file's decryption keys — keep it secret, or `share` it wrapped to a recipient.")
-	return nil
+	if env := os.Getenv("REVIKA_ROOT"); env != "" {
+		return env
+	}
+	return defaultRootPath
 }
 
-// putBackend selects the store `put` writes through. With -node it targets that
-// single node (unchanged behaviour). Otherwise it joins the DHT and returns a
-// PlacementStore spreading shards across discovered nodes, warning if fewer than
-// k+m nodes are available (shards will then colocate, weakening the erasure
-// guarantee).
-func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool, cfg pipeline.Config, signer cap.SignKey, grantExpiry int64) (store.Store, func(), error) {
+// loadRoot reads the namespace anchor at file. It returns the current signed
+// RootPointer, whether the file existed (a fresh namespace when false), and
+// whether it was a *sealed* shared root (read-only, opened with -key). A
+// plaintext (owned) root is RootPointer JSON; a shared root is that JSON sealed
+// to the recipient with ML-KEM-768 (opaque bytes), so a JSON-parse failure
+// routes to the sealed path. In both cases the signature is verified.
+func loadRoot(file, keyPath string) (rp manifest.RootPointer, exists, sealed bool, err error) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return manifest.RootPointer{}, false, false, nil
+		}
+		return manifest.RootPointer{}, false, false, err
+	}
+	if rp, derr := provider.DecodeRootPointer(data); derr == nil {
+		if !rp.Verify() {
+			return manifest.RootPointer{}, false, false, fmt.Errorf("root %s failed signature verification", file)
+		}
+		return rp, true, false, nil
+	}
+	// Not plaintext JSON: treat as a sealed shared root, opened with -key.
+	if keyPath == "" {
+		return manifest.RootPointer{}, false, false, fmt.Errorf("root %s looks like a sealed shared root; pass -key <privkey> to open it", file)
+	}
+	priv, err := readPrivateKey(keyPath)
+	if err != nil {
+		return manifest.RootPointer{}, false, false, err
+	}
+	pub, err := priv.Public()
+	if err != nil {
+		return manifest.RootPointer{}, false, false, err
+	}
+	raw, err := cap.Unwrap(priv, pub, data)
+	if err != nil {
+		return manifest.RootPointer{}, false, false, fmt.Errorf("open sealed root %s (wrong key?): %w", file, err)
+	}
+	rp, err = provider.DecodeRootPointer(raw)
+	if err != nil {
+		return manifest.RootPointer{}, false, false, err
+	}
+	if !rp.Verify() {
+		return manifest.RootPointer{}, false, false, fmt.Errorf("sealed root %s failed signature verification", file)
+	}
+	return rp, true, true, nil
+}
+
+// currentRoot returns the root-directory cap to operate on, creating (and
+// storing) an empty root when the namespace is fresh.
+func currentRoot(ctx context.Context, s store.Store, cfg pipeline.Config, prev manifest.RootPointer, exists bool) (manifest.ReadCap, error) {
+	if exists {
+		return prev.Root, nil
+	}
+	return manifest.StoreDir(ctx, s, cfg, manifest.NewDir(pipeline.Metadata{}))
+}
+
+// commitRoot signs a RootPointer advancing the namespace to newRoot and saves it
+// to the owned root file. Seq starts at 1 for a fresh namespace, else advances
+// the previous one. It refuses to modify a sealed (shared) or foreign-owned root.
+func commitRoot(ctx context.Context, file string, signer cap.SignKey, newRoot manifest.ReadCap, prev manifest.RootPointer, exists, sealed bool) error {
+	if sealed {
+		return fmt.Errorf("root %s is a shared, read-only root (sealed to you); it cannot be modified", file)
+	}
+	if exists && prev.Owner != signer.Public() {
+		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", file)
+	}
+	seq := uint64(1)
+	if exists {
+		seq = prev.Seq + 1
+	}
+	rp, err := manifest.SignRoot(signer, newRoot, seq, time.Now().UnixNano())
+	if err != nil {
+		return err
+	}
+	return provider.NewFileRootStore(file).Save(ctx, rp)
+}
+
+// --- backends -------------------------------------------------------------
+
+// addBackendFlags registers the shared node/DHT selection flags on fs.
+func addBackendFlags(fs *flag.FlagSet) (node *string, bootstrap *multiFlag, mdns *bool) {
+	node = fs.String("node", "", "use this single node multiaddr (with /p2p/<peerid>)")
+	bootstrap = &multiFlag{}
+	fs.Var(bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); use the DHT instead of one node")
+	mdns = fs.Bool("mdns", false, "discover nodes via mDNS on the LAN")
+	return
+}
+
+// readBackend selects a read store: a single node (-node) or a DHT-backed store
+// that discovers each shard's providers (-bootstrap / -mdns).
+func readBackend(ctx context.Context, node string, bootstrap []string, mdns bool) (store.Store, func(), error) {
+	switch {
+	case node != "":
+		return dial(ctx, node)
+	case len(bootstrap) > 0 || mdns:
+		return dialDHT(ctx, bootstrap, mdns)
+	default:
+		return nil, nil, fmt.Errorf("provide -node <ma>, or -bootstrap/-mdns to use the DHT")
+	}
+}
+
+// writeBackend selects a read+write store the namespace is mutated through. With
+// -node it targets that single node (a NetStore does Get/Put/Delete); otherwise
+// it joins the DHT and returns a PlacementStore, which spreads new shards across
+// discovered nodes while still reading directory blobs back via the DHT.
+func writeBackend(ctx context.Context, node string, bootstrap []string, mdns bool, signer cap.SignKey, grantExpiry int64, cfg pipeline.Config) (store.Store, func(), error) {
 	switch {
 	case node != "":
 		return dialSigned(ctx, node, signer)
@@ -277,144 +334,442 @@ func putBackend(ctx context.Context, node string, bootstrap []string, mdns bool,
 		}
 		return ps, closer, nil
 	default:
-		return nil, nil, fmt.Errorf("provide -node <ma> to store on one node, or -bootstrap/-mdns to place across DHT-discovered nodes")
+		return nil, nil, fmt.Errorf("provide -node <ma>, or -bootstrap/-mdns to use the DHT")
 	}
 }
 
-// cmdGet reconstructs what a capability addresses — a single file or a whole
-// directory tree — fetching shards from a single node (-node) or by discovering
-// their providers on the DHT (-bootstrap / -mdns). The source is either the
-// User's own plaintext manifest/root-cap (-manifest) or a shared, wrapped cap
-// (-cap, unwrapped with -key). Whether it is a file or a directory is decided by
-// the capability itself (its Kind), so a recipient need not know in advance
-// which they were sent — including a single file or subtree carved out of a tree
-// with `share -path`; -r stays accepted as an explicit hint.
-func cmdGet(args []string) error {
-	fs := flag.NewFlagSet("get", flag.ExitOnError)
-	node := fs.String("node", "", "fetch from this single node multiaddr (with /p2p/<peerid>)")
-	manifestPath := fs.String("manifest", "", "manifest / directory root cap file to read (your own data)")
-	capPath := fs.String("cap", "", "wrapped cap file to read (a shared file/tree); requires -key")
-	keyPath := fs.String("key", "", "your private key file, to unwrap -cap")
-	out := fs.String("o", "", "output file (default: the file's original name from the manifest, or stdout if it carries none); for a directory, the destination directory (required)")
-	recursive := fs.Bool("r", false, "expect a directory tree (into -o); the capability's kind is auto-detected, so this is only a hint")
-	var bootstrap multiFlag
-	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); discovers shard providers")
-	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS on the LAN")
+// --- cp -------------------------------------------------------------------
+
+// cmdCp copies between the local filesystem and the namespace, scp-style:
+// exactly one of <src>/<dst> carries the rvk: prefix. Storing grafts the local
+// file or subtree into the -root and advances its signed sequence; retrieving
+// resolves the rvk: path and reconstructs it locally.
+func cmdCp(args []string) error {
+	fs := flag.NewFlagSet("cp", flag.ExitOnError)
+	node, bootstrap, mdns := addBackendFlags(fs)
+	rootFlag := fs.String("root", "", "namespace root file (default $REVIKA_ROOT, else "+defaultRootPath+")")
+	keyPath := fs.String("key", "", "private key to open a sealed shared root")
+	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing writes into your namespace")
+	grantTTL := fs.Duration("grant-ttl", 0, "expiry of the repair grants attached to stored shards (0 = never)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
+	if fs.NArg() != 2 {
+		return fmt.Errorf("cp takes <src> <dst>; exactly one carries the rvk: prefix")
+	}
+	src, dst := fs.Arg(0), fs.Arg(1)
+	rootFile := rootPath(*rootFlag)
 	ctx := context.Background()
-	s, closer, err := getBackend(ctx, *node, bootstrap, *mdns)
+
+	switch {
+	case isRvk(dst) && !isRvk(src):
+		return cpStore(ctx, rootFile, src, rvkPath(dst), *keyPath, *signKeyPath, *node, *bootstrap, *mdns, *grantTTL)
+	case isRvk(src) && !isRvk(dst):
+		return cpRetrieve(ctx, rootFile, rvkPath(src), dst, *keyPath, *node, *bootstrap, *mdns)
+	case isRvk(src) && isRvk(dst):
+		return fmt.Errorf("cp between two rvk: paths is not supported; retrieve to a local path, then store")
+	default:
+		return fmt.Errorf("cp needs exactly one rvk: path, e.g. `cp file rvk:dir/` (store) or `cp rvk:dir/file .` (retrieve)")
+	}
+}
+
+// cpStore stores the local src (a file, symlink, or directory) into the
+// namespace at dstRvk, grafting it into the -root and committing an advanced
+// RootPointer.
+func cpStore(ctx context.Context, rootFile, src, dstRvk, keyPath, signKeyPath, node string, bootstrap []string, mdns bool, grantTTL time.Duration) error {
+	signer, err := loadSignKey(signKeyPath)
+	if err != nil {
+		return err
+	}
+	prev, exists, sealed, err := loadRoot(rootFile, keyPath)
+	if err != nil {
+		return err
+	}
+	if sealed {
+		return fmt.Errorf("cannot store into a shared, read-only root (%s)", rootFile)
+	}
+	if exists && prev.Owner != signer.Public() {
+		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", rootFile)
+	}
+
+	cfg := pipeline.DefaultConfig()
+	var grantExpiry int64
+	if grantTTL > 0 {
+		grantExpiry = time.Now().Add(grantTTL).Unix()
+	}
+	s, closer, err := writeBackend(ctx, node, bootstrap, mdns, signer, grantExpiry, cfg)
 	if err != nil {
 		return err
 	}
 	defer closer()
 
-	// Resolve the capability to exactly one of: a directory root/subtree cap
-	// (tree restore) or a file manifest (single-file restore). A -cap is
-	// unwrapped and its Kind sniffed here.
-	fm, dirCap, err := resolveGetTarget(ctx, s, *manifestPath, *capPath, *keyPath)
+	root, err := currentRoot(ctx, s, cfg, prev, exists)
 	if err != nil {
 		return err
 	}
 
-	if dirCap != nil {
-		if *out == "" {
-			return fmt.Errorf("restoring a directory needs -o <destination directory>")
-		}
-		return getTree(ctx, s, *dirCap, *out)
-	}
-	if *recursive {
-		return fmt.Errorf("-r expects a directory tree, but this capability is a single file; drop -r")
-	}
-	m := *fm
-
-	// Choose the output path: an explicit -o wins; otherwise fall back to the
-	// original file name recorded in the manifest, using just its base so a
-	// manifest can't steer the write outside the current directory. Only when
-	// neither is available do we stream to stdout.
-	outPath := *out
-	if outPath == "" && m.Name != "" {
-		outPath = filepath.Base(m.Name)
-	}
-
-	// No output path: stream the bytes to stdout; there is nowhere to restore
-	// filesystem metadata to, so it is ignored.
-	if outPath == "" {
-		if err := runLoad(ctx, s, m, os.Stdout); err != nil {
-			return fmt.Errorf("retrieve: %w", err)
-		}
-		return nil
-	}
-
-	// A symlink's content is its target path (recorded in the manifest as
-	// metadata, §3.8), so recreate the link rather than writing a file.
-	if m.Meta.IsSymlink() {
-		if err := fsmeta.RestoreSymlink(outPath, m.Meta); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "Wrote symlink %s -> %s\n", outPath, m.Meta.SymlinkTarget)
-		return nil
-	}
-
-	f, err := os.Create(outPath)
+	fi, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
-	if err := runLoad(ctx, s, m, f); err != nil {
-		f.Close()
-		return fmt.Errorf("retrieve: %w", err)
+	var (
+		child manifest.ReadCap
+		stat  manifest.StatCache
+		label string
+	)
+	if fi.IsDir() {
+		c, _, serr := storeTree(ctx, s, cfg, src)
+		if serr != nil {
+			return fmt.Errorf("store %s: %w", src, serr)
+		}
+		child = c
+		stat = manifest.StatCache{Kind: manifest.KindDir, Mode: uint32(fi.Mode())}
+		label = "directory " + src
+	} else {
+		fm, serr := runStore(ctx, s, cfg, src)
+		if serr != nil {
+			return fmt.Errorf("store %s: %w", src, serr)
+		}
+		c, serr := manifest.StoreFileManifest(ctx, s, cfg, fm)
+		if serr != nil {
+			return serr
+		}
+		child = c
+		stat = statFromManifest(fm)
+		label = src
 	}
-	if err := f.Close(); err != nil {
+
+	dstPath := destPath(ctx, s, root, dstRvk, filepath.Base(src))
+	newRoot, err := manifest.Graft(ctx, s, cfg, root, dstPath, child, stat)
+	if err != nil {
+		return fmt.Errorf("graft rvk:%s: %w", dstPath, err)
+	}
+	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed); err != nil {
 		return err
 	}
-	// Restore mode/times/owner/xattrs after the content is fully written and
-	// closed; a partial restore (e.g. chown without privilege) warns but does
-	// not fail the retrieval.
-	if err := fsmeta.Restore(outPath, m.Meta); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: partial metadata restore for %s: %v\n", outPath, err)
-	}
-	fmt.Fprintf(os.Stderr, "Wrote %s (%d bytes)\n", outPath, m.Size)
+	fmt.Printf("Stored %s -> rvk:%s\n", label, dstPath)
 	return nil
 }
 
-// getBackend selects the store `get` fetches through: a single node (-node) or
-// a DHT-backed store that discovers each shard's providers (-bootstrap / -mdns).
-func getBackend(ctx context.Context, node string, bootstrap []string, mdns bool) (store.Store, func(), error) {
-	switch {
-	case node != "":
-		return dial(ctx, node)
-	case len(bootstrap) > 0 || mdns:
-		return dialDHT(ctx, bootstrap, mdns)
-	default:
-		return nil, nil, fmt.Errorf("provide -node <ma> to fetch from one node, or -bootstrap/-mdns to discover providers via the DHT")
+// destPath maps a cp destination rvk path to the namespace path a child is
+// grafted at, following cp/scp semantics: an empty path (rvk:), a trailing
+// slash, or a path that already names a directory means "into that directory
+// under the source's base name"; anything else is the full target path (store
+// and rename).
+func destPath(ctx context.Context, s store.Store, root manifest.ReadCap, dst, base string) string {
+	if dst == "" {
+		return base
 	}
+	if trimmed, ok := strings.CutSuffix(dst, "/"); ok {
+		return path.Join(trimmed, base)
+	}
+	if c, err := manifest.Resolve(ctx, s, root, dst); err == nil && c.Kind == manifest.KindDir {
+		return path.Join(dst, base)
+	}
+	return dst
 }
 
-// cmdDelete removes the shards of a file this User stored. It drops only the
-// caller's ownership claim on each shard (a node frees the bytes once its last
-// owner leaves), so deleting never affects another User's copy of shared data.
-func cmdDelete(args []string) error {
-	fs := flag.NewFlagSet("delete", flag.ExitOnError)
-	node := fs.String("node", "", "delete from this single node multiaddr (with /p2p/<peerid>)")
-	manifestPath := fs.String("manifest", "", "manifest of the file to delete")
-	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the delete")
-	var bootstrap multiFlag
-	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); finds shard providers")
-	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS on the LAN")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *manifestPath == "" {
-		return fmt.Errorf("missing -manifest <path>")
-	}
-
-	data, err := os.ReadFile(*manifestPath)
+// cpRetrieve reconstructs what srcRvk addresses (a file or a subtree) into the
+// local dst. Writing into an existing local directory keeps the source's base
+// name; otherwise dst is the literal output path.
+func cpRetrieve(ctx context.Context, rootFile, srcRvk, dst, keyPath, node string, bootstrap []string, mdns bool) error {
+	prev, exists, _, err := loadRoot(rootFile, keyPath)
 	if err != nil {
 		return err
 	}
-	m, err := decodeManifest(data)
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to retrieve", rootFile)
+	}
+	s, closer, err := readBackend(ctx, node, bootstrap, mdns)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	c, err := manifest.Resolve(ctx, s, prev.Root, srcRvk)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", srcRvk, err)
+	}
+
+	target := dst
+	if fi, serr := os.Stat(dst); serr == nil && fi.IsDir() {
+		base := path.Base(srcRvk)
+		if base == "." || base == "/" || base == "" {
+			return fmt.Errorf("cannot retrieve the namespace root into %s without a name; give an explicit output path", dst)
+		}
+		target = filepath.Join(dst, base)
+	}
+
+	switch c.Kind {
+	case manifest.KindDir:
+		n, err := restoreTree(ctx, s, c, target)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Restored %d file(s) into %s\n", n, target)
+		return nil
+	case manifest.KindFile:
+		if parent := filepath.Dir(target); parent != "" && parent != "." {
+			if err := os.MkdirAll(parent, 0o755); err != nil {
+				return err
+			}
+		}
+		if _, err := restoreFile(ctx, s, c, target); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Wrote %s\n", target)
+		return nil
+	default:
+		return fmt.Errorf("rvk:%s has unknown kind %s", srcRvk, c.Kind)
+	}
+}
+
+// --- ls -------------------------------------------------------------------
+
+// cmdLs lists a directory in the namespace, reading directory blobs only (no
+// file content). Plain output is one name per line (directories end in /); -l
+// adds kind/size/mtime and -R recurses.
+func cmdLs(args []string) error {
+	fs := flag.NewFlagSet("ls", flag.ExitOnError)
+	node, bootstrap, mdns := addBackendFlags(fs)
+	rootFlag := fs.String("root", "", "namespace root file (default $REVIKA_ROOT, else "+defaultRootPath+")")
+	keyPath := fs.String("key", "", "private key to open a sealed shared root")
+	long := fs.Bool("l", false, "long format: kind, size, and mtime per entry")
+	recurse := fs.Bool("R", false, "list subdirectories recursively")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	target := ""
+	switch fs.NArg() {
+	case 0:
+	case 1:
+		if !isRvk(fs.Arg(0)) {
+			return fmt.Errorf("ls takes an rvk: path (or none for the root)")
+		}
+		target = rvkPath(fs.Arg(0))
+	default:
+		return fmt.Errorf("ls takes at most one rvk: path")
+	}
+
+	rootFile := rootPath(*rootFlag)
+	prev, exists, _, err := loadRoot(rootFile, *keyPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to list", rootFile)
+	}
+
+	ctx := context.Background()
+	s, closer, err := readBackend(ctx, *node, *bootstrap, *mdns)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	c, err := manifest.Resolve(ctx, s, prev.Root, target)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", target, err)
+	}
+	if c.Kind != manifest.KindDir {
+		// ls on a single file lists just that file (coreutils behaviour).
+		printLsEntry(os.Stdout, path.Base(target), manifest.StatCache{Kind: c.Kind}, *long)
+		return nil
+	}
+	return lsDir(ctx, s, c, target, *long, *recurse)
+}
+
+// lsDir lists the entries of the directory addressed by dirCap. With recurse it
+// then descends into each subdirectory, printing a "rvk:<path>:" header before
+// each (coreutils ls -R style).
+func lsDir(ctx context.Context, s store.Store, dirCap manifest.ReadCap, name string, long, recurse bool) error {
+	d, err := manifest.LoadDir(ctx, s, dirCap)
+	if err != nil {
+		return err
+	}
+	if recurse {
+		fmt.Printf("%s%s:\n", rvkScheme, name)
+	}
+	for _, e := range d.Entries {
+		printLsEntry(os.Stdout, e.Name, e.Stat, long)
+	}
+	if recurse {
+		for _, e := range d.Entries {
+			if e.Cap.Kind == manifest.KindDir {
+				fmt.Println()
+				if err := lsDir(ctx, s, e.Cap, path.Join(name, e.Name), long, recurse); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// printLsEntry writes one listing line for name with cached stat st. Plain form
+// is the name (directories suffixed /); long form prefixes kind, size and mtime.
+func printLsEntry(w io.Writer, name string, st manifest.StatCache, long bool) {
+	display := name
+	if st.Kind == manifest.KindDir {
+		display += "/"
+	}
+	if !long {
+		fmt.Fprintln(w, display)
+		return
+	}
+	kind := "f"
+	if st.Kind == manifest.KindDir {
+		kind = "d"
+	}
+	mtime := "-"
+	if st.ModTimeNS != 0 {
+		mtime = time.Unix(0, st.ModTimeNS).Format("2006-01-02 15:04")
+	}
+	fmt.Fprintf(w, "%s %12d  %-16s  %s\n", kind, st.Size, mtime, display)
+}
+
+// --- rm -------------------------------------------------------------------
+
+// cmdRm removes an rvk: path (a file or a whole subtree) from the -root and drops
+// the caller's ownership claim on its shards. A node frees a shard's bytes only
+// once its last owner leaves, so this never affects another User's shared copy.
+func cmdRm(args []string) error {
+	fs := flag.NewFlagSet("rm", flag.ExitOnError)
+	node, bootstrap, mdns := addBackendFlags(fs)
+	rootFlag := fs.String("root", "", "namespace root file (default $REVIKA_ROOT, else "+defaultRootPath+")")
+	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the delete")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || !isRvk(fs.Arg(0)) {
+		return fmt.Errorf("rm takes one rvk:<path>")
+	}
+	target := rvkPath(fs.Arg(0))
+	if target == "" {
+		return fmt.Errorf("refusing to remove the namespace root itself")
+	}
+
+	rootFile := rootPath(*rootFlag)
+	signer, err := loadSignKey(*signKeyPath)
+	if err != nil {
+		return err
+	}
+	prev, exists, sealed, err := loadRoot(rootFile, "")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to remove", rootFile)
+	}
+	if sealed {
+		return fmt.Errorf("cannot remove from a shared, read-only root (%s)", rootFile)
+	}
+	if prev.Owner != signer.Public() {
+		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", rootFile)
+	}
+
+	ctx := context.Background()
+	cfg := pipeline.DefaultConfig()
+	s, closer, err := writeBackend(ctx, *node, *bootstrap, *mdns, signer, 0, cfg)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	victim, err := manifest.Resolve(ctx, s, prev.Root, target)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", target, err)
+	}
+	shards := map[store.ShardID]struct{}{}
+	if err := collectShards(ctx, s, victim, shards); err != nil {
+		return fmt.Errorf("enumerate shards of rvk:%s: %w", target, err)
+	}
+
+	newRoot, err := manifest.GraftRemove(ctx, s, cfg, prev.Root, target)
+	if err != nil {
+		return fmt.Errorf("remove rvk:%s: %w", target, err)
+	}
+	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed); err != nil {
+		return err
+	}
+
+	// The namespace no longer references the subtree; release its shards (best
+	// effort — the pointer already advanced, so a failed delete only leaves
+	// unreferenced ciphertext for the node's GC/lease expiry to reclaim).
+	var deleted, missing, failed int
+	for id := range shards {
+		switch err := s.Delete(ctx, id); {
+		case err == nil:
+			deleted++
+		case errors.Is(err, store.ErrNotFound):
+			missing++
+		default:
+			failed++
+			fmt.Fprintf(os.Stderr, "delete %s: %v\n", id, err)
+		}
+	}
+	fmt.Printf("Removed rvk:%s (%d shard(s) released, %d already absent, %d failed)\n", target, deleted, missing, failed)
+	return nil
+}
+
+// collectShards walks the DAG rooted at c and accumulates every shard content
+// address it references into out: the blob's own shards, and — for a file
+// manifest — its data-chunk shards, recursing through directory entries.
+// Deduplication is inherent (the set keys on content address), so shards shared
+// by identical blobs are released once.
+func collectShards(ctx context.Context, s store.Store, c manifest.ReadCap, out map[store.ShardID]struct{}) error {
+	for _, id := range c.Shards {
+		out[id] = struct{}{}
+	}
+	switch c.Kind {
+	case manifest.KindDir:
+		d, err := manifest.LoadDir(ctx, s, c)
+		if err != nil {
+			return err
+		}
+		for _, e := range d.Entries {
+			if err := collectShards(ctx, s, e.Cap, out); err != nil {
+				return err
+			}
+		}
+	case manifest.KindFile:
+		fm, err := manifest.LoadFileManifest(ctx, s, c)
+		if err != nil {
+			return err
+		}
+		for _, ch := range fm.Chunks {
+			for _, id := range ch.Shards {
+				out[id] = struct{}{}
+			}
+		}
+	}
+	return nil
+}
+
+// --- share ----------------------------------------------------------------
+
+// cmdShare seals a read-capability to the subtree at rvk:<path> for a recipient.
+// It builds a RootPointer anchored at that subtree, signed by the caller so the
+// recipient can verify authenticity, then wraps it to the recipient's ML-KEM-768
+// public key so only they can open it (Architecture §3.5, §9.1: sharing = wrap
+// to the recipient, never a bearer token). The recipient uses the resulting file
+// as their -root, opening it with -key.
+func cmdShare(args []string) error {
+	fs := flag.NewFlagSet("share", flag.ExitOnError)
+	node, bootstrap, mdns := addBackendFlags(fs)
+	rootFlag := fs.String("root", "", "namespace root file to share from (default $REVIKA_ROOT, else "+defaultRootPath+")")
+	keyPath := fs.String("key", "", "private key to open a sealed shared root you are re-sharing from")
+	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, to sign the shared root")
+	to := fs.String("to", "", "recipient public key (base64) or @file")
+	out := fs.String("o", "", "output shared root file (default <name>.root.json)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || !isRvk(fs.Arg(0)) {
+		return fmt.Errorf("share takes one rvk:<path>")
+	}
+	target := rvkPath(fs.Arg(0))
+	recipient, err := resolveRecipient(*to)
 	if err != nil {
 		return err
 	}
@@ -422,42 +777,67 @@ func cmdDelete(args []string) error {
 	if err != nil {
 		return err
 	}
+	rootFile := rootPath(*rootFlag)
+	prev, exists, _, err := loadRoot(rootFile, *keyPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to share", rootFile)
+	}
 
 	ctx := context.Background()
-	// Delete attaches no repair grants, so the grant-expiry argument is unused.
-	s, closer, err := putBackend(ctx, *node, bootstrap, *mdns, m.Params, signer, 0)
+	s, closer, err := readBackend(ctx, *node, *bootstrap, *mdns)
 	if err != nil {
 		return err
 	}
 	defer closer()
 
-	var deleted, missing, failed int
-	for _, ch := range m.Chunks {
-		for _, id := range ch.Shards {
-			switch err := s.Delete(ctx, id); {
-			case err == nil:
-				deleted++
-			case errors.Is(err, store.ErrNotFound):
-				missing++
-			default:
-				failed++
-				fmt.Fprintf(os.Stderr, "delete %s: %v\n", id, err)
-			}
+	child, err := manifest.Resolve(ctx, s, prev.Root, target)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", target, err)
+	}
+
+	sharedRP, err := manifest.SignRoot(signer, child, 1, time.Now().UnixNano())
+	if err != nil {
+		return err
+	}
+	raw, err := provider.EncodeRootPointer(sharedRP)
+	if err != nil {
+		return err
+	}
+	sealed, err := cap.Wrap(recipient, raw)
+	if err != nil {
+		return err
+	}
+
+	outFile := *out
+	if outFile == "" {
+		base := path.Base(target)
+		if base == "." || base == "/" || base == "" {
+			base = "root"
 		}
+		outFile = base + ".root.json"
 	}
-	fmt.Printf("Deleted %d shard(s); %d already absent, %d failed\n", deleted, missing, failed)
-	if failed > 0 {
-		return fmt.Errorf("%d shard(s) could not be deleted", failed)
+	if err := os.WriteFile(outFile, sealed, 0o600); err != nil {
+		return fmt.Errorf("write shared root: %w", err)
 	}
+	fmt.Printf("Sealed rvk:%s [%s] for recipient %s\n", target, child.Kind, recipient.String())
+	fmt.Printf("Shared root: %s\n", outFile)
+	fmt.Println("Send it to the recipient; they browse and retrieve it with:")
+	fmt.Printf("  revika-ctl ls -node <ma> -root %s -key <their-privkey>\n", outFile)
+	fmt.Printf("  revika-ctl cp -node <ma> -root %s -key <their-privkey> rvk:<path> <dst>\n", outFile)
 	return nil
 }
 
-// cmdNodes lists the storage nodes the client can discover on the DHT — the
-// nodes it is "aware of" and could place shards on. It joins the network via
-// -bootstrap/-mdns exactly like put/get, then reports each advertised node with
-// its peer ID, whether we could reach it, and its advertised addresses.
-func cmdNodes(args []string) error {
-	fs := flag.NewFlagSet("nodes", flag.ExitOnError)
+// --- node -----------------------------------------------------------------
+
+// cmdNode lists the storage nodes the client can discover on the DHT — the nodes
+// it is "aware of" and could place shards on. It joins the network via
+// -bootstrap/-mdns, then reports each advertised node with its peer ID, whether
+// we could reach it, and its advertised addresses.
+func cmdNode(args []string) error {
+	fs := flag.NewFlagSet("node", flag.ExitOnError)
 	var bootstrap multiFlag
 	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable)")
 	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
@@ -499,232 +879,8 @@ func cmdNodes(args []string) error {
 	return nil
 }
 
-// resolveGetTarget resolves the flags of `get` to exactly one of a file manifest
-// (single-file restore) or a directory root/subtree cap (tree restore). The
-// source is a plaintext -manifest (the User's own file manifest or directory
-// root cap) or a wrapped -cap unwrapped with -key (a shared single file, whole
-// subtree, or a legacy file manifest). In every case the capability's own Kind —
-// not a flag — decides which it is; a KindFile cap is hydrated into its file
-// manifest via the store s, a KindDir cap is returned for getTree to walk.
-func resolveGetTarget(ctx context.Context, s store.Store, manifestPath, capPath, keyPath string) (*pipeline.FileManifest, *manifest.ReadCap, error) {
-	var raw []byte
-	switch {
-	case manifestPath != "" && capPath != "":
-		return nil, nil, fmt.Errorf("use either -manifest or -cap, not both")
-	case manifestPath != "":
-		data, err := os.ReadFile(manifestPath)
-		if err != nil {
-			return nil, nil, err
-		}
-		raw = data
-	case capPath != "":
-		if keyPath == "" {
-			return nil, nil, fmt.Errorf("-cap requires -key <privkey>")
-		}
-		data, err := unwrapCapBytes(capPath, keyPath)
-		if err != nil {
-			return nil, nil, err
-		}
-		raw = data
-	default:
-		return nil, nil, fmt.Errorf("provide -manifest <path> or -cap <path> -key <privkey>")
-	}
-
-	// A cap-addressed blob capability (a directory root/subtree, or a single file
-	// carved from a tree by `share -path`) carries a "kind"; a legacy plaintext
-	// file manifest does not. Route on that.
-	if looksLikeReadCap(raw) {
-		var c manifest.ReadCap
-		if err := json.Unmarshal(raw, &c); err != nil {
-			return nil, nil, fmt.Errorf("parse cap: %w", err)
-		}
-		switch c.Kind {
-		case manifest.KindDir:
-			return nil, &c, nil
-		case manifest.KindFile:
-			m, err := manifest.LoadFileManifest(ctx, s, c)
-			if err != nil {
-				return nil, nil, err
-			}
-			return &m, nil, nil
-		default:
-			return nil, nil, fmt.Errorf("capability has unknown kind %s", c.Kind)
-		}
-	}
-
-	m, err := decodeManifest(raw)
-	if err != nil {
-		return nil, nil, err
-	}
-	return &m, nil, nil
-}
-
-// looksLikeReadCap reports whether data is a serialized manifest.ReadCap (a
-// cap-addressed file/directory capability) rather than a legacy plaintext file
-// manifest. A ReadCap always carries a "kind" and "shards"; a file manifest
-// carries "chunks" and no "kind". Sniffing lets a recipient of a -cap not have
-// to know in advance which they were sent.
-func looksLikeReadCap(data []byte) bool {
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(data, &probe); err != nil {
-		return false
-	}
-	_, hasKind := probe["kind"]
-	_, hasShards := probe["shards"]
-	return hasKind && hasShards
-}
-
-// unwrapCapBytes unwraps the sealed cap file at capPath with the private key at
-// keyPath, returning the raw plaintext bytes (a ReadCap or a legacy manifest).
-func unwrapCapBytes(capPath, keyPath string) ([]byte, error) {
-	priv, err := readPrivateKey(keyPath)
-	if err != nil {
-		return nil, err
-	}
-	pub, err := priv.Public()
-	if err != nil {
-		return nil, err
-	}
-	sealed, err := os.ReadFile(capPath)
-	if err != nil {
-		return nil, err
-	}
-	data, err := cap.Unwrap(priv, pub, sealed)
-	if err != nil {
-		return nil, fmt.Errorf("unwrap cap (wrong key?): %w", err)
-	}
-	return data, nil
-}
-
-// shareResult is the outcome of building a shareable cap: the sealed bytes plus
-// the Kind the recipient will receive, so the printed `get` hint matches.
-type shareResult struct {
-	sealed []byte
-	kind   manifest.Kind
-}
-
-// cmdShare wraps a read-capability to a recipient's public key so only they can
-// open it. The -manifest source may be a single-file manifest (from `put`) or a
-// directory root cap (from `put -r`); with -path it shares only the file or
-// subdirectory at that slash-separated path within a tree, resolving it through
-// a -node/-bootstrap/-mdns backend. Sharing a directory cap grants read access
-// to that whole subtree and nothing outside it (§3.5).
-func cmdShare(args []string) error {
-	fs := flag.NewFlagSet("share", flag.ExitOnError)
-	manifestPath := fs.String("manifest", "", "manifest or directory root cap to share")
-	to := fs.String("to", "", "recipient public key (base64) or @file")
-	out := fs.String("o", "", "output cap file (default <manifest>.cap)")
-	path := fs.String("path", "", "share only the file or subdirectory at this slash-separated path within a directory root cap (needs a -node/-bootstrap/-mdns backend to resolve)")
-	node := fs.String("node", "", "resolve -path via this single node multiaddr")
-	var bootstrap multiFlag
-	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); resolves -path via the DHT")
-	mdns := fs.Bool("mdns", false, "discover shard providers via mDNS to resolve -path")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *manifestPath == "" {
-		return fmt.Errorf("missing -manifest <path>")
-	}
-	recipient, err := resolveRecipient(*to)
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(*manifestPath)
-	if err != nil {
-		return err
-	}
-
-	// Only resolving a subpath touches the network; wrapping a whole manifest or
-	// root cap is a purely local operation.
-	ctx := context.Background()
-	var s store.Store
-	if *path != "" {
-		var closer func()
-		s, closer, err = getBackend(ctx, *node, bootstrap, *mdns)
-		if err != nil {
-			return fmt.Errorf("share -path needs a backend to resolve the tree: %w", err)
-		}
-		defer closer()
-	}
-
-	res, err := buildShareCap(ctx, s, recipient, data, *path)
-	if err != nil {
-		return err
-	}
-
-	outCap := *out
-	if outCap == "" {
-		outCap = *manifestPath + ".cap"
-	}
-	if err := os.WriteFile(outCap, res.sealed, 0o644); err != nil {
-		return fmt.Errorf("write cap: %w", err)
-	}
-
-	what := *manifestPath
-	if *path != "" {
-		what = fmt.Sprintf("%s in %s", *path, *manifestPath)
-	}
-	fmt.Printf("Wrapped %s [%s] for recipient %s\n", what, res.kind, recipient.String())
-	fmt.Printf("Cap: %s\n", outCap)
-	if res.kind == manifest.KindDir {
-		fmt.Println("Send the .cap file to the recipient; they read the subtree with: revika-ctl get -node <ma> -cap <file> -key <their-privkey> -o <dir>")
-	} else {
-		fmt.Println("Send the .cap file to the recipient; they read it with: revika-ctl get -node <ma> -cap <file> -key <their-privkey>")
-	}
-	return nil
-}
-
-// buildShareCap produces the sealed bytes to hand a recipient for the given
-// source manifest bytes and optional subpath. With a subpath it resolves the
-// child cap through s (which must be non-nil), wrapping just that file or
-// subtree; otherwise it wraps the whole source — a directory root cap or a
-// legacy single-file manifest — with no network contact. It reports which Kind
-// the recipient receives.
-func buildShareCap(ctx context.Context, s store.Store, recipient cap.PublicKey, data []byte, path string) (shareResult, error) {
-	if path != "" {
-		if !looksLikeReadCap(data) {
-			return shareResult{}, fmt.Errorf("-path can only be used with a directory root cap (from `put -r`); this looks like a single-file manifest")
-		}
-		var root manifest.ReadCap
-		if err := json.Unmarshal(data, &root); err != nil {
-			return shareResult{}, fmt.Errorf("parse root cap: %w", err)
-		}
-		child, err := manifest.Resolve(ctx, s, root, path)
-		if err != nil {
-			return shareResult{}, fmt.Errorf("resolve %q: %w", path, err)
-		}
-		sealed, err := manifest.WrapCap(recipient, child)
-		if err != nil {
-			return shareResult{}, err
-		}
-		return shareResult{sealed: sealed, kind: child.Kind}, nil
-	}
-
-	// No subpath: wrap the whole source. A directory root cap is wrapped as a
-	// ReadCap (granting the entire subtree); a legacy single-file manifest is
-	// wrapped verbatim for backward compatibility.
-	if looksLikeReadCap(data) {
-		var c manifest.ReadCap
-		if err := json.Unmarshal(data, &c); err != nil {
-			return shareResult{}, fmt.Errorf("parse root cap: %w", err)
-		}
-		sealed, err := manifest.WrapCap(recipient, c)
-		if err != nil {
-			return shareResult{}, err
-		}
-		return shareResult{sealed: sealed, kind: c.Kind}, nil
-	}
-
-	if _, err := decodeManifest(data); err != nil {
-		return shareResult{}, fmt.Errorf("not a valid manifest: %w", err)
-	}
-	sealed, err := cap.Wrap(recipient, data)
-	if err != nil {
-		return shareResult{}, err
-	}
-	return shareResult{sealed: sealed, kind: manifest.KindFile}, nil
-}
-
+// readPrivateKey reads and parses an ML-KEM private key file (as written by
+// keygen's <prefix>.key).
 func readPrivateKey(path string) (cap.PrivateKey, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

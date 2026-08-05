@@ -6,17 +6,17 @@
 # revika's trust model: nodes are dumb, untrusted blob stores
 # that hold only encrypted, erasure-coded, content-addressed shards, and they
 # serve those shards to ANYONE on the network. Confidentiality therefore rests
-# entirely on the read-capability — the decryption keys + shard IDs kept in the
-# manifest — which never leaves the storing user's machine.
+# entirely on the read-capability — the decryption keys + shard IDs reachable
+# from the signed root pointer — which never leaves the storing user's machine.
 #
 # So an attacker can freely fetch ciphertext shards and read every node's disk;
 # what it must NOT be able to do is turn any of that into plaintext. This script
 # plays exactly such an attacker, holding what a real adversary could plausibly
 # get, and asserts it is denied on every path:
 #
-#   1. no capability at all              -> cannot even attempt a retrieval,
-#   2. a cap wrapped for a THIRD party   -> will not unwrap with the attacker's
-#                                           own key (the NaCl-box sharing boundary),
+#   1. no root at all                    -> cannot even attempt a retrieval,
+#   2. a root SEALED for a THIRD party    -> will not unwrap with the attacker's
+#                                           own key (the ML-KEM sharing boundary),
 #   3. full read access to node shards   -> the plaintext canary is nowhere in
 #                                           them (nodes store only ciphertext).
 #
@@ -45,31 +45,31 @@ revika-ctl keygen -key "$WORK/attacker" -pow-difficulty 0 >/dev/null
 
 echo "== unauthorized-access checks (every attempt MUST be denied) =="
 
-# 1) No capability at all. Without a manifest or a cap there are no shard IDs and
-#    no keys to work from, so the client cannot even mount a retrieval — network
-#    access alone buys nothing.
-echo ">> attempt 1: get with no manifest and no cap"
-if revika-ctl get -bootstrap "$SEED_ADDR" -o "$OUT" 2>/dev/null; then
+# 1) No root at all. Without a root pointer there are no shard IDs and no keys to
+#    work from, so the client cannot even mount a retrieval — network access alone
+#    buys nothing. (The attacker has no root.json, so cp finds none.)
+echo ">> attempt 1: cp (retrieve) with no root pointer"
+if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$WORK/none.json" rvk:testfile.bin "$OUT" 2>/dev/null; then
   echo "   FAIL: retrieved data with no read-capability whatsoever"
   fail=1
 else
   echo "   OK: denied — no read-capability, nothing to retrieve"
 fi
 
-# 2) Someone else's cap. The stored manifest was wrapped (NaCl box) for a third
-#    party's public key. Unwrapping it with the attacker's own private key must
+# 2) Someone else's sealed root. The shared root was wrapped (ML-KEM-768) for a
+#    third party's public key. Opening it with the attacker's own private key must
 #    fail — this is the sharing/authorization boundary.
-echo ">> attempt 2: unwrap a cap wrapped for another user, using our own key"
-if [ -f /handoff/secret.cap ]; then
-  if revika-ctl get -bootstrap "$SEED_ADDR" -cap /handoff/secret.cap \
-       -key "$WORK/attacker.key" -o "$OUT" 2>/dev/null; then
-    echo "   FAIL: opened a capability that was not shared with us"
+echo ">> attempt 2: open a root sealed for another user, using our own key"
+if [ -f /handoff/secret.root.json ]; then
+  if revika-ctl cp -bootstrap "$SEED_ADDR" -root /handoff/secret.root.json \
+       -key "$WORK/attacker.key" rvk: "$OUT" 2>/dev/null; then
+    echo "   FAIL: opened a shared root that was not sealed to us"
     fail=1
   else
-    echo "   OK: denied — a cap wrapped for another user will not unwrap with our key"
+    echo "   OK: denied — a root sealed for another user will not open with our key"
   fi
 else
-  echo "   FAIL: /handoff/secret.cap missing (did the client stage run?)"
+  echo "   FAIL: /handoff/secret.root.json missing (did the client stage run?)"
   fail=1
 fi
 

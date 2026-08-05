@@ -89,77 +89,70 @@ go run ./cmd/revika-node
 Useful flags: `-data <dir>` (state root, default `.revika`), `-listen <multiaddr>`
 (repeatable), `-mdns=false` (disable LAN discovery), `-v` (debug logging).
 
-**2. Create your identity.** `keygen` writes an X25519 keypair (for receiving shared
-files) and an Ed25519 signing keypair — your storage *owner* identity, which authorizes
-storing and deleting your shards:
+**2. Create your identity.** `keygen` writes an ML-KEM-768 (FIPS 203) keypair (for receiving
+shared files) and an Ed25519 signing keypair — your storage *owner* identity, which authorizes
+storing and removing your shards:
 
 ```bash
 go run ./cmd/revika-ctl keygen        # writes .revika/keys/user.key/.pub + user.sign.key/.pub
 ```
 
-**3. Store a file** with the client, using the node's full multiaddr. The store is signed
-with your signing key (default `.revika/keys/user.sign.key`, override with `-signkey`), so
-only you can later delete it:
+Your files live in a **namespace**: one mutable root directory addressed by `rvk:` paths
+(e.g. `rvk:docs/report.pdf`). The root in effect is the `-root` file (default
+`$REVIKA_ROOT`, else `.revika/root.json`); your own root is mutable, a root someone shared
+with you is read-only. Every `rvk:` command takes a backend: `-node <ma>` for one node, or
+`-bootstrap <ma>…` / `-mdns` to reach nodes over the DHT.
+
+**3. Store a file** into your namespace with `cp`, using the node's full multiaddr. The
+store is signed with your signing key (default `.revika/keys/user.sign.key`, override with
+`-signkey`), so only you can later remove it:
 
 ```bash
 NODE=/ip4/127.0.0.1/tcp/4001/p2p/12D3KooW…
-go run ./cmd/revika-ctl put -node "$NODE" ./myfile.txt
-# writes ./myfile.txt.rvk.json — the manifest (its read-capability; keep it secret)
+go run ./cmd/revika-ctl cp -node "$NODE" ./myfile.txt rvk:docs/     # store as docs/myfile.txt
+# advances .revika/root.json — your signed namespace anchor (holds read-caps; kept 0600)
 ```
 
-**4. Retrieve it** from the manifest:
+**4. Browse and retrieve.** `ls` reads directory blobs only (no file content); `cp` the
+other way pulls the file:
 
 ```bash
-go run ./cmd/revika-ctl get -node "$NODE" -manifest ./myfile.txt.rvk.json -o ./out.txt
+go run ./cmd/revika-ctl ls -node "$NODE" rvk:docs           # list docs/ (add -l for detail)
+go run ./cmd/revika-ctl cp -node "$NODE" rvk:docs/myfile.txt ./out.txt
 ```
 
-**5. Delete it** when you are done. Only the signing key that stored a shard can delete it;
-a node frees a shard's bytes only once its last owner deletes, so this never affects
-another user's copy of data you shared:
+**5. Remove it** when you are done. Only the signing key that stored a shard can release it;
+a node frees a shard's bytes only once its last owner leaves, so this never affects another
+user's copy of data you shared:
 
 ```bash
-go run ./cmd/revika-ctl delete -node "$NODE" -manifest ./myfile.txt.rvk.json
+go run ./cmd/revika-ctl rm -node "$NODE" rvk:docs/myfile.txt
 ```
 
 **6. Share it** end-to-end encrypted. The recipient generates an identity and gives you
-their public key; you wrap the manifest to it:
+their public key; `share` seals a **shared root** anchored at the path — a signed
+`RootPointer` wrapped to their key (never a bearer token). Resolving the path walks the
+tree, so `share` needs a backend:
 
 ```bash
 # recipient:
 go run ./cmd/revika-ctl keygen -key bob            # writes bob.key (private) + bob.pub (public)
 
-# you (sender): seal the manifest so only bob can open it
-go run ./cmd/revika-ctl share -manifest ./myfile.txt.rvk.json -to @bob.pub
-# → writes ./myfile.txt.rvk.json.cap
+# you (sender): seal a share of one file (or a whole subtree) so only bob can open it
+go run ./cmd/revika-ctl share -node "$NODE" -to @bob.pub -o ./shared.root.json rvk:docs/myfile.txt
 
-# recipient: unwrap the cap with their private key and fetch the file
-go run ./cmd/revika-ctl get -node "$NODE" -cap ./myfile.txt.rvk.json.cap -key bob.key -o ./bob-out.txt
+# recipient: open the sealed root with their key and browse / retrieve it
+go run ./cmd/revika-ctl ls -node "$NODE" -root ./shared.root.json -key bob.key rvk:
+go run ./cmd/revika-ctl cp -node "$NODE" -root ./shared.root.json -key bob.key rvk: ./bob-out.txt
 ```
 
-`-to` accepts a literal base64 public key or `@file`. Run any command with `-h`, or
-`revika-ctl help`, for the full flag list.
+`-to` accepts a literal base64 public key or `@file`. Point `share` at a subdirectory
+instead (`rvk:docs`) to share a whole subtree; `ls`/`cp` auto-detect file vs. subtree from
+the cap's `Kind`. Run any command with `-h`, or `revika-ctl help`, for the full flag list.
 
-**Sharing one file from an uploaded directory.** If you stored a whole tree with `put -r`
-(the `-manifest` then holds the tree's root cap), `share -path <subpath>` wraps only the
-cap of the file or subdirectory at that path — the recipient gets exactly that and nothing
-else in the tree. Resolving the path walks the tree, so it needs a backend (`-node` or
-`-bootstrap`/`-mdns`):
-
-```bash
-# you (sender): store a directory, then share just one file out of it
-go run ./cmd/revika-ctl put -r -node "$NODE" -manifest ./tree.rvk.json ./mydir
-go run ./cmd/revika-ctl share -node "$NODE" -manifest ./tree.rvk.json \
-    -path docs/report.pdf -to @bob.pub -o ./report.cap
-
-# recipient: get -cap auto-detects it is a single file (no -r needed)
-go run ./cmd/revika-ctl get -node "$NODE" -cap ./report.cap -key bob.key -o ./report.pdf
-```
-
-Point `-path` at a subdirectory instead to share a whole subtree; the recipient restores it
-with `get -cap ... -o <dir>`.
-
-> **Note:** the manifest holds the file's decryption keys. Keep it secret, or hand it out
-> only via `share` wrapped to a specific recipient. Nodes never see it.
+> **Note:** the root pointer (and any sealed shared root) holds the files' decryption keys.
+> Keep it secret, or hand it out only via `share` wrapped to a specific recipient. Nodes
+> never see it.
 
 ## Architecture
 

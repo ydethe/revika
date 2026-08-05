@@ -5,20 +5,22 @@
 # revika's authorization model: a shard is owned by whoever stored it, proven by
 # a token signed with their Ed25519 signing key. A node only drops a caller's
 # OWN ownership claim on DELETE, and frees a shard's bytes only once its last
-# owner deletes. So possessing the read-capability (the manifest) lets you READ
-# a file but must NOT let you DELETE it — delete authority is the signing key,
-# not the read-cap.
+# owner deletes. So possessing the read-capability (a copy of the root pointer)
+# lets you READ a file but must NOT let you delete it — delete authority is the
+# signing key, not the read-cap. `rm` enforces this: it refuses to advance a root
+# owned by a different identity, and a node independently refuses a DELETE token
+# from a non-owner.
 #
 # This script proves that end to end against the live multi-node network. It is
 # self-contained: an "owner" stores a file, then
 #
-#   1. NEGATIVE — a DIFFERENT user ("mallory") who holds the manifest (the
-#      read-cap) but not the owner's signing key tries to delete every shard.
-#      The node must refuse, and the file must still be retrievable.
-#   2. POSITIVE — the owner deletes with their own signing key. It must succeed,
+#   1. NEGATIVE — a DIFFERENT user ("mallory") who holds a copy of the owner's
+#      root pointer (the read-cap) but not the owner's signing key tries to rm the
+#      file. It must be refused, and the file must still be retrievable.
+#   2. POSITIVE — the owner rm's with their own signing key. It must succeed,
 #      and the file must then be unrecoverable (its shards are gone).
 #
-# The positive control matters: without it, a bug that made *every* delete fail
+# The positive control matters: without it, a bug that made *every* rm fail
 # would masquerade as "protected". Exit status is 0 only if both hold.
 
 # NOTE: not `set -e` — we deliberately run commands we expect to fail and then
@@ -31,7 +33,8 @@ WORK=/tmp/revika-delete
 mkdir -p "$WORK"
 SRC="$WORK/secret.bin"
 OUT="$WORK/roundtrip.bin"
-MANIFEST="$WORK/secret.rvk.json"
+OWNER_ROOT="$WORK/owner-root.json"     # the owner's signed namespace anchor
+MALLORY_ROOT="$WORK/mallory-root.json" # a copy mallory obtained (the read-cap)
 
 fail=0
 
@@ -56,55 +59,61 @@ revika-ctl keygen -key "$WORK/mallory" -pow-difficulty 0 >/dev/null
 
 echo ">> owner stores a 1 MiB file across the nodes"
 head -c 1048576 /dev/urandom >"$SRC"
-retry "put" revika-ctl put -bootstrap "$SEED_ADDR" -signkey "$WORK/owner.sign.key" -manifest "$MANIFEST" "$SRC" \
-  || { echo "FAIL: owner put never succeeded"; exit 1; }
-[ -s "$MANIFEST" ] || { echo "FAIL: no manifest written"; exit 1; }
+retry "store" revika-ctl cp -bootstrap "$SEED_ADDR" -signkey "$WORK/owner.sign.key" -root "$OWNER_ROOT" "$SRC" rvk:secret.bin \
+  || { echo "FAIL: owner store never succeeded"; exit 1; }
+[ -s "$OWNER_ROOT" ] || { echo "FAIL: no root pointer written"; exit 1; }
+
+# Mallory somehow obtained a copy of the owner's root pointer (the read-cap): she
+# can READ the file, but her signing key does not own its shards.
+cp "$OWNER_ROOT" "$MALLORY_ROOT"
 
 echo
 echo "== delete-protection checks =="
 
-# 1) NEGATIVE: mallory has the manifest (the read-cap) but signs with her OWN
-#    key, so she is not an owner of any shard. Every shard delete must be
-#    refused (the command exits non-zero), and the file must survive.
-echo ">> attempt: a non-owner (with the read-cap) deletes the file — MUST be denied"
-if revika-ctl delete -bootstrap "$SEED_ADDR" -signkey "$WORK/mallory.sign.key" -manifest "$MANIFEST"; then
-  echo "   FAIL: a non-owner deleted another user's shards"
+# 1) NEGATIVE: mallory holds a copy of the owner's root (the read-cap) but signs
+#    with her OWN key, so she owns no shard. `rm` must refuse to advance a root
+#    owned by another identity (and a node independently refuses her DELETE
+#    token), and the file must survive.
+echo ">> attempt: a non-owner (with the read-cap) removes the file — MUST be denied"
+if revika-ctl rm -bootstrap "$SEED_ADDR" -signkey "$WORK/mallory.sign.key" -root "$MALLORY_ROOT" rvk:secret.bin; then
+  echo "   FAIL: a non-owner removed another user's file"
   fail=1
 else
-  echo "   OK: denied — a non-owner cannot delete the shards"
+  echo "   OK: denied — a non-owner cannot remove the file"
 fi
 
-echo ">> the file must still be retrievable after the refused delete"
-if retry "get" revika-ctl get -bootstrap "$SEED_ADDR" -manifest "$MANIFEST" -o "$OUT" && cmp -s "$SRC" "$OUT"; then
-  echo "   OK: the file is intact — the unauthorized delete changed nothing"
+echo ">> the file must still be retrievable after the refused removal"
+if retry "get" revika-ctl cp -bootstrap "$SEED_ADDR" -root "$OWNER_ROOT" rvk:secret.bin "$OUT" && cmp -s "$SRC" "$OUT"; then
+  echo "   OK: the file is intact — the unauthorized removal changed nothing"
 else
-  echo "   FAIL: the file is gone or altered after a delete that should have been refused"
+  echo "   FAIL: the file is gone or altered after a removal that should have been refused"
   fail=1
 fi
 
-# 2) POSITIVE control: the owner deletes with their signing key. It must succeed,
+# 2) POSITIVE control: the owner rm's with their signing key. It must succeed,
 #    and the file must then be unrecoverable.
-echo ">> attempt: the owner deletes the file — MUST succeed"
-if revika-ctl delete -bootstrap "$SEED_ADDR" -signkey "$WORK/owner.sign.key" -manifest "$MANIFEST"; then
-  echo "   OK: the owner deleted their own shards"
+echo ">> attempt: the owner removes the file — MUST succeed"
+if revika-ctl rm -bootstrap "$SEED_ADDR" -signkey "$WORK/owner.sign.key" -root "$OWNER_ROOT" rvk:secret.bin; then
+  echo "   OK: the owner removed their own file"
 else
-  echo "   FAIL: the owner could not delete their own shards"
+  echo "   FAIL: the owner could not remove their own file"
   fail=1
 fi
 
-echo ">> the file must no longer be retrievable after the owner's delete"
-# A single attempt: the blobs are removed synchronously when the last owner
-# deletes, so a get can no longer gather k shards and must fail.
-if revika-ctl get -bootstrap "$SEED_ADDR" -manifest "$MANIFEST" -o "$WORK/gone.bin" 2>/dev/null; then
-  echo "   FAIL: retrieved the file after the owner deleted it"
+echo ">> the file must no longer be retrievable after the owner's removal"
+# A single attempt: the file is grafted out of the root and its blobs removed
+# synchronously when the last owner deletes, so a retrieval can no longer resolve
+# the path (or gather k shards) and must fail.
+if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$OWNER_ROOT" rvk:secret.bin "$WORK/gone.bin" 2>/dev/null; then
+  echo "   FAIL: retrieved the file after the owner removed it"
   fail=1
 else
-  echo "   OK: the file is unrecoverable after deletion"
+  echo "   OK: the file is unrecoverable after removal"
 fi
 
 echo
 if [ "$fail" -eq 0 ]; then
-  echo "PASS: only the owner can delete — an unauthorized delete was refused, the owner's succeeded."
+  echo "PASS: only the owner can remove — an unauthorized rm was refused, the owner's succeeded."
   exit 0
 fi
 echo "FAIL: delete protection did not hold."

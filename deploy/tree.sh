@@ -5,28 +5,26 @@
 # Where verify.sh exercises a single file, this exercises revika's directory
 # support (Architecture §3.6): a whole directory tree is stored as a Merkle DAG
 # of cap-addressed encrypted blobs (each file a manifest blob, each folder a
-# directory blob), anchored by the root directory's read-capability. It joins
-# the revika DHT through the seed node (SEED_ADDR), stores a nested tree with
-# `put -r` so the pipeline spreads every blob's erasure-coded shards across the
-# discovered storage nodes, then asserts:
+# directory blob), grafted into the User's mutable namespace under an rvk: path
+# and anchored by a signed root pointer (persisted to root.json). It joins the
+# revika DHT through the seed node (SEED_ADDR), stores a nested tree with
+# `cp <dir> rvk:tree` so the pipeline spreads every blob's erasure-coded shards
+# across the discovered storage nodes, then asserts:
 #
 #   1. the client discovers EVERY storage node over the DHT (as verify.sh does);
-#   2. `put -r` succeeds and writes a root cap (the tree's read-capability);
+#   2. `cp <dir> rvk:tree` succeeds and advances the signed root.json;
 #   3. EVERY node's on-disk shard store gained shards — the tree's blobs
 #      (files AND directories) spread across all nodes, not just the seed;
-#   4. `get -r` reconstructs the whole tree byte-identically, with the same set
-#      of files and directories (including empty ones) as the original.
-#   5. `share -path` carves a SINGLE file out of the stored tree, wrapped to a
-#      recipient's key, and `get -cap` reconstructs just that file (§3.5) —
-#      proving you can share one file from a tree without re-uploading it.
-#   6. `share -path` on a SUBDIRECTORY wraps that subtree cap, and `get -cap`
-#      restores only that subtree — nothing outside the shared path leaks.
-#   7. `sync` materializes the namespace as 0-byte placeholders fetching ONLY
-#      directory blobs (no file content), then `hydrate` pulls content for one
-#      file (leaving the rest placeholders) and finally for the whole tree —
-#      the on-demand hydration model of §3.8.
+#   4. `cp rvk:tree <out>` reconstructs the whole tree byte-identically, with the
+#      same set of files and directories (including empty ones) as the original.
+#   5. `share rvk:tree/docs/a.txt` seals a SINGLE file out of the stored tree to
+#      a recipient's key, and the recipient opens that sealed root with their key
+#      and reconstructs just that file (§3.5) — proving you can share one file
+#      from a tree without re-uploading it, and without a bearer token.
+#   6. `share rvk:tree/docs` seals a SUBTREE, and the recipient restores only that
+#      subtree — nothing outside the shared path leaks.
 #
-# Exit status is 0 only if all seven hold, so a compose run surfaces a failure as
+# Exit status is 0 only if all six hold, so a compose run surfaces a failure as
 # a non-zero exit for this service.
 set -euo pipefail
 
@@ -38,10 +36,10 @@ NODE_MOUNTS=(/nodes/seed /nodes/node2 /nodes/node3)
 
 WORK=/tmp/revika-tree
 SRC="$WORK/src"
-OUT="$WORK/out"
-ROOTCAP="$WORK/tree.rvk.json"
+OUT="$WORK/out"                 # restored whole tree (must NOT pre-exist)
+ROOTFILE="$WORK/root.json"      # the User's signed namespace anchor
 rm -rf "$WORK"
-mkdir -p "$SRC" "$OUT"
+mkdir -p "$SRC"
 
 # A distinctive plaintext canary embedded in one of the files. Nodes must hold
 # only ciphertext, so it must never appear verbatim in any raw shard.
@@ -58,7 +56,7 @@ printf '%s\n' "$MARKER" >"$SRC/root.txt"
 printf 'document a\n' >"$SRC/docs/a.txt"
 head -c 1048576 /dev/urandom >"$SRC/docs/nested/big.bin"
 
-# The client signs each PUT with its Ed25519 signing identity; generate one.
+# The client signs each write with its Ed25519 signing identity; generate one.
 echo ">> generating the client's signing identity"
 revika-ctl keygen -key "$WORK/user" -pow-difficulty 0 >/dev/null
 SIGNKEY="$WORK/user.sign.key"
@@ -70,7 +68,7 @@ EXPECTED_NODES=${#NODE_MOUNTS[@]}
 echo ">> discovering storage nodes via bootstrap $SEED_ADDR (expect all $EXPECTED_NODES)"
 reachable=0
 for attempt in 1 2 3 4 5 6; do
-  nodes_out=$(revika-ctl nodes -bootstrap "$SEED_ADDR" || true)
+  nodes_out=$(revika-ctl node -bootstrap "$SEED_ADDR" || true)
   printf '%s\n' "$nodes_out" | sed 's/^/     /'
   reachable=$(printf '%s\n' "$nodes_out" | sed -n 's/.*(\([0-9]*\) reachable).*/\1/p')
   reachable=${reachable:-0}
@@ -86,29 +84,29 @@ if [ "$reachable" -lt "$EXPECTED_NODES" ]; then
 fi
 echo "OK: client discovered and reached all $EXPECTED_NODES storage nodes via the DHT"
 
-echo ">> shard counts BEFORE put:"
+echo ">> shard counts BEFORE store:"
 declare -A before
 for m in "${NODE_MOUNTS[@]}"; do
   before[$m]=$(count_shards "$m")
   echo "     $m: ${before[$m]}"
 done
 
-# DHT discovery is eventually consistent, so give `put -r` a few attempts.
-echo ">> put -r via bootstrap $SEED_ADDR (store the whole tree)"
+# DHT discovery is eventually consistent, so give the store a few attempts.
+echo ">> cp \$SRC rvk:tree via bootstrap $SEED_ADDR (store the whole tree)"
 put_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl put -r -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -manifest "$ROOTCAP" "$SRC"; then
+  if revika-ctl cp -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -root "$ROOTFILE" "$SRC" rvk:tree; then
     put_ok=1
     break
   fi
-  echo "   put attempt $attempt failed; retrying in 5s..."
+  echo "   store attempt $attempt failed; retrying in 5s..."
   sleep 5
 done
-[ -n "$put_ok" ] || { echo "FAIL: put -r never succeeded"; exit 1; }
-[ -s "$ROOTCAP" ] || { echo "FAIL: no root cap written"; exit 1; }
-echo "OK: put -r wrote the tree's root cap to $ROOTCAP"
+[ -n "$put_ok" ] || { echo "FAIL: cp (store) never succeeded"; exit 1; }
+[ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }
+echo "OK: cp stored the tree and advanced the signed root at $ROOTFILE"
 
-echo ">> shard counts AFTER put:"
+echo ">> shard counts AFTER store:"
 total_new=0
 missing=""
 for m in "${NODE_MOUNTS[@]}"; do
@@ -124,17 +122,17 @@ if [ -n "$missing" ]; then
 fi
 echo "OK: all ${#NODE_MOUNTS[@]} nodes received shards ($total_new total)"
 
-echo ">> get -r via bootstrap $SEED_ADDR (restore the whole tree)"
+echo ">> cp rvk:tree \$OUT via bootstrap $SEED_ADDR (restore the whole tree)"
 get_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl get -r -bootstrap "$SEED_ADDR" -manifest "$ROOTCAP" -o "$OUT"; then
+  if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$ROOTFILE" rvk:tree "$OUT"; then
     get_ok=1
     break
   fi
-  echo "   get attempt $attempt failed; retrying in 5s..."
+  echo "   retrieve attempt $attempt failed; retrying in 5s..."
   sleep 5
 done
-[ -n "$get_ok" ] || { echo "FAIL: get -r never succeeded"; exit 1; }
+[ -n "$get_ok" ] || { echo "FAIL: cp (retrieve) never succeeded"; exit 1; }
 
 # Compare the trees. debian-slim has coreutils (find, cmp) but not necessarily
 # `diff -r`, so compare structurally: same set of files, and every file byte-
@@ -170,8 +168,9 @@ echo "OK: directory structure (including empty dirs) preserved"
 
 # --- share a SINGLE file out of the stored tree (Architecture §3.5) ----------
 # The tree is already stored and spread across the nodes; nothing is re-uploaded.
-# We resolve one file's cap through the DHT, wrap it to a fresh recipient key,
-# and reconstruct just that file from the -cap.
+# `share` resolves one file's cap and seals a RootPointer anchored at it to a
+# fresh recipient key (wrapping, never a bearer token). The recipient opens that
+# sealed root with their private key and reconstructs just that file.
 echo
 echo ">> generating a recipient identity to share to"
 revika-ctl keygen -key "$WORK/recipient" -pow-difficulty 0 >/dev/null
@@ -179,67 +178,76 @@ RCPT_PUB="$WORK/recipient.pub"
 RCPT_KEY="$WORK/recipient.key"
 
 SHARE_REL="docs/a.txt"
-FILE_CAP="$WORK/a.cap"
-FILE_OUT="$WORK/a.out"
-echo ">> share -path $SHARE_REL (wrap one file from the tree)"
+FILE_SEALED="$WORK/a.root.json"
+FILE_OUT="$WORK/a.out"          # explicit output path (a file-anchored root)
+echo ">> share rvk:tree/$SHARE_REL (seal one file to the recipient)"
 share_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl share -bootstrap "$SEED_ADDR" -manifest "$ROOTCAP" \
-      -path "$SHARE_REL" -to "@$RCPT_PUB" -o "$FILE_CAP"; then
+  if revika-ctl share -bootstrap "$SEED_ADDR" -root "$ROOTFILE" -signkey "$SIGNKEY" \
+      -to "@$RCPT_PUB" -o "$FILE_SEALED" "rvk:tree/$SHARE_REL"; then
     share_ok=1
     break
   fi
   echo "   share attempt $attempt failed; retrying in 5s..."
   sleep 5
 done
-[ -n "$share_ok" ] || { echo "FAIL: share -path (file) never succeeded"; exit 1; }
-[ -s "$FILE_CAP" ] || { echo "FAIL: no file cap written"; exit 1; }
+[ -n "$share_ok" ] || { echo "FAIL: share (file) never succeeded"; exit 1; }
+[ -s "$FILE_SEALED" ] || { echo "FAIL: no sealed shared root written"; exit 1; }
 
-echo ">> get -cap (reconstruct the single shared file)"
+echo ">> recipient opens the sealed root with -key and reconstructs the file"
 get_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl get -bootstrap "$SEED_ADDR" -cap "$FILE_CAP" -key "$RCPT_KEY" -o "$FILE_OUT"; then
+  if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$FILE_SEALED" -key "$RCPT_KEY" rvk: "$FILE_OUT"; then
     get_ok=1
     break
   fi
-  echo "   get attempt $attempt failed; retrying in 5s..."
+  echo "   retrieve attempt $attempt failed; retrying in 5s..."
   sleep 5
 done
-[ -n "$get_ok" ] || { echo "FAIL: get -cap (file) never succeeded"; exit 1; }
+[ -n "$get_ok" ] || { echo "FAIL: recipient cp (shared file) never succeeded"; exit 1; }
 if ! cmp -s "$SRC/$SHARE_REL" "$FILE_OUT"; then
   echo "FAIL: shared single file $SHARE_REL differs from the original"
   exit 1
 fi
 echo "OK: a single file was shared from the tree and reconstructed byte-identically"
 
-# --- share a SUBDIRECTORY out of the stored tree -----------------------------
+# A wrong key must NOT open the sealed shared root.
+echo ">> a stranger's key must not open the sealed shared root"
+revika-ctl keygen -key "$WORK/stranger" -pow-difficulty 0 >/dev/null
+if revika-ctl ls -bootstrap "$SEED_ADDR" -root "$FILE_SEALED" -key "$WORK/stranger.key" >/dev/null 2>&1; then
+  echo "FAIL: a sealed shared root opened with the wrong key"
+  exit 1
+fi
+echo "OK: the sealed shared root refuses the wrong key"
+
+# --- share a SUBTREE out of the stored tree ----------------------------------
 SHARE_DIR="docs"
-DIR_CAP="$WORK/docs.cap"
-DIR_OUT="$WORK/docs.out"
-echo ">> share -path $SHARE_DIR (wrap a subtree from the tree)"
+DIR_SEALED="$WORK/docs.root.json"
+DIR_OUT="$WORK/docs.out"        # must NOT pre-exist (a dir-anchored root)
+echo ">> share rvk:tree/$SHARE_DIR (seal a subtree to the recipient)"
 share_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl share -bootstrap "$SEED_ADDR" -manifest "$ROOTCAP" \
-      -path "$SHARE_DIR" -to "@$RCPT_PUB" -o "$DIR_CAP"; then
+  if revika-ctl share -bootstrap "$SEED_ADDR" -root "$ROOTFILE" -signkey "$SIGNKEY" \
+      -to "@$RCPT_PUB" -o "$DIR_SEALED" "rvk:tree/$SHARE_DIR"; then
     share_ok=1
     break
   fi
   echo "   share attempt $attempt failed; retrying in 5s..."
   sleep 5
 done
-[ -n "$share_ok" ] || { echo "FAIL: share -path (subtree) never succeeded"; exit 1; }
+[ -n "$share_ok" ] || { echo "FAIL: share (subtree) never succeeded"; exit 1; }
 
-echo ">> get -cap -o (restore only the shared subtree)"
+echo ">> recipient restores only the shared subtree"
 get_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl get -bootstrap "$SEED_ADDR" -cap "$DIR_CAP" -key "$RCPT_KEY" -o "$DIR_OUT"; then
+  if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$DIR_SEALED" -key "$RCPT_KEY" rvk: "$DIR_OUT"; then
     get_ok=1
     break
   fi
-  echo "   get attempt $attempt failed; retrying in 5s..."
+  echo "   retrieve attempt $attempt failed; retrying in 5s..."
   sleep 5
 done
-[ -n "$get_ok" ] || { echo "FAIL: get -cap (subtree) never succeeded"; exit 1; }
+[ -n "$get_ok" ] || { echo "FAIL: recipient cp (shared subtree) never succeeded"; exit 1; }
 
 # The subtree is rooted at DIR_OUT: docs/a.txt appears as a.txt (no "docs/").
 if ! cmp -s "$SRC/$SHARE_DIR/a.txt" "$DIR_OUT/a.txt"; then
@@ -257,72 +265,7 @@ if [ -e "$DIR_OUT/root.txt" ]; then
 fi
 echo "OK: a subtree was shared from the tree and restored, leaking nothing outside it"
 
-# --- lazy sync + on-demand hydrate (Architecture §3.8) -----------------------
-# `sync` materializes the namespace fetching ONLY directory blobs — every file is
-# a 0-byte placeholder. `hydrate` then pulls content for just the wanted paths.
-SYNC="$WORK/synced"
 echo
-echo ">> sync (materialize the namespace, no file content) into $SYNC"
-sync_ok=""
-for attempt in 1 2 3 4 5; do
-  if revika-ctl sync -bootstrap "$SEED_ADDR" -manifest "$ROOTCAP" -o "$SYNC"; then
-    sync_ok=1
-    break
-  fi
-  echo "   sync attempt $attempt failed; retrying in 5s..."
-  sleep 5
-done
-[ -n "$sync_ok" ] || { echo "FAIL: sync never succeeded"; exit 1; }
-
-# The namespace must exist, with the index and 0-byte placeholders (big.bin is
-# ~1 MiB in the original, so a nonzero placeholder would mean content leaked in).
-[ -f "$SYNC/.revika-sync.json" ] || { echo "FAIL: sync wrote no index"; exit 1; }
-for rel in root.txt docs/a.txt docs/nested/big.bin; do
-  [ -f "$SYNC/$rel" ] || { echo "FAIL: placeholder $rel missing after sync"; exit 1; }
-  sz=$(wc -c <"$SYNC/$rel" | tr -d ' ')
-  [ "$sz" = "0" ] || { echo "FAIL: placeholder $rel is $sz bytes, want 0 (content must not be synced)"; exit 1; }
-done
-[ -d "$SYNC/empty" ] || { echo "FAIL: empty directory not recreated by sync"; exit 1; }
-echo "OK: sync recreated the namespace as 0-byte placeholders (no file content fetched)"
-
-echo ">> hydrate a single file (docs/a.txt)"
-hyd_ok=""
-for attempt in 1 2 3 4 5; do
-  if revika-ctl hydrate -bootstrap "$SEED_ADDR" -C "$SYNC" docs/a.txt; then
-    hyd_ok=1
-    break
-  fi
-  echo "   hydrate attempt $attempt failed; retrying in 5s..."
-  sleep 5
-done
-[ -n "$hyd_ok" ] || { echo "FAIL: hydrate (single file) never succeeded"; exit 1; }
-cmp -s "$SRC/docs/a.txt" "$SYNC/docs/a.txt" || { echo "FAIL: hydrated docs/a.txt differs"; exit 1; }
-# The other files must still be un-hydrated placeholders.
-sz=$(wc -c <"$SYNC/docs/nested/big.bin" | tr -d ' ')
-[ "$sz" = "0" ] || { echo "FAIL: hydrating one file also fetched big.bin ($sz bytes)"; exit 1; }
-echo "OK: only the requested file was hydrated; the rest stayed placeholders"
-
-echo ">> hydrate the whole tree (-C with no path)"
-hyd_ok=""
-for attempt in 1 2 3 4 5; do
-  if revika-ctl hydrate -bootstrap "$SEED_ADDR" -C "$SYNC"; then
-    hyd_ok=1
-    break
-  fi
-  echo "   hydrate attempt $attempt failed; retrying in 5s..."
-  sleep 5
-done
-[ -n "$hyd_ok" ] || { echo "FAIL: hydrate (whole tree) never succeeded"; exit 1; }
-while IFS= read -r rel; do
-  [ -n "$rel" ] || continue
-  if ! cmp -s "$SRC/$rel" "$SYNC/$rel"; then
-    echo "FAIL: hydrated $rel differs from the original"
-    exit 1
-  fi
-done <<<"$src_files"
-echo "OK: hydrating the whole tree reproduced every file byte-identically"
-
-echo
-echo "PASS: a directory tree was spread across all nodes, restored intact, shared"
-echo "      out of (single files and subtrees) end-to-end encrypted, and lazily"
-echo "      synced then hydrated on demand."
+echo "PASS: a directory tree was spread across all nodes, restored intact, and"
+echo "      shared out of (single files and subtrees) end-to-end encrypted, with"
+echo "      each shared root sealed to the recipient's key (no bearer token)."

@@ -4,20 +4,19 @@ package main
 // directory tree as a Merkle DAG of cap-addressed encrypted blobs
 // (internal/manifest, Architecture §3.6). It is a thin driver over that package
 // — capture each file's manifest as a KindFile blob, build the directory DAG
-// with copy-on-write Graft, and anchor the tree with the root directory's cap —
-// so the same put/get backends (single node or DHT-spread) work unchanged.
+// with copy-on-write Graft, and return the root directory's cap — so the same
+// cp backends (single node or DHT-spread) work unchanged.
 //
-// The root cap plays for a tree the role the file manifest plays for a file: it
-// is the read-capability written to (and read from) the -manifest path.
+// The returned directory cap is what cmdCp grafts into the User's namespace under
+// an rvk: path; restoreTree walks it back onto the local filesystem.
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"revika/internal/fsmeta"
 	"revika/internal/manifest"
@@ -92,33 +91,6 @@ func storeTree(ctx context.Context, s store.Store, cfg pipeline.Config, src stri
 		return manifest.ReadCap{}, 0, err
 	}
 	return root, files, nil
-}
-
-// putTree stores the directory tree at src into s and writes its root cap to
-// outManifest. It is the -r branch of `put`.
-func putTree(ctx context.Context, s store.Store, cfg pipeline.Config, src, outManifest string) error {
-	start := time.Now()
-	root, files, err := storeTree(ctx, s, cfg, src)
-	if err != nil {
-		return fmt.Errorf("store tree %s: %w", src, err)
-	}
-	if err := writeRootCap(outManifest, root); err != nil {
-		return fmt.Errorf("write root cap: %w", err)
-	}
-	fmt.Printf("Stored directory %s: %d file(s) in %s\n", src, files, time.Since(start).Round(time.Millisecond))
-	fmt.Printf("Root cap: %s\n", outManifest)
-	fmt.Fprintln(os.Stderr, "warning: the root cap unlocks every file in the tree — keep it secret, or `share` it wrapped to a recipient.")
-	return nil
-}
-
-// getTree restores the tree rooted at root into dest. It is the -r branch of `get`.
-func getTree(ctx context.Context, s store.Store, root manifest.ReadCap, dest string) error {
-	files, err := restoreTree(ctx, s, root, dest)
-	if err != nil {
-		return fmt.Errorf("restore tree: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "Restored %d file(s) into %s\n", files, dest)
-	return nil
 }
 
 // statFromManifest builds the StatCache a directory keeps for a file child, so a
@@ -215,11 +187,14 @@ func restoreFile(ctx context.Context, s store.Store, fc manifest.ReadCap, target
 	return 1, nil
 }
 
-// writeRootCap serializes a tree's root cap (the read-capability) to path.
-func writeRootCap(path string, c manifest.ReadCap) error {
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
+// safeEntryName rejects a directory entry name that could escape its parent
+// directory when joined to a local path — an empty name, "."/"..", or one
+// carrying a path separator. A directory blob is untrusted input (it may have
+// been tampered with on a node), so every name is checked before it becomes a
+// filesystem path.
+func safeEntryName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("unsafe entry name %q", name)
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return nil
 }

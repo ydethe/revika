@@ -11,7 +11,7 @@
 #
 # Subcommands (each a separate one-shot container so the orchestrator can stop a
 # node in between):
-#   store    — write a random file across all nodes and save its manifest/source.
+#   store    — write a random file across all nodes and save its root/source.
 #   snapshot — record every node's on-disk shard IDs to /handoff (the baseline).
 #   verify   — after a node is down and repair has run, assert that a shard the
 #              downed node held has reappeared on a survivor that lacked it.
@@ -25,7 +25,7 @@ set -euo pipefail
 : "${SEED_ADDR:?SEED_ADDR must point at the seed node /p2p multiaddr}"
 
 SRC=/handoff/repair-src.bin
-MANIFEST=/handoff/repair.rvk.json
+ROOTFILE=/handoff/repair-root.json
 SIGNKEY=/handoff/repair-user.sign.key
 
 # The node data volumes are mounted read-only here; the DOWN node is passed so
@@ -55,10 +55,10 @@ case "${1:-}" in
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
     revika-ctl keygen -key /handoff/repair-user -pow-difficulty 0 >/dev/null
-    retry "put" revika-ctl put -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -manifest "$MANIFEST" "$SRC" \
-      || { echo "FAIL: put never succeeded"; exit 1; }
-    [ -s "$MANIFEST" ] || { echo "FAIL: no manifest written"; exit 1; }
-    echo "OK: stored; manifest + source saved under /handoff"
+    retry "store" revika-ctl cp -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -root "$ROOTFILE" "$SRC" rvk:repair.bin \
+      || { echo "FAIL: store never succeeded"; exit 1; }
+    [ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }
+    echo "OK: stored; root pointer + source saved under /handoff"
     ;;
 
   snapshot)
@@ -103,9 +103,9 @@ case "${1:-}" in
 
   get)
     echo ">> [get] retrieving the file after repair"
-    [ -s "$MANIFEST" ] || { echo "FAIL: /handoff manifest missing (did 'store' run?)"; exit 1; }
+    [ -s "$ROOTFILE" ] || { echo "FAIL: /handoff root pointer missing (did 'store' run?)"; exit 1; }
     OUT=/tmp/repair-out.bin
-    retry "get" revika-ctl get -bootstrap "$SEED_ADDR" -manifest "$MANIFEST" -o "$OUT" \
+    retry "get" revika-ctl cp -bootstrap "$SEED_ADDR" -root "$ROOTFILE" rvk:repair.bin "$OUT" \
       || { echo "FAIL: get never succeeded"; exit 1; }
     if cmp -s "$SRC" "$OUT"; then
       echo "PASS: file retrieved byte-identical after repair"

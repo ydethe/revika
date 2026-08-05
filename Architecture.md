@@ -195,9 +195,9 @@ to the erasure margin) → erasure-decode → decrypt → decompress → reassem
 **Placement — [partial]** (`internal/net`, `PlacementStore`). Shards are spread across
 `n = k + m` nodes discovered on the DHT: a first-cut **round-robin** policy sends a
 chunk's consecutive shards to distinct nodes, so no single node holds enough of a file to
-matter (the `revika-ctl put -bootstrap …` path). Each holding node announces a
+matter (the `revika-ctl cp … -bootstrap …` path). Each holding node announces a
 **provider record** to the DHT (`shardID → {peers holding it}`) on receipt, keyed by a
-CIDv1(raw codec) wrapping the shard's SHA-256; a client's `get` resolves those records to
+CIDv1(raw codec) wrapping the shard's SHA-256; a client's `cp` (retrieve) resolves those records to
 fetch shards it has no prior knowledge of. Still **[planned]**: richer node selection —
 *diversity* (independent operator/network domains so correlated failures don't drop below
 `k`), *reliability* (uptime/reputation), *proximity/cost* — and graduating the policy from
@@ -232,17 +232,18 @@ nodes rather than back into the same store, and the repair *cadence*/threshold p
 (AES-256-GCM, `internal/crypto`), used by the pipeline for per-chunk encryption; and a
 first cut of **cap delivery** (`internal/cap`): ML-KEM-768 recipient identities
 (NIST FIPS 203, `crypto/mlkem`) with `Wrap`/`Unwrap` (a KEM-DEM: ML-KEM encapsulation
-keying an AES-256-GCM seal), which `revika-ctl share` uses to encrypt a
-read-cap to a recipient's public key. That read-cap is either a single file's
-serialized manifest or, for data stored as a tree (`put -r`), a directory
-`ReadCap` (§3.6). `share -path <subpath>` resolves the tree and wraps only the
-`ReadCap` of the file or subdirectory at that path, so you can hand over one file
-(or one subtree) from a larger stored tree without re-uploading it and without
-exposing anything outside the shared path — a directory cap grants exactly its
-subtree and everything reachable from it, no more. The recipient reconstructs it
-with `get -cap`, which auto-detects from the cap's `Kind` whether it is a single
-file or a subtree. **Still planned:** the derivation chain (write-cap → read-cap →
-verify-cap), signing keys for mutable root pointers, and a compact string form for caps.
+keying an AES-256-GCM seal), which `revika-ctl share rvk:<path>` uses to encrypt a
+read-cap to a recipient's public key. `share` resolves the path in the User's
+namespace and seals the `ReadCap` of the file or subdirectory there (§3.6), so you
+can hand over one file (or one subtree) from a larger stored tree without
+re-uploading it and without exposing anything outside the shared path — a directory
+cap grants exactly its subtree and everything reachable from it, no more. Concretely
+`share` wraps a `RootPointer` anchored at that subtree, signed by the sharer and
+sealed to the recipient's key: a **sealed shared root** the recipient opens with
+their private key and uses as their `-root`, browsing it with `ls` and
+reconstructing files with `cp` (which auto-detect file vs. subtree from the cap's
+`Kind`). **Still planned:** the derivation chain (write-cap → read-cap → verify-cap),
+and a compact string form for caps.
 
 The **capability** ("cap") is how access is named and delegated:
 
@@ -364,22 +365,27 @@ cap layer rather than on content-addressed shards. Tracked in §10.
   subtree). Names live in the directory `Entry`, not in the (nameless, content-addressed) file
   blob, so a rename rewrites one directory blob and never re-addresses the file. Each `Entry`
   carries a small `StatCache` (kind/size/mode/mtime/version tokens) so a mount serves
-  `readdir`/`getattr` without hydrating the child (§3.8). `revika-ctl put -r` stores a whole
-  filesystem directory as such a tree (writing the root cap to `-manifest`) and `get -r`
-  restores it — files, symlinks, sub-directories, empty directories, and per-entry metadata
-  included (`cmd/revika-ctl/tree.go`), exercised in-process (`tree_test.go`) and over a live
+  `readdir`/`getattr` without hydrating the child (§3.8). `revika-ctl cp` stores a file or a
+  whole filesystem directory as such a tree, grafting it into the User's namespace under an
+  `rvk:` path, and retrieves either back (`cmd/revika-ctl/tree.go`), exercised in-process
+  (`tree_test.go`, `namespace_e2e_test.go`) and over a live
   multi-node network (`deploy/tree.sh`, compose profile `tree`). Because `Resolve` yields a
-child's `ReadCap` and a cap is shareable on its own, `revika-ctl share -path <subpath>` wraps
-just one file's or subdirectory's cap out of a stored tree (§3.5) — the recipient's `get -cap`
+child's `ReadCap` and a cap is shareable on its own, `revika-ctl share rvk:<subpath>` wraps
+just one file's or subdirectory's cap out of the namespace (§3.5) — the recipient
 reconstructs exactly that file or subtree and nothing outside the shared path. Still
 **[planned]**: HAMT/B-tree
   sharding for very large directories (a blob is one erasure chunk today — see the size budget in
   `internal/manifest/README.md`).
-- **Root pointer** — **[partial]** (`internal/manifest`, `RootPointer`). The one mutable anchor
-  per User (see §4): a signed `owner-pubkey → root-directory cap` record with a monotonic
-  sequence, `SignRoot`/`Verify` over a domain-separated Ed25519 payload. The type + anti-rollback
-  semantics exist; **[planned]** is publishing/fetching it over the DHT and the `/revika/root`
-  protocol.
+- **Root pointer** — **[partial]** (`internal/manifest`, `RootPointer`; persisted by
+  `provider.FileRootStore`). The one mutable anchor per User (see §4): a signed
+  `owner-pubkey → root-directory cap` record with a monotonic sequence, `SignRoot`/`Verify` over
+  a domain-separated Ed25519 payload. The type + anti-rollback semantics exist and are now
+  **realized in the CLI**: `revika-ctl` persists the pointer to a local `root.json`
+  (`-root`/`$REVIKA_ROOT`, default `.revika/root.json`) and advances its `Seq` on every `cp`/`rm`
+  mutation; a *shared* root is that same pointer anchored at a shared subtree and sealed to a
+  recipient's ML-KEM key. **[planned]** is publishing/fetching the pointer over the DHT and the
+  `/revika/root` protocol, which would let a shared root be resolved network-wide instead of
+  travelling as a file.
 
 These three types are exactly what the mount layer (§3.8) resolves against: the file manifest
 plays the role of an inode, the directory the namespace, and the root pointer the mutable
@@ -437,16 +443,16 @@ the network is untouched by `readdir`/`stat`. Only `open`/`read` triggers `LoadF
 shards. A file is never materialized whole before it is requested — the natural fit for
 erasure-coded, no-node-holds-a-whole-file storage (§2).
 
-**CLI stepping stone — `sync` / `hydrate` [implemented].** Ahead of the mount, `revika-ctl`
-already exposes this two-phase model over a plain folder (`cmd/revika-ctl/sync.go`): `sync`
-walks the directory DAG fetching **only directory blobs** and writes the namespace as folders +
-symlinks + empty file *placeholders*, plus a local `.revika-sync.json` index mapping each
-placeholder to its (nameless, content-addressed) file cap; `hydrate <path>` then pulls content
-for just the chosen file or subtree, resolving caps from that index (no directory re-walk) and
-fetching only those files' shards. `sync` is exactly the placeholder-materialization a mount does
-on `readdir`; `hydrate` is the `open`/`read` fetch, driven explicitly instead of by a page fault.
-The index holds read-capabilities (decryption keys), so it is written `0600` — as secret as a
-manifest.
+**CLI stepping stone — `ls` / `cp` [implemented].** Ahead of the mount, `revika-ctl` exposes the
+two-phase model directly over the namespace: `ls rvk:<path>` walks the directory DAG fetching
+**only directory blobs** (a listing touches no file content — the `readdir`/`stat` half), and
+`cp rvk:<path> <local>` then pulls content for just the chosen file or subtree, fetching only
+those files' shards (the `open`/`read` half, driven explicitly instead of by a page fault). An
+earlier `sync`/`hydrate` design materialized symlink+empty-file *placeholders* backed by a local
+`.revika-sync.json` cap index; that was dropped in favour of listing the live namespace on demand,
+since the signed `RootPointer` (persisted in `root.json`) already is the durable anchor and needs
+no separate placeholder index. Both `root.json` and any sealed shared root hold read-capabilities
+(decryption keys), so they are written `0600` — as secret as a manifest.
 
 **Copy-on-write against immutable content.** Shards and manifests are immutable
 (content-addressed, §3.2/§4), yet a filesystem does random writes and renames. So a write
@@ -570,7 +576,7 @@ DHT usage:
 ```
 cmd/
   revika-node/     ✓ headless Node server binary
-  revika-ctl/      ✓ User client CLI (keygen/put[-r]/get[-r]/sync/hydrate/delete/share)
+  revika-ctl/      ✓ User client CLI (keygen/cp/ls/rm/share/node)
   revika-daemon/     # User background daemon (+ optional embedded node)  (planned)
 internal/
   store/     ✓ content-addressed blob store (Mem + Disk); leases/quotas/GC TBD
@@ -584,7 +590,8 @@ internal/
              DHTStore + PlacementStore (discovery-backed store.Store's)
   cap/       ✓ ML-KEM-768 capability wrapping (Wrap/Unwrap, FIPS 203) for sharing read-caps
   manifest/  ✓ ReadCap + cap-addressed file/dir blobs (Merkle DAG), COW Graft,
-             signed RootPointer; recursive put/get + DHT root publish planned
+             signed RootPointer (persisted to root.json by revika-ctl);
+             DHT root publish planned
   fsmeta/    ✓ capture/restore live-file attributes ⇄ pipeline.Metadata
              (POSIX split: Linux uid/gid/times/xattr, portable mode/mtime)
   provider/  ✓ framework-neutral OS-integration API (Provider iface) mapping
@@ -649,16 +656,17 @@ Prove the core loop before adding breadth. Each phase is independently testable.
    (manifest v4) carrying a full `Metadata` record — mode, owner, the four timestamps,
    attribute flags, content type, symlink target, xattrs, and content/metadata version
    tokens — so a manifest is mount-ready for the native cloud-provider frameworks (§3.6, §3.8);
-   `revika-ctl` captures it on `put` and restores it on `get`. **Still open:** encrypting the
-   manifest blob, encrypted directories, and signed root pointers.
+   `revika-ctl` captures it on `cp` (store) and restores it on `cp` (retrieve).
+   **Still open:** encrypting the manifest blob, encrypted directories, and signed root pointers.
 5. 🟡 **Sharing** (in progress). Cap *delivery* is implemented (`internal/cap`:
-   `Wrap`/`Unwrap` to a recipient's ML-KEM-768 key) and driven by `revika-ctl share` /
-   `get -cap`. `share` wraps a whole file manifest, a whole directory root cap, or —
-   via `share -path <subpath>` — the cap of a single file or subdirectory resolved out
-   of a stored tree, so a tree owner can share one file or subtree without re-uploading
-   it; `get -cap` auto-detects file vs. subtree from the cap's `Kind` (in-process
-   `TestShareGetSubpath`, end-to-end `deploy/tree.sh`). **Still open:** the write-cap →
-   read-cap → verify-cap derivation chain and signing keys for mutable objects.
+   `Wrap`/`Unwrap` to a recipient's ML-KEM-768 key) and driven by `revika-ctl share rvk:<path>`.
+   `share` resolves a path in the owner's namespace and seals a **shared root** — a
+   `RootPointer` anchored at that file or subtree, signed by the sharer and wrapped to the
+   recipient's key (§3.5) — so a tree owner can share one file or subtree without re-uploading
+   it and without exposing anything outside the shared path. The recipient opens it with
+   `-root <sealed> -key <priv>` and browses/reconstructs with `ls`/`cp`, which auto-detect
+   file vs. subtree from the cap's `Kind` (in-process `TestNamespaceE2E`). **Still open:** the
+   write-cap → read-cap → verify-cap derivation chain and signing keys for mutable objects.
 6. ⬜ **Sync daemon.** Folder watching, reconcile, conflict handling; optional embedded
    node.
 7. ⬜ **OS filesystem mount.** Expose the metadata tree from step 4 as a mounted filesystem
