@@ -234,8 +234,9 @@ func run() error {
 	// Metrics/status HTTP server (plain HTTP; front it with a TLS-terminating
 	// reverse proxy). disc is nil when the DHT is off, which the server handles.
 	if *metricsAddr != "" {
-		ms := net.NewMetricsServer(h, led, disc, version, startedAt, log)
+		ms := net.NewMetricsServer(h, led, disc, version, buildDate, startedAt, log)
 		ms.SetGCStats(gcStats)
+		ms.SetPoW(*powPuzzle, *powDiff)
 		go func() {
 			if err := ms.Serve(ctx, *metricsAddr); err != nil {
 				log.Error("metrics: server stopped", "err", err)

@@ -220,17 +220,20 @@ authorization error. See Architecture.md §5.
 
 `MetricsServer` exposes a node's operational state over plain HTTP (meant to sit
 behind a TLS-terminating reverse proxy). `NewMetricsServer(h, ledger, disc, version,
-started, log)`; `disc` and the GC stats (`SetGCStats`) are optional. `Serve(ctx,
-addr)` runs it with graceful shutdown; `Handler()` exposes the mux for tests.
-Endpoints:
+buildDate, started, log)`; `disc`, the GC stats (`SetGCStats`), and the proof-of-work
+policy (`SetPoW`) are optional. `Serve(ctx, addr)` runs it with graceful shutdown;
+`Handler()` exposes the mux for tests. Endpoints:
 
 - `GET /healthz` — liveness.
 - `GET /readyz` — readiness (DHT routing table non-empty when the DHT is on; always
   ready otherwise).
-- `GET /status` — JSON `Status` snapshot: general info, `StorageInfo` (shards, bytes,
-  quota, per-`OwnerInfo` breakdown from the ledger), `NetworkInfo` (connected peers,
-  routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
-- `GET /metrics` — Prometheus text exposition of the same snapshot.
+- `GET /status` — JSON `Status` snapshot: general info (including `build_date` and the
+  `PoWInfo` admission policy — enabled, puzzle name, difficulty bits), `StorageInfo`
+  (shards, bytes, quota, per-`OwnerInfo` breakdown from the ledger), `NetworkInfo`
+  (connected peers, routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
+- `GET /metrics` — Prometheus text exposition of the same snapshot, including
+  `revika_build_info{version,build_date}`, `revika_pow_enabled{puzzle}`, and
+  `revika_pow_difficulty_bits`.
 
 `GCStats` (`gcstats.go`) is a thread-safe counter shared between a node's GC loop
 (`Record`) and the MetricsServer (`Snapshot` → `GCSnapshot`), reporting cycles run,

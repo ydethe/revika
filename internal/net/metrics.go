@@ -29,8 +29,9 @@ const metricsShutdownTimeout = 5 * time.Second
 //	GET /healthz   liveness  — 200 as soon as the process is up
 //	GET /readyz    readiness — 200 once the node can serve (DHT routing table
 //	               non-empty when the DHT is on; always ready otherwise)
-//	GET /status    JSON snapshot: general info, storage accounting, and the
-//	               node's view of the network (peer cartography)
+//	GET /status    JSON snapshot: general info (version, build date, proof-of-work
+//	               admission policy), storage accounting, and the node's view of
+//	               the network (peer cartography)
 //	GET /metrics   Prometheus text-exposition metrics
 //
 // It reads live state from the host, the ledger, and (optionally) the DHT
@@ -40,28 +41,42 @@ const metricsShutdownTimeout = 5 * time.Second
 //   AU-6 (Audit Record Review, Analysis, and Reporting) — partial: exposes Prometheus metrics
 //        and a JSON status snapshot for external review; no in-node analysis/alerting (Defence.md notes).
 type MetricsServer struct {
-	h       host.Host
-	led     *ledger.Ledger
-	disc    *Discovery // optional: nil when the node runs without the DHT
-	gc      *GCStats   // optional: nil when GC activity is not tracked
-	version string
-	started time.Time
-	log     *slog.Logger
+	h         host.Host
+	led       *ledger.Ledger
+	disc      *Discovery // optional: nil when the node runs without the DHT
+	gc        *GCStats   // optional: nil when GC activity is not tracked
+	version   string
+	buildDate string
+	started   time.Time
+	pow       PoWInfo // proof-of-work admission policy this node enforces on writes
+	log       *slog.Logger
 }
 
 // NewMetricsServer builds a MetricsServer. disc may be nil (no DHT); led must be
-// non-nil. version is reported verbatim in /status and /metrics. started is the
-// process start time, used to report uptime.
-func NewMetricsServer(h host.Host, led *ledger.Ledger, disc *Discovery, version string, started time.Time, log *slog.Logger) *MetricsServer {
+// non-nil. version and buildDate are reported verbatim in /status and /metrics.
+// started is the process start time, used to report uptime.
+func NewMetricsServer(h host.Host, led *ledger.Ledger, disc *Discovery, version, buildDate string, started time.Time, log *slog.Logger) *MetricsServer {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &MetricsServer{h: h, led: led, disc: disc, version: version, started: started, log: log}
+	return &MetricsServer{h: h, led: led, disc: disc, version: version, buildDate: buildDate, started: started, log: log}
 }
 
 // SetGCStats attaches a garbage-collector stats collector so /status and
 // /metrics report GC activity. Optional; call before Serve.
 func (m *MetricsServer) SetGCStats(gc *GCStats) { m.gc = gc }
+
+// SetPoW records the proof-of-work admission policy the node enforces on writes
+// so it is reported on /status and /metrics. puzzle is the puzzle name (e.g.
+// "argon2id"), minBits the required leading-zero-bit difficulty. A zero minBits
+// means proof-of-work admission is disabled. Optional; call before Serve.
+func (m *MetricsServer) SetPoW(puzzle string, minBits uint) {
+	if minBits == 0 {
+		m.pow = PoWInfo{} // disabled: no puzzle to report
+		return
+	}
+	m.pow = PoWInfo{Enabled: true, Puzzle: puzzle, Difficulty: minBits}
+}
 
 // Handler returns the HTTP mux serving the metrics endpoints. Exposed so it can
 // be tested directly (via httptest) and mounted by a caller if desired.
@@ -103,11 +118,23 @@ func (m *MetricsServer) Serve(ctx context.Context, addr string) error {
 type Status struct {
 	PeerID        string      `json:"peer_id"`
 	Version       string      `json:"version"`
+	BuildDate     string      `json:"build_date"`
 	UptimeSeconds float64     `json:"uptime_seconds"`
 	ListenAddrs   []string    `json:"listen_addrs"`
+	PoW           PoWInfo     `json:"pow"`
 	Storage       StorageInfo `json:"storage"`
 	Network       NetworkInfo `json:"network"`
 	GC            GCSnapshot  `json:"gc"`
+}
+
+// PoWInfo is the proof-of-work admission policy this node enforces on writes:
+// an owner identity must be self-certifying under Puzzle with at least
+// Difficulty leading zero bits, or its writes are refused. Enabled is false
+// (and Difficulty 0) when proof-of-work admission is off.
+type PoWInfo struct {
+	Enabled    bool   `json:"enabled"`
+	Puzzle     string `json:"puzzle"`     // puzzle name, e.g. "argon2id" (empty when disabled)
+	Difficulty uint   `json:"difficulty"` // required leading zero bits (0 = disabled)
 }
 
 // StorageInfo is the accounting side of /status: what this node holds and for whom.
@@ -146,7 +173,9 @@ func (m *MetricsServer) snapshot() (Status, error) {
 	st := Status{
 		PeerID:        m.h.ID().String(),
 		Version:       m.version,
+		BuildDate:     m.buildDate,
 		UptimeSeconds: time.Since(m.started).Seconds(),
+		PoW:           m.pow,
 	}
 	for _, a := range m.h.Addrs() {
 		st.ListenAddrs = append(st.ListenAddrs, a.String())
@@ -197,6 +226,14 @@ func (m *MetricsServer) networkInfo() NetworkInfo {
 	// Stable order so the output does not churn between scrapes.
 	sort.Slice(ni.Peers, func(i, j int) bool { return ni.Peers[i].ID < ni.Peers[j].ID })
 	return ni
+}
+
+// b2i renders a bool as a Prometheus 0/1 gauge value.
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func connDirection(d network.Direction) string {
@@ -259,6 +296,18 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(w, "# TYPE %s %s\n", name, typ)
 		fmt.Fprintf(w, "%s %s\n", name, strconv.FormatFloat(value, 'f', -1, 64))
 	}
+
+	// Build provenance as an info-style metric: a constant 1 carrying the version
+	// and build date as labels (the conventional Prometheus build_info pattern).
+	fmt.Fprintln(w, "# HELP revika_build_info Build provenance (constant 1; version and build date in labels).")
+	fmt.Fprintln(w, "# TYPE revika_build_info gauge")
+	fmt.Fprintf(w, "revika_build_info{version=%q,build_date=%q} 1\n", st.Version, st.BuildDate)
+
+	// Proof-of-work admission policy this node enforces on writes.
+	fmt.Fprintln(w, "# HELP revika_pow_enabled Whether proof-of-work owner-identity admission is enforced on writes (1 = on).")
+	fmt.Fprintln(w, "# TYPE revika_pow_enabled gauge")
+	fmt.Fprintf(w, "revika_pow_enabled{puzzle=%q} %d\n", st.PoW.Puzzle, b2i(st.PoW.Enabled))
+	metric("revika_pow_difficulty_bits", "Required proof-of-work difficulty in leading zero bits (0 = disabled).", "gauge", float64(st.PoW.Difficulty))
 
 	metric("revika_uptime_seconds", "Node uptime in seconds.", "gauge", st.UptimeSeconds)
 	metric("revika_shards_total", "Distinct shards stored on this node.", "gauge", float64(st.Storage.Shards))

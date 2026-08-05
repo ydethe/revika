@@ -30,7 +30,8 @@ func newMetricsFixture(t *testing.T) (*MetricsServer, *ledger.Ledger, *httptest.
 	}
 	t.Cleanup(func() { led.Close() })
 
-	ms := NewMetricsServer(h, led, nil /* no DHT */, "test-1.2.3", time.Now(), nil)
+	ms := NewMetricsServer(h, led, nil /* no DHT */, "test-1.2.3", "2026-08-05T12:00:00Z", time.Now(), nil)
+	ms.SetPoW("argon2id", 12)
 	ts := httptest.NewServer(ms.Handler())
 	t.Cleanup(ts.Close)
 	return ms, led, ts
@@ -84,6 +85,12 @@ func TestMetricsStatusReflectsLedger(t *testing.T) {
 	if st.Version != "test-1.2.3" {
 		t.Errorf("version = %q, want test-1.2.3", st.Version)
 	}
+	if st.BuildDate != "2026-08-05T12:00:00Z" {
+		t.Errorf("build_date = %q, want 2026-08-05T12:00:00Z", st.BuildDate)
+	}
+	if !st.PoW.Enabled || st.PoW.Puzzle != "argon2id" || st.PoW.Difficulty != 12 {
+		t.Errorf("pow = %+v, want enabled argon2id/12", st.PoW)
+	}
 	if st.PeerID == "" {
 		t.Error("empty peer_id")
 	}
@@ -117,6 +124,9 @@ func TestMetricsPrometheus(t *testing.T) {
 		"# TYPE revika_gc_runs_total counter",
 		"revika_gc_runs_total 0",
 		"revika_owner_bytes_used{owner=",
+		`revika_build_info{version="test-1.2.3",build_date="2026-08-05T12:00:00Z"} 1`,
+		`revika_pow_enabled{puzzle="argon2id"} 1`,
+		"revika_pow_difficulty_bits 12",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output missing %q\n---\n%s", want, body)
@@ -141,7 +151,7 @@ func TestMetricsGCAndQuota(t *testing.T) {
 	gc.Record(3, 1, 2, time.Unix(1_700_000_000, 0))
 	gc.Record(2, 0, 0, time.Unix(1_700_000_060, 0))
 
-	ms := NewMetricsServer(h, led, nil, "v", time.Now(), nil)
+	ms := NewMetricsServer(h, led, nil, "v", "unknown", time.Now(), nil)
 	ms.SetGCStats(gc)
 	ts := httptest.NewServer(ms.Handler())
 	t.Cleanup(ts.Close)
