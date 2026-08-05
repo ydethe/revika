@@ -201,11 +201,13 @@ authorization error. See Architecture.md §5.
   no provider serves maps to `store.ErrNotFound` so the pipeline rebuilds from
   survivors. Writes return `ErrReadOnly`.
 - `PlacementStore` (embeds `DHTStore`; is a `stripe.Putter`) — the write-side store
-  a User stores through. It spreads shards round-robin across a candidate node set
-  so consecutive k+m shards land on distinct nodes (failure-domain diversity).
-  `NewPlacementStore` requires a non-empty node set and a signer; `Put`/`PutStripe`
-  issue signed writes (`SetGrantExpiry` stamps repair-grant expiry); `Delete` drops
-  the owner's claim from every provider best-effort. Reads inherit `DHTStore`.
+  a User stores through. It spreads shards across a candidate node set so consecutive
+  k+m shards land on distinct nodes (failure-domain diversity), delegating the choice
+  to a pluggable `placement.Selector` (see [`internal/placement`](../placement/README.md);
+  default round-robin, swappable via `SetSelector`). `NewPlacementStore` requires a
+  non-empty node set and a signer; `Put`/`PutStripe` issue signed writes
+  (`SetGrantExpiry` stamps repair-grant expiry); `Delete` drops the owner's claim from
+  every provider best-effort. Reads inherit `DHTStore`.
 - `RepairStore` (embeds `DHTStore`) — the store the repair engine
   (`internal/repair`) drives, scoped to a single stripe (carries its `Descriptor`
   and grant). Reads consult the repairing node's **own local store first** then the

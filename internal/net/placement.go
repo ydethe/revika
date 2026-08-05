@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"revika/internal/cap"
+	"revika/internal/placement"
 	"revika/internal/store"
 	"revika/internal/stripe"
 )
@@ -111,18 +111,19 @@ func (s *DHTStore) ensureConnected(ctx context.Context, pi peer.AddrInfo) error 
 // spreads shards across a set of candidate nodes so no single node holds enough
 // of any file to matter — the point of erasure coding "over the internet".
 //
-// Placement policy (first cut): round-robin across the candidate nodes. Because
-// a chunk's k+m shards are Put consecutively by the pipeline, they land on
-// consecutive distinct nodes whenever at least k+m candidates exist, giving the
-// failure-domain diversity the erasure margin depends on. Each receiving node
-// announces its own provider record on Put (Server.SetAnnouncer), so the shard
-// becomes discoverable immediately.
+// Placement policy: node selection is delegated to internal/placement (default
+// placement.RoundRobin). Because a chunk's k+m shards are Put consecutively by
+// the pipeline, a round-robin selector lands them on consecutive distinct nodes
+// whenever at least k+m candidates exist, giving the failure-domain diversity
+// the erasure margin depends on. Swap the policy (capacity-aware, domain-aware)
+// with SetSelector. Each receiving node announces its own provider record on Put
+// (Server.SetAnnouncer), so the shard becomes discoverable immediately.
 //
 // Reads (Get/Has) are resolved via the DHT exactly like DHTStore: placement
 // decides where a shard goes, provider records record where it landed.
 //
 // Defence controls (security/Defence.md; primitive P16 in security/frameworks.md):
-//   SC-36 (Distributed Processing and Storage) — round-robin placement spreads a stripe's k+m
+//   SC-36 (Distributed Processing and Storage) — placement spreads a stripe's k+m
 //         shards across distinct nodes so no sub-k subset sits in one failure domain.
 type PlacementStore struct {
 	*DHTStore
@@ -132,8 +133,11 @@ type PlacementStore struct {
 	// (0 = never expire). Set via SetGrantExpiry.
 	grantExpiry int64
 
-	mu   sync.Mutex
-	next int
+	// sel picks the target node per shard; cand is the candidate view of nodes
+	// it selects over, and byNodeID maps a placement.NodeID back to its peer.ID.
+	sel      placement.Selector
+	cand     []placement.Node
+	byNodeID map[placement.NodeID]peer.ID
 }
 
 var (
@@ -150,23 +154,44 @@ func NewPlacementStore(h host.Host, disc *Discovery, nodes []peer.ID, signer cap
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("revika/net: no storage nodes available to place shards on")
 	}
-	return &PlacementStore{DHTStore: NewDHTStore(h, disc), nodes: nodes, signer: signer}, nil
+	cand := make([]placement.Node, len(nodes))
+	byNodeID := make(map[placement.NodeID]peer.ID, len(nodes))
+	for i, id := range nodes {
+		nid := placement.NodeID(id.String())
+		cand[i] = placement.Node{ID: nid}
+		byNodeID[nid] = id
+	}
+	return &PlacementStore{
+		DHTStore: NewDHTStore(h, disc),
+		nodes:    nodes,
+		signer:   signer,
+		sel:      placement.NewRoundRobin(),
+		cand:     cand,
+		byNodeID: byNodeID,
+	}, nil
 }
 
 // Nodes returns the candidate node set (for diagnostics/logging).
 func (p *PlacementStore) Nodes() []peer.ID { return p.nodes }
 
+// SetSelector swaps the node-selection policy (default placement.RoundRobin).
+// Call before storing; it is not safe to change concurrently with Put.
+func (p *PlacementStore) SetSelector(sel placement.Selector) { p.sel = sel }
+
 // SetGrantExpiry sets the unix-timestamp expiry stamped into the repair grants
 // attached by PutStripe (0 = never expire, the default). Call before storing.
 func (p *PlacementStore) SetGrantExpiry(ts int64) { p.grantExpiry = ts }
 
-// nextTarget picks the next node in round-robin order.
+// nextTarget picks the next node via the placement selector, mapping its
+// NodeID back to the peer.ID to dial. The candidate set is fixed and non-empty
+// (NewPlacementStore rejects an empty set), so Pick cannot fail here; any error
+// falls back to the first node rather than dropping the shard.
 func (p *PlacementStore) nextTarget() peer.ID {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	target := p.nodes[p.next%len(p.nodes)]
-	p.next++
-	return target
+	nid, err := p.sel.Pick(p.cand)
+	if err != nil {
+		return p.nodes[0]
+	}
+	return p.byNodeID[nid]
 }
 
 // signedTo returns a signed NetStore for target carrying the placement's grant

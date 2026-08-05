@@ -112,8 +112,10 @@ internal/
              Provider / Windows Cloud Filter / Linux GVfs; Manifest impl over the manifest DAG with
              stable ItemIDs, DAG-diff change enumeration, and a RootStore seam for the (planned) DHT
              root publish
-  placement/ node selection policy (round-robin cut lives in net/ for now; richer policy planned)
-  sync/      daemon folder-watch + reconcile (planned)
+  placement/ node selection policy — pluggable Selector (round-robin, smooth weighted
+             round-robin) + failure-domain Spread; wired into net.PlacementStore
+  sync/      poll-based folder-watch daemon + three-way reconcile engine over a
+             provider.Provider (bidirectional, conflict policies)
 ```
 
 Terms: **shard/share** = an erasure-coded encrypted piece of a file; **ledger** = node-side
