@@ -64,6 +64,10 @@ const (
 // build time with -ldflags="-X main.version=v1.2.3".
 var version = "dev"
 
+// buildDate is the UTC timestamp the binary was built, reported on startup.
+// Override at build time with -ldflags="-X main.buildDate=2026-08-05T12:00:00Z".
+var buildDate = "unknown"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "revika-node:", err)
@@ -245,6 +249,7 @@ func run() error {
 	}
 	log.Info("revika-node started",
 		"version", version,
+		"buildDate", buildDate,
 		"peer", h.ID().String(),
 		"addrs", addrs,
 		"shards", shardsDir,
@@ -254,6 +259,7 @@ func run() error {
 		"repair", *dhtOn && *repairOn,
 		"metrics", *metricsAddr,
 	)
+	fmt.Printf("revika-node %s (built %s)\n", version, buildDate)
 	fmt.Println("Peer ID:", h.ID())
 	fmt.Println("Listening on:")
 	for _, a := range h.Addrs() {

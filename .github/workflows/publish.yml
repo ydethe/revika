@@ -65,6 +65,16 @@ jobs:
           flavor: |
             latest=auto
 
+      # Build metadata stamped into the binary and shown in the node's startup
+      # logs. VERSION is metadata-action's derived version (the semver tag, or
+      # the short commit SHA for branch/edge builds); BUILD_DATE is the UTC
+      # build time.
+      - name: Derive build metadata
+        id: build
+        run: |
+          echo "version=${{ steps.meta.outputs.version }}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Build & push
         uses: docker/build-push-action@v6
         with:
@@ -74,5 +84,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build.outputs.version }}
+            BUILD_DATE=${{ steps.build.outputs.date }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}

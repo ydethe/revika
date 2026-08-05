@@ -25,6 +25,11 @@
 # is unchanged for single-arch local builds.
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
 ARG TARGETOS TARGETARCH
+# Build metadata stamped into the revika-node binary via -ldflags and reported
+# on startup (and on /status, /metrics). Passed by CI (see publish.yml); they
+# default here so a plain local `docker build` still produces a working image.
+ARG VERSION=dev
+ARG BUILD_DATE=unknown
 ENV CGO_ENABLED=0 GOTOOLCHAIN=auto GOFLAGS=-mod=mod
 WORKDIR /src
 
@@ -41,7 +46,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/revika-node ./cmd/revika-node && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+      -ldflags="-s -w -X main.version=${VERSION} -X main.buildDate=${BUILD_DATE}" \
+      -o /out/revika-node ./cmd/revika-node && \
     GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/revika-ctl  ./cmd/revika-ctl
 
 # A pre-owned data dir so the named/anonymous volume inherits nonroot ownership
