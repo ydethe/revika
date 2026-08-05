@@ -101,6 +101,7 @@ func run() error {
 		connGrace   = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
 		powDiff     = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). Clients must keygen with a matching -pow-puzzle and difficulty >= this")
 		powPuzzle   = flag.String("pow-puzzle", "argon2id", "proof-of-work puzzle owner identities must satisfy: argon2id (memory-hard) or sha256 (fast). Must match what clients mint with")
+		publicIP    = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
 		listen      multiFlag
 		bootstrap   multiFlag
 	)
@@ -168,6 +169,7 @@ func run() error {
 		ListenAddrs:  listen,
 		IdentityPath: filepath.Join(*dataDir, "keys", "node.key"),
 		EnableMDNS:   *mdnsOn,
+		PublicIP:     *publicIP,
 		Defense:      defense,
 		Log:          log,
 	})

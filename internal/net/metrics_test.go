@@ -94,6 +94,17 @@ func TestMetricsStatusReflectsLedger(t *testing.T) {
 	if st.PeerID == "" {
 		t.Error("empty peer_id")
 	}
+	// Every listen address must have a matching bootstrap string ending in the
+	// node's own /p2p/<peer-id>, ready to paste into `revika-ctl -bootstrap`.
+	if len(st.Bootstrap) != len(st.ListenAddrs) || len(st.Bootstrap) == 0 {
+		t.Fatalf("bootstrap = %v, want one per listen addr (%v)", st.Bootstrap, st.ListenAddrs)
+	}
+	for i, b := range st.Bootstrap {
+		want := st.ListenAddrs[i] + "/p2p/" + st.PeerID
+		if b != want {
+			t.Errorf("bootstrap[%d] = %q, want %q", i, b, want)
+		}
+	}
 	if st.Storage.Shards != 2 || st.Storage.BytesUsed != 300 || st.Storage.Clients != 1 {
 		t.Errorf("storage = %+v, want 2 shards / 300 bytes / 1 client", st.Storage)
 	}
@@ -127,6 +138,9 @@ func TestMetricsPrometheus(t *testing.T) {
 		`revika_build_info{version="test-1.2.3",build_date="2026-08-05T12:00:00Z"} 1`,
 		`revika_pow_enabled{puzzle="argon2id"} 1`,
 		"revika_pow_difficulty_bits 12",
+		"# TYPE revika_bootstrap_info gauge",
+		"revika_bootstrap_info{addr=",
+		"/p2p/",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics output missing %q\n---\n%s", want, body)

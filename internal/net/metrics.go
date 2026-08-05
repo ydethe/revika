@@ -38,8 +38,9 @@ const metricsShutdownTimeout = 5 * time.Second
 // Discovery; it holds no state of its own beyond the start time and version.
 //
 // Defence controls (security/Defence.md; primitive P27 in security/frameworks.md):
-//   AU-6 (Audit Record Review, Analysis, and Reporting) — partial: exposes Prometheus metrics
-//        and a JSON status snapshot for external review; no in-node analysis/alerting (Defence.md notes).
+//
+//	AU-6 (Audit Record Review, Analysis, and Reporting) — partial: exposes Prometheus metrics
+//	     and a JSON status snapshot for external review; no in-node analysis/alerting (Defence.md notes).
 type MetricsServer struct {
 	h         host.Host
 	led       *ledger.Ledger
@@ -116,15 +117,19 @@ func (m *MetricsServer) Serve(ctx context.Context, addr string) error {
 
 // Status is the JSON body returned by /status.
 type Status struct {
-	PeerID        string      `json:"peer_id"`
-	Version       string      `json:"version"`
-	BuildDate     string      `json:"build_date"`
-	UptimeSeconds float64     `json:"uptime_seconds"`
-	ListenAddrs   []string    `json:"listen_addrs"`
-	PoW           PoWInfo     `json:"pow"`
-	Storage       StorageInfo `json:"storage"`
-	Network       NetworkInfo `json:"network"`
-	GC            GCSnapshot  `json:"gc"`
+	PeerID        string   `json:"peer_id"`
+	Version       string   `json:"version"`
+	BuildDate     string   `json:"build_date"`
+	UptimeSeconds float64  `json:"uptime_seconds"`
+	ListenAddrs   []string `json:"listen_addrs"`
+	// Bootstrap holds this node's dialable addresses each terminated with
+	// /p2p/<peer-id>: ready to paste into `revika-ctl -bootstrap <addr>` to join
+	// the network through this node. Mirrors ListenAddrs with the peer ID attached.
+	Bootstrap []string    `json:"bootstrap"`
+	PoW       PoWInfo     `json:"pow"`
+	Storage   StorageInfo `json:"storage"`
+	Network   NetworkInfo `json:"network"`
+	GC        GCSnapshot  `json:"gc"`
 }
 
 // PoWInfo is the proof-of-work admission policy this node enforces on writes:
@@ -177,8 +182,10 @@ func (m *MetricsServer) snapshot() (Status, error) {
 		UptimeSeconds: time.Since(m.started).Seconds(),
 		PoW:           m.pow,
 	}
+	id := m.h.ID().String()
 	for _, a := range m.h.Addrs() {
 		st.ListenAddrs = append(st.ListenAddrs, a.String())
+		st.Bootstrap = append(st.Bootstrap, a.String()+"/p2p/"+id)
 	}
 
 	ls, err := m.led.Stats()
@@ -308,6 +315,14 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintln(w, "# TYPE revika_pow_enabled gauge")
 	fmt.Fprintf(w, "revika_pow_enabled{puzzle=%q} %d\n", st.PoW.Puzzle, b2i(st.PoW.Enabled))
 	metric("revika_pow_difficulty_bits", "Required proof-of-work difficulty in leading zero bits (0 = disabled).", "gauge", float64(st.PoW.Difficulty))
+
+	// Dialable bootstrap addresses (multiaddr + /p2p/<id>) for `revika-ctl
+	// -bootstrap`, one info-style line (constant 1) per address, addr in a label.
+	fmt.Fprintln(w, "# HELP revika_bootstrap_info Dialable bootstrap address for revika-ctl -bootstrap (constant 1; address in the addr label).")
+	fmt.Fprintln(w, "# TYPE revika_bootstrap_info gauge")
+	for _, addr := range st.Bootstrap {
+		fmt.Fprintf(w, "revika_bootstrap_info{addr=%q} 1\n", addr)
+	}
 
 	metric("revika_uptime_seconds", "Node uptime in seconds.", "gauge", st.UptimeSeconds)
 	metric("revika_shards_total", "Distinct shards stored on this node.", "gauge", float64(st.Storage.Shards))

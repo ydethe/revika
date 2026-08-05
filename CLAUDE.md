@@ -68,10 +68,10 @@ go test ./...             # run all tests (use -race)
 go test ./path/to/pkg     # test a single package
 go test -run TestName ./path/to/pkg
 go vet ./...
-go run ./cmd/revika-node  # Node daemon (-data -listen -mdns -dht -bootstrap -advertise
-                          #   -quota -lease-ttl -gc-interval -gc-expired-leases -repair
-                          #   -repair-interval -metrics -blocklist -conn-low -conn-high
-                          #   -conn-grace -pow-difficulty -pow-puzzle -v)
+go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -mdns -dht -bootstrap
+                          #   -advertise -quota -lease-ttl -gc-interval -gc-expired-leases
+                          #   -repair -repair-interval -metrics -blocklist -conn-low
+                          #   -conn-high -conn-grace -pow-difficulty -pow-puzzle -v)
 go run ./cmd/revika-ctl   # User client: keygen | cp | ls | rm | share | node (see -h)
 ```
 

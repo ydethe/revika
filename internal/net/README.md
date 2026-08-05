@@ -41,12 +41,22 @@ Exported errors: `ErrRemote`, `ErrUnauthorized`, `ErrQuotaExceeded`.
 `NewHost(HostConfig)` builds the libp2p host. `HostConfig` carries `ListenAddrs`
 (defaulting to all interfaces on OS-assigned TCP + QUIC-v1 ports), `IdentityPath`
 (a persistent Ed25519 identity loaded or generated+persisted at 0600; empty means
-an ephemeral in-memory key for tests), `EnableMDNS`, and `Log`.
+an ephemeral in-memory key for tests), `EnableMDNS`, `PublicIP`, `Defense`, and `Log`.
+
+**Public IP / NAT.** A node behind NAT only observes private/unspecified listen
+addresses, so WAN peers cannot dial it. Set `HostConfig.PublicIP` (the node's
+`-public-ip` flag) to the node's externally reachable IPv4/IPv6 address:
+`publicAddrsFactory` then installs a libp2p `AddrsFactory` that advertises, for
+every listen address, a public variant with the IP swapped for `PublicIP` and the
+transport/port preserved (listed first so peers prefer the routable address). This
+assumes the public port equals the bound port (a 1:1 port forward, which holds for
+fixed `-listen` ports mapped straight through). The public variants flow through to
+the DHT and to `/status`'s bootstrap strings.
 
 **LAN discovery (mDNS).** When `EnableMDNS` is set, `startMDNS` runs an mDNS service
 scoped by the `revika` service tag. `mdnsNotifee.HandlePeerFound` best-effort dials
 each newly seen LAN peer and logs it once. NAT traversal / transport concerns are
-handled by libp2p itself (QUIC + TCP transports, the identify service that
+otherwise handled by libp2p itself (QUIC + TCP transports, the identify service that
 populates peer addresses); revika does not roll its own.
 
 ## Self-defence (`defense.go`)
@@ -227,13 +237,15 @@ policy (`SetPoW`) are optional. `Serve(ctx, addr)` runs it with graceful shutdow
 - `GET /healthz` — liveness.
 - `GET /readyz` — readiness (DHT routing table non-empty when the DHT is on; always
   ready otherwise).
-- `GET /status` — JSON `Status` snapshot: general info (including `build_date` and the
-  `PoWInfo` admission policy — enabled, puzzle name, difficulty bits), `StorageInfo`
-  (shards, bytes, quota, per-`OwnerInfo` breakdown from the ledger), `NetworkInfo`
-  (connected peers, routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
+- `GET /status` — JSON `Status` snapshot: general info (including `build_date`, the
+  `bootstrap` strings, and the `PoWInfo` admission policy — enabled, puzzle name,
+  difficulty bits), `StorageInfo` (shards, bytes, quota, per-`OwnerInfo` breakdown
+  from the ledger), `NetworkInfo` (connected peers, routing-table size, per-`PeerInfo`
+  cartography), and `GCSnapshot`. `bootstrap` mirrors `listen_addrs` with the node's
+  `/p2p/<peer-id>` appended — each entry is ready to paste into `revika-ctl -bootstrap`.
 - `GET /metrics` — Prometheus text exposition of the same snapshot, including
-  `revika_build_info{version,build_date}`, `revika_pow_enabled{puzzle}`, and
-  `revika_pow_difficulty_bits`.
+  `revika_build_info{version,build_date}`, `revika_bootstrap_info{addr}`,
+  `revika_pow_enabled{puzzle}`, and `revika_pow_difficulty_bits`.
 
 `GCStats` (`gcstats.go`) is a thread-safe counter shared between a node's GC loop
 (`Record`) and the MetricsServer (`Snapshot` → `GCSnapshot`), reporting cycles run,

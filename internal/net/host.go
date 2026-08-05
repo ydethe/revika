@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // mdnsServiceTag scopes LAN discovery to revika peers.
@@ -38,6 +40,15 @@ type HostConfig struct {
 	// EnableMDNS turns on mDNS LAN peer discovery (auto-dial peers found on the
 	// local network). Useful for development and single-LAN deployments.
 	EnableMDNS bool
+	// PublicIP, when set, is the node's externally reachable IP address (IPv4 or
+	// IPv6). A node behind NAT only observes private/unspecified listen addresses,
+	// so peers cannot dial it from the WAN. Setting this installs an address
+	// factory that advertises, for every listen address, a public variant with the
+	// IP replaced by PublicIP and the transport/port preserved. This assumes the
+	// public port equals the bound port (e.g. a 1:1 port forward), which holds for
+	// fixed -listen ports mapped straight through. Empty leaves libp2p's observed
+	// addresses untouched.
+	PublicIP string
 	// Defense, when non-nil, installs the node's self-defence layers (resource
 	// manager, connection manager, and a static blocklist gater) on the host —
 	// see defense.go. Nil (the default, used by tests) leaves libp2p's own
@@ -76,6 +87,16 @@ func NewHost(cfg HostConfig) (host.Host, error) {
 		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings(listen...),
 	}
+	// Advertise a public IP for a NAT'd node so WAN peers can dial it. When set,
+	// every listen address gains a public-IP variant in the addresses the host
+	// announces (and thus in the DHT and on /status's bootstrap strings).
+	if cfg.PublicIP != "" {
+		factory, err := publicAddrsFactory(cfg.PublicIP)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, libp2p.AddrsFactory(factory))
+	}
 	// Node self-defence: resource manager + connection manager + optional static
 	// blocklist gater. Only wired when the caller asks for it (nodes do; tests
 	// leave it nil and run on libp2p defaults).
@@ -105,6 +126,55 @@ func NewHost(cfg HostConfig) (host.Host, error) {
 		}
 	}
 	return h, nil
+}
+
+// publicAddrsFactory builds a libp2p address factory that advertises a public-IP
+// variant of every listen address alongside the originals. For each announced
+// multiaddr whose leading component is an IPv4/IPv6 address, it emits a copy with
+// that IP swapped for publicIP and the remaining transport/port kept intact, so a
+// NAT'd node (which only observes private/unspecified addresses) still tells peers
+// a dialable WAN address. The public variants are listed first; duplicates are
+// dropped. It errors if publicIP is not a valid IP literal.
+func publicAddrsFactory(publicIP string) (func([]ma.Multiaddr) []ma.Multiaddr, error) {
+	ip := net.ParseIP(publicIP)
+	if ip == nil {
+		return nil, fmt.Errorf("revika/net: invalid public IP %q", publicIP)
+	}
+	proto := "ip6"
+	if ip.To4() != nil {
+		proto = "ip4"
+	}
+	pub, err := ma.NewComponent(proto, ip.String())
+	if err != nil {
+		return nil, fmt.Errorf("revika/net: build public addr %q: %w", publicIP, err)
+	}
+
+	return func(addrs []ma.Multiaddr) []ma.Multiaddr {
+		out := make([]ma.Multiaddr, 0, len(addrs)*2)
+		seen := make(map[string]struct{}, len(addrs)*2)
+		add := func(a ma.Multiaddr) {
+			s := a.String()
+			if _, dup := seen[s]; dup {
+				return
+			}
+			seen[s] = struct{}{}
+			out = append(out, a)
+		}
+		// Public variants first so peers prefer the routable address.
+		for _, a := range addrs {
+			first, rest := ma.SplitFirst(a)
+			if rest == nil || first == nil {
+				continue
+			}
+			if code := first.Protocol().Code; code == ma.P_IP4 || code == ma.P_IP6 {
+				add(pub.Encapsulate(rest))
+			}
+		}
+		for _, a := range addrs {
+			add(a)
+		}
+		return out
+	}, nil
 }
 
 // notifyConnections wires a network notifiee that logs each transport-level peer
