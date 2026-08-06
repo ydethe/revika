@@ -55,6 +55,11 @@ type Server struct {
 	// an error — it advertises no capacity signal and neither attracts nor sheds
 	// shards via rebalancing.
 	loadSource LoadSource
+
+	// rootResolver, when set, answers RootProtocol queries (a client resolving a
+	// User's current signed RootPointer). Left nil, the node does not register the
+	// root handler — it offers no root-resolution service.
+	rootResolver RootResolver
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -128,6 +133,9 @@ func (srv *Server) Register(h host.Host) {
 	h.SetStreamHandler(ProbeProtocol, srv.handleProbe)
 	h.SetStreamHandler(BalanceProtocol, srv.handleLoad)
 	h.SetStreamHandler(ParamsProtocol, srv.handleParams)
+	if srv.rootResolver != nil {
+		h.SetStreamHandler(RootProtocol, srv.handleRoot)
+	}
 }
 
 // handleShard serves one shard-protocol request on s. The wire contract is one

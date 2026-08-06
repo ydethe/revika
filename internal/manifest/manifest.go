@@ -45,6 +45,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"revika/internal/cap"
@@ -90,6 +91,50 @@ type ReadCap struct {
 	Shards     []store.ShardID
 }
 
+// WriteCap is the authority to advance a User's namespace — i.e. to sign a new
+// RootPointer. It is exactly the Ed25519 signing key (internal/cap): whoever
+// holds it is the single writer for that owner identity. Naming it here
+// completes the write→read→verify cap vocabulary the architecture describes
+// (§4): a WriteCap mints RootPointers, a ReadCap decrypts a blob, and a
+// VerifyCap checks a blob's integrity without decrypting it. It is an alias, not
+// a new type, so a WriteCap is interchangeable with a cap.SignKey everywhere.
+type WriteCap = cap.SignKey
+
+// VerifyCap is a ReadCap with its decryption Key removed: it still locates a
+// blob's shards (content addresses) and carries the erasure parameters, so it
+// can fetch and integrity-check the ciphertext, but it cannot decrypt. It is the
+// capability published in a DHT root record and used by repair — both need to
+// find and verify shards without ever seeing plaintext. Deriving it is a strict
+// downgrade (ReadCap.VerifyCap), so a VerifyCap can never be upgraded back into a
+// ReadCap that decrypts: VerifyCap.ReadCap re-embeds a zero key.
+type VerifyCap struct {
+	Kind       Kind
+	Compressed bool
+	K, M       int
+	Shards     []store.ShardID
+}
+
+// VerifyCap derives the key-stripped verify capability from a ReadCap. It keeps
+// everything a reader needs to *find and check* the blob (kind, erasure params,
+// content-addressed shard IDs) and drops only the AES key, so the result is safe
+// to publish where a ReadCap would leak confidentiality (the DHT root record).
+func (c ReadCap) VerifyCap() VerifyCap {
+	return VerifyCap{Kind: c.Kind, Compressed: c.Compressed, K: c.K, M: c.M, Shards: c.Shards}
+}
+
+// ReadCap re-embeds a VerifyCap as a ReadCap with a zero decryption key. The
+// result serializes through the existing ReadCap codec (the zero key hex-encodes
+// and round-trips cleanly) so the wire/DHT form reuses one marshaller; it cannot
+// decrypt anything (its key is all-zero), matching the verify-only authority. It
+// is also the canonical projection the RootPointer signs over, so one signature
+// validates both a full-cap pointer (local) and a key-stripped one (DHT).
+func (v VerifyCap) ReadCap() ReadCap {
+	return ReadCap{Kind: v.Kind, Compressed: v.Compressed, K: v.K, M: v.M, Shards: v.Shards}
+}
+
+// Params returns the erasure parameters a VerifyCap was stored with.
+func (v VerifyCap) Params() erasure.Params { return erasure.Params{K: v.K, M: v.M} }
+
 // Params returns the erasure parameters a ReadCap was stored with.
 func (c ReadCap) Params() erasure.Params { return erasure.Params{K: c.K, M: c.M} }
 
@@ -132,6 +177,34 @@ func getBlob(ctx context.Context, s store.Store, c ReadCap, want Kind) ([]byte, 
 		return nil, fmt.Errorf("manifest: load %s blob: %w", c.Kind, err)
 	}
 	return data, nil
+}
+
+// VerifyBlob checks a blob's availability and integrity from a VerifyCap alone —
+// no decryption key. It fetches each shard by content address (a content-address
+// store validates the hash on Get, so a corrupt shard reads as missing) and
+// confirms at least K are retrievable, meaning the blob is erasure-recoverable.
+// This is the standalone use of a verify capability: repair and a health probe
+// can attest a subtree is intact without ever holding the read key.
+func VerifyBlob(ctx context.Context, s store.Store, v VerifyCap) error {
+	if v.K <= 0 {
+		return fmt.Errorf("manifest: verify cap has non-positive K %d", v.K)
+	}
+	present := 0
+	for _, id := range v.Shards {
+		_, err := s.Get(ctx, id)
+		switch {
+		case err == nil:
+			present++
+		case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrCorrupt):
+			// A missing or hash-failing shard counts as lost; erasure covers up to M.
+		default:
+			return fmt.Errorf("manifest: verify shard %s: %w", id, err)
+		}
+	}
+	if present < v.K {
+		return fmt.Errorf("manifest: blob unrecoverable: %d of %d shards present, need %d", present, len(v.Shards), v.K)
+	}
+	return nil
 }
 
 // readCapJSON is the wire/serialized form of a ReadCap: fixed-width byte arrays

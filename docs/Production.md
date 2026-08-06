@@ -12,23 +12,27 @@ then hardening the design already calls for, then deferred layers and ops polish
 
 ## 1. Architectural blockers — not a working distributed product yet
 
-- **The mutable root pointer never leaves the machine.** `manifest.RootPointer` is
-  signed and persisted only to a local `root.json`
-  (`internal/provider/file_rootstore.go`; `MemRootStore` is the only other impl).
-  The DHT / `/revika/root` publish path — all of Architecture §4 and the
-  `/revika/root/1.0.0` protocol — is planned. Without it there is no multi-device
-  access, and sharing only works by hand-carrying a sealed file out of band
-  (`cmd/revika-ctl/main.go:177`). This is *the* gap between "encode/store/repair
-  library" and "self-hosted Drive."
-- **Manifest and directory blobs aren't encrypted on the pipeline path yet.**
-  Build-order step 4 is in progress: encrypting the file manifest and encrypted
-  directories are still open — a confidentiality gap against the
-  everything-encrypted-client-side principle.
-- **Capability chain is half-built.** Cap *delivery* (ML-KEM wrap/unwrap) exists,
-  but the write-cap → read-cap → verify-cap derivation chain and signing keys for
-  mutable objects don't (step 5). **Revocation is not implemented**
-  (`internal/stripe/stripe.go:151`) — sharing is give-away-a-read-cap with no
-  take-back.
+- **The mutable root pointer is now published, but has no production hardening.**
+  `manifest.RootPointer` is persisted to a durable local `root.json`
+  (`internal/provider/file_rootstore.go`) and published to the DHT keyed by the
+  owner pubkey (`internal/net/root.go`, `provider.DHTRootStore`/`MultiRootStore`),
+  with a complementary `/revika/root/1.0.0` node stream (`root_proto.go`). A 12h
+  `RepublishRootLoop` refreshes it before the DHT's 48h record expiry.
+  `revika-ctl` publishes on every `cp`/`rm`/`revoke` commit and resolves by
+  `ls -owner <pubkey>`. What remains for production: republish scheduling for the
+  *client* (today only a node with a root would run the loop; a client publishes
+  synchronously on commit), and multi-device write reconciliation (§3.7 sync).
+- **Manifest and directory blobs are encrypted.** `StoreFileManifest`/`StoreDir` go
+  through `pipeline.StoreBlob` → AES-256-GCM, so the namespace is ciphertext at rest
+  like file data (build-order step 4 done).
+- **Capability chain is complete; revocation denies future reads only.** Cap
+  *delivery* (ML-KEM wrap/unwrap) plus the write-cap → read-cap → verify-cap
+  derivation chain (`internal/manifest`) and the Ed25519 signing identity for the
+  mutable root all exist. **Revocation is implemented** by re-keying
+  (`manifest.Rekey` → `revika-ctl revoke`): the shared subtree is re-encrypted down
+  to data chunks, the root advances, and orphaned shards are reclaimed. Honest limit
+  — it revokes *future* reads; bytes/keys a recipient already downloaded cannot be
+  clawed back.
 - **Sync daemon and mount are absent as products.** `internal/sync` has the
   reconcile/poll logic but there is **no `cmd/revika-daemon` binary** — it runs only
   in tests. The FUSE / OS-mount layer (§3.8) is entirely planned. The actual
@@ -75,11 +79,22 @@ identity bans stay weak until then.
 
 To reach production as the product described, in order:
 
-1. **Publish the signed root pointer over the DHT** (§4) — unblocks the most.
-2. **Encrypt manifests/dirs and finish the read/write/verify cap chain with
-   revocation.**
+1. ~~**Publish the signed root pointer over the DHT** (§4).~~ **Done.** The signed
+   `RootPointer` is published as a DHT value record keyed by the owner's Ed25519
+   pubkey (`/revika/<owner>`), guarded by a `record.Validator` that re-verifies the
+   signature + owner-match and keeps the highest `Seq` (anti-rollback); it publishes
+   only the **verify projection** (no read key), is refreshed by a 12h republish loop
+   ahead of the DHT's 48h expiry, and is mirrored by a `/revika/root/1.0.0` node
+   stream. `revika-ctl` publishes on every `cp`/`rm`/`revoke` commit (best-effort,
+   behind the durable local `root.json`) and resolves by `ls -owner <pubkey>`.
+2. ~~**Encrypt manifests/dirs and finish the read/write/verify cap chain with
+   revocation.**~~ **Done.** Manifest/dir blobs are AES-256-GCM ciphertext; the
+   write→read→verify cap chain and `revoke`-by-rekey ship (future-reads-only limit).
 3. **Ship the sync daemon binary** (`cmd/revika-daemon`).
 4. **Write-verb rate limiting + proof-of-possession repair.**
+5. **Client-side republish scheduling** (today a client only publishes synchronously
+   on commit; a long-lived republish loop belongs to the sync daemon) and **multi-device
+   write reconciliation** (§3.7).
 
 Everything else — mount layer, anti-Sybil, payments, benchmarks, non-Linux
 support — layers on after that.

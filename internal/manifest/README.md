@@ -40,6 +40,27 @@ blob lists its children's caps) transitively commits to every descendant. A
 parent cap is thus a **Merkle root over its subtree**, and the namespace is a DAG
 of encrypted blobs anchored by one signed `RootPointer`.
 
+## The cap-derivation chain: `WriteCap → ReadCap → VerifyCap`
+
+Each level derives from the one above but never the one below, so you delegate
+exactly the privilege you intend (Architecture §3.5):
+
+- **`WriteCap = cap.SignKey`** (alias) — the Ed25519 signing key; the sole
+  authority to advance the `RootPointer`. Read + write.
+- **`ReadCap`** — read only: the per-blob AES key + shard content addresses.
+- **`VerifyCap = ReadCap.VerifyCap()`** — the read-cap **minus its AES key**: it
+  still locates and integrity-checks a blob's shards but cannot decrypt.
+  `manifest.VerifyBlob(ctx, s, v)` fetches the shards by content address and
+  confirms ≥ K are recoverable — repair and health probes attest a subtree
+  without ever holding the read key. `VerifyCap.ReadCap()` re-embeds a **zero**
+  key, so the downgrade is one-way (you can never turn a verify-cap back into a
+  decrypting read-cap).
+
+The public DHT root record carries only the verify projection. A `RootPointer`
+signs over `Root.VerifyCap().ReadCap().MarshalBinary()`, so the **identical
+signature** validates both the local full-key pointer and the key-stripped one
+published to the network — the reader's secret AES key never enters the digest.
+
 ## Naming is a namespace concern
 
 A file blob is **nameless** — addressed only by content. Its name lives in the
@@ -91,13 +112,31 @@ content-addressed blob would force needless rewrites on every rename.
   and shards. Missing intermediate directories are created. Backs put/rename.
 - **`GraftRemove(ctx, s, cfg, root, path) (ReadCap, error)`** — COW delete.
 
+### Revocation
+- **`Rekey(ctx, s, cfg, root ReadCap, subpath) (ReadCap, error)`** — re-encrypt the
+  subtree at `subpath` under **fresh keys**, down to the data chunks
+  (`pipeline.ReencryptFile` for files; `StoreDir`/`StoreFileManifest` mint fresh
+  blob keys per call), then `Graft` it back into a new root (CoW — siblings and
+  their shards untouched; empty `subpath` rekeys the whole namespace). A previously
+  shared cap named the *old* shard IDs, so once the bytes move to new content
+  addresses that cap can no longer locate them. The caller then advances the
+  `RootPointer` and reclaims the orphaned old shards. Needs **read access** (it
+  decrypts + re-encrypts), so a sign-key-only holder cannot rekey. Cost is
+  O(subtree bytes). This revokes *future* reads only — it cannot claw back bytes a
+  recipient already downloaded. Driven by `revika-ctl revoke rvk:<path>`.
+
 ### Root pointer (§4)
 - **`RootPointer{Owner, Root, Seq, TimeNS, Sig}`** — the one mutable anchor per
   User: a signed `owner-pubkey → root cap` record with a monotonic `Seq`.
 - **`SignRoot(k cap.SignKey, root ReadCap, seq, timeNS) (RootPointer, error)`** /
   **`(RootPointer).Verify() bool`** — Ed25519 sign/verify over a domain-separated
-  payload. Readers keep the highest verified `Seq` (anti-rollback). This package
-  takes no clock — `timeNS` is supplied by the caller — so it stays deterministic.
+  payload committing to the cap's **verify projection** (so the same signature holds
+  for the local full-key pointer and the key-stripped DHT record). Readers keep the
+  highest verified `Seq` (anti-rollback). This package takes no clock — `timeNS` is
+  supplied by the caller — so it stays deterministic. Publishing/resolving the
+  pointer over the network lives in [`internal/net`](../net/README.md) (`PutRoot`/
+  `GetRoot` + the `/revika/root` stream) and [`internal/provider`](../provider/README.md)
+  (`DHTRootStore`/`MultiRootStore`).
 
 ## Blob size budget (and the scale path)
 

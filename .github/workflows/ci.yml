@@ -2,7 +2,8 @@ name: CI
 
 # Test the solution: static checks + race-enabled unit tests, then a full
 # multi-node end-to-end run in containers (authorized round-trip, the
-# unauthorized-access checks, and the delete-protection checks) via docker
+# unauthorized-access checks, the delete-protection checks, and a directory-tree
+# round-trip that also exercises DHT root publication and revocation) via docker
 # compose.
 on:
   push:
@@ -72,6 +73,14 @@ jobs:
       # deleting (file survives); the owner then deletes successfully.
       - name: Delete-protection checks
         run: docker compose run --build --rm deleter
+
+      # Directory tree round-trip that also exercises the mutable-namespace path:
+      # stores a nested tree spread across all nodes, restores it byte-identically,
+      # shares a single file and a subtree (each sealed to the recipient's key),
+      # resolves the OWNER's root PUBLISHED to the DHT via `ls -owner`, then revokes
+      # a shared subtree (advancing the published seq + orphaning the shared cap).
+      - name: Directory tree, DHT publish & revocation round-trip
+        run: docker compose run --build --rm tree
 
       - name: Tear down
         if: always()

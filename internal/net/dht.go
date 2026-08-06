@@ -97,7 +97,16 @@ func NewDiscovery(ctx context.Context, h host.Host, cfg DiscoveryConfig) (*Disco
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	kad, err := dht.New(h, dht.Mode(cfg.Mode.libp2p()), dht.ProtocolPrefix(revikaDHTPrefix))
+	// NamespacedValidator registers rootValidator for the "revika" value namespace
+	// so PutValue/GetValue of a signed RootPointer is gated (signature + owner-key
+	// binding) and Select enforces monotonic Seq. It composes with the DHT's
+	// default namespaced validator; the usual "records must be pk/ipns" restriction
+	// is lifted because revika runs under its own ProtocolPrefix.
+	kad, err := dht.New(h,
+		dht.Mode(cfg.Mode.libp2p()),
+		dht.ProtocolPrefix(revikaDHTPrefix),
+		dht.NamespacedValidator(RootNamespace, rootValidator{}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("revika/net: new dht: %w", err)
 	}

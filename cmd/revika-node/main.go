@@ -255,6 +255,10 @@ func run() error {
 		}
 		defer disc.Close()
 		srv.SetAnnouncer(disc)
+		// Answer /revika/root queries from the DHT view, so a client with a
+		// connection to this node can resolve a User's signed RootPointer in one
+		// round-trip instead of a full DHT walk.
+		srv.SetRootResolver(disc)
 		if *advertiseOn {
 			disc.AdvertiseLoop(ctx)
 		}

@@ -59,9 +59,9 @@ addressing (IPFS-style provider records).
 ├─────────────────────────────────────────────┤
 │ Sync engine (daemon only)                     │  watch folder ⇄ network        [planned]
 ├─────────────────────────────────────────────┤
-│ Filesystem / metadata layer                   │  dirs, manifests, mutable root [partial]
+│ Filesystem / metadata layer                   │  dirs, manifests, mutable root [implemented]
 ├─────────────────────────────────────────────┤
-│ Capability & crypto layer                     │  per-object keys, caps         [partial]
+│ Capability & crypto layer                     │  per-object keys, cap chain    [implemented]
 ├─────────────────────────────────────────────┤
 │ Encoding pipeline                             │  chunk → compress → encrypt → erasure  [implemented]
 ├─────────────────────────────────────────────┤
@@ -342,8 +342,9 @@ cap grants exactly its subtree and everything reachable from it, no more. Concre
 sealed to the recipient's key: a **sealed shared root** the recipient opens with
 their private key and uses as their `-root`, browsing it with `ls` and
 reconstructing files with `cp` (which auto-detect file vs. subtree from the cap's
-`Kind`). **Still planned:** the derivation chain (write-cap → read-cap → verify-cap),
-and a compact string form for caps.
+`Kind`). The derivation chain (write-cap → read-cap → verify-cap) is
+**[implemented]** in `internal/manifest` (`WriteCap` alias, `ReadCap.VerifyCap()`,
+`VerifyCap.ReadCap()`); **still planned** is a compact string form for caps.
 
 The **capability** ("cap") is how access is named and delegated:
 
@@ -351,12 +352,18 @@ The **capability** ("cap") is how access is named and delegated:
   read the object. Nothing else is needed, and nodes never see it.
 - A **write-capability** for mutable objects = a signing private key; possession lets you
   publish new versions.
-- Derivation chain: **write-cap → read-cap → verify-cap**. Each level can be derived from
-  the one above but not below, so you can hand out exactly the privilege you intend:
-  - write-cap: full read/write,
-  - read-cap: read only,
-  - verify-cap: check integrity/repair without reading plaintext (lets a repairer or node
-    validate shards without decryption rights).
+- Derivation chain: **write-cap → read-cap → verify-cap** — **[implemented]**
+  (`internal/manifest`). Each level derives from the one above but not below, so you can
+  hand out exactly the privilege you intend:
+  - write-cap (`WriteCap` = the Ed25519 `cap.SignKey`): full read/write — the sole authority
+    to sign a new `RootPointer`,
+  - read-cap (`ReadCap`): read only — the per-blob AES key plus its shard content addresses,
+  - verify-cap (`VerifyCap = ReadCap.VerifyCap()`): the read-cap minus its AES key — locates
+    and integrity-checks a blob's shards (`manifest.VerifyBlob`) without decryption rights, so
+    a repairer or the public DHT record can carry it. `VerifyCap.ReadCap()` re-embeds a zero
+    key, making the downgrade one-way. A `RootPointer` signs over the *verify projection* of
+    its cap, so the identical signature validates both the local full-key pointer and the
+    key-stripped one published to the DHT.
 
 **Key material:**
 
@@ -419,8 +426,12 @@ recipient has the keys, they can never be taken back). The valuable properties P
 delegation without disclosing the master key, conditions, and revocation — are better
 obtained here at the **cap layer**, PQC-safely and without a proxy or a PKG:
 
-- **Revocation** via key rotation + indirection: put per-file/per-directory keys behind a
-  small key-holder blob the User re-wraps; revoking future reads = rotating that blob.
+- **Revocation** via re-keying + CoW — **[implemented]** (`manifest.Rekey`,
+  `pipeline.ReencryptFile`, `revika-ctl revoke`): re-encrypt every blob at and below the
+  shared subtree down to the data chunks under fresh keys, mint fresh caps, CoW-graft a new
+  root, advance the `RootPointer` `Seq`, and republish; the old (shared) cap then names only
+  orphaned shards, which are reclaimed. Honest limit: this denies *future* reads only — bytes
+  and keys a recipient already downloaded cannot be clawed back.
 - **Conditions / least privilege** via the existing **write-cap → read-cap → verify-cap**
   derivation chain (§3.5): mint narrow read-caps per subtree instead of one master cap.
 - **Delivery** stays the ML-KEM-768 `Wrap`/`Unwrap` already implemented.
@@ -446,10 +457,11 @@ cap layer rather than on content-addressed shards. Tracked in §10.
   not a content property. `revika-ctl` captures metadata on `put` (portable subset everywhere;
   uid/gid/atime/ctime/xattrs on Linux via `meta_linux.go`) and restores it on `get`
   (chmod/chtimes/chown/setxattr, plus symlink recreation), serializing it as manifest **v4**
-  (`meta` object; v1–v3 still decode with zero metadata). Still **[planned]**: encrypting the
-  manifest, storing it as an immutable blob whose read-cap is the file's read-cap, richer
-  per-OS capture (darwin/windows uid/gid/btime/xattr, arriving with the native bindings), and
-  moving the type into `internal/manifest`.
+  (`meta` object; v1–v3 still decode with zero metadata). Encrypting the manifest and storing
+  it as an immutable blob whose read-cap is the file's read-cap is **[implemented]**
+  (`internal/manifest`, below). Still **[planned]**: richer per-OS capture (darwin/windows
+  uid/gid/btime/xattr, arriving with the native bindings), and moving the metadata type into
+  `internal/manifest`.
 - **Cap-addressed blob layer** — **[implemented]** (`internal/manifest`). The manifest is now
   storable as an immutable, encrypted, content-addressed **blob**: `pipeline.StoreBlob`/`LoadBlob`
   run a single serialized object through the same compress → encrypt → erasure → store path as
@@ -581,21 +593,24 @@ that the DAG does not yet provide: **stable `ItemID`s** (the frameworks demand i
 survive rename/move; the provider, sole mutator of its domain, keeps an authoritative path⇄ID map
 — a future `Entry.ID`, §3.6, could make this intrinsic) and **change enumeration** (diffing two
 root caps, pruning unchanged subtrees by cap equality). The one un-networked seam — publishing the
-signed root pointer — is isolated behind a `RootStore` interface (in-memory today, DHT-backed when
-§4 lands), so the API is complete now. Live-file attribute capture/restore for this and for
-`revika-ctl` is shared in `internal/fsmeta`.
+signed root pointer — is isolated behind a `RootStore` interface with a durable local
+`FileRootStore`, a DHT-backed `DHTRootStore` (§4), and a `MultiRootStore` that commits the
+primary then mirrors best-effort to the DHT. Live-file attribute capture/restore for this and
+for `revika-ctl` is shared in `internal/fsmeta`.
 
 This layer is **daemon-only** (`revika-daemon`, §1) and sits on top of the metadata layer; it adds
 no new trust assumptions — all chunking, encryption, and erasure coding still happen client-side
 before any shard moves (§2).
 
-## 4. Mutable state without global consensus — **[planned]**
+## 4. Mutable state without global consensus — **[implemented]**
 
 Distributed *mutable* state is the hardest part. **Do not use a blockchain** — it is
-overkill for this workload and for a PoC. (The immutable half is now built:
-`internal/manifest` stores chunks, file manifests, and directories as
-content-addressed encrypted blobs with copy-on-write mutation. What remains is
-*publishing* the one mutable pointer over the network.)
+overkill for this workload and for a PoC. The immutable half is built
+(`internal/manifest` stores chunks, file manifests, and directories as
+content-addressed encrypted blobs with copy-on-write mutation), and the one mutable
+pointer is now *published* over the network: a DHT value record keyed by the owner
+pubkey (`internal/net/root.go`, validated by `rootValidator`) plus a node-served
+`/revika/root/1.0.0` stream protocol (`root_proto.go`).
 
 Design:
 
@@ -606,9 +621,18 @@ Design:
 - The only mutable thing is a small, per-User **root pointer**: a signed record mapping
   `user-signing-pubkey → latest-root-directory cap`, carrying a **monotonic sequence
   number** and timestamp. **[implemented]** as `manifest.RootPointer` (`SignRoot`/`Verify`,
-  Ed25519, domain-separated); **[planned]** is its DHT/`/revika/root` publication below.
-- Publish it IPNS-style: store on the DHT keyed by the pubkey, and/or on a set of the
-  user's chosen nodes. Readers verify the signature and take the highest sequence number.
+  Ed25519, domain-separated), signed over the cap's *verify projection* so one signature
+  validates both the local full-key pointer and the key-stripped DHT record.
+- Publish it IPNS-style — **[implemented]**: stored on the DHT keyed by the owner pubkey
+  (`Discovery.PutRoot`/`GetRoot`, `rootValidator` enforcing owner-binding + signature and
+  selecting the highest `Seq`), and/or fetched directly from a node over `/revika/root/1.0.0`
+  (`QueryRoot`). Records expire after the DHT's 48h max age, so a 12h `RepublishRootLoop`
+  keeps a live namespace resolvable. `revika-ctl` publishes on every `cp`/`rm`/`revoke`
+  commit (best-effort mirror behind the durable local `root.json`, via
+  `provider.MultiRootStore` + `DHTRootStore`) and resolves a published root by
+  `ls -owner <pubkey>`. Because the DHT record carries only a verify-cap, `-owner` resolution
+  is an integrity/liveness inspector (detecting revocation), not a decryption path. Readers
+  verify the signature and take the highest sequence number.
 - Conflict resolution is single-writer-per-key by construction (only the holder of the
   signing key can advance the sequence); multi-device writes for the same user reconcile
   via sequence + conflict copies in the sync layer.
@@ -680,7 +704,11 @@ DHT usage:
   Nodes also advertise themselves under the `revika/storage/1.0.0` rendezvous namespace so
   clients discover storage nodes with no central registry. See `internal/net/dht.go`
   (`Discovery`) and `placement.go` (`DHTStore`/`PlacementStore`).
-- **Mutable records — [planned]:** `user-pubkey → signed root pointer` (IPNS-like).
+- **Mutable records — [implemented]:** `user-pubkey → signed root pointer` (IPNS-like), a
+  DHT value record validated by `rootValidator` (owner-binding + signature; highest `Seq`
+  wins) with a complementary `/revika/root/1.0.0` node stream. See `internal/net/root.go`
+  and `root_proto.go`; `provider.DHTRootStore`/`MultiRootStore` publish it behind the durable
+  local `root.json`.
 
 ## 7. Repo layout (`✓` = implemented, rest planned)
 
@@ -698,11 +726,12 @@ internal/
   repair/    ✓ availability probes + shard regeneration (local store)
   net/       ✓ libp2p host, protocol IDs, shard/probe handlers, NetStore client,
              Kademlia DHT (Discovery: bootstrap/provider records/node advertise),
-             DHTStore + PlacementStore (discovery-backed store.Store's)
+             DHTStore + PlacementStore (discovery-backed store.Store's), signed
+             root pointer publish/resolve (PutRoot/GetRoot + /revika/root stream)
   cap/       ✓ ML-KEM-768 capability wrapping (Wrap/Unwrap, FIPS 203) for sharing read-caps
-  manifest/  ✓ ReadCap + cap-addressed file/dir blobs (Merkle DAG), COW Graft,
-             signed RootPointer (persisted to root.json by revika-ctl);
-             DHT root publish planned
+  manifest/  ✓ ReadCap/VerifyCap/WriteCap cap chain, cap-addressed file/dir blobs
+             (Merkle DAG), COW Graft, Rekey (revocation), signed RootPointer
+             (persisted to root.json + published to the DHT)
   fsmeta/    ✓ capture/restore live-file attributes ⇄ pipeline.Metadata
              (POSIX split: Linux uid/gid/times/xattr, portable mode/mtime)
   provider/  ✓ framework-neutral OS-integration API (Provider iface) mapping

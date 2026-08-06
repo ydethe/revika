@@ -37,8 +37,16 @@ type RootPointer struct {
 // separator, then owner || seq || time || the canonical cap bytes. The domain
 // tag keeps a root-pointer signature from ever being mistaken for some other
 // Ed25519 message the same key signs (auth tokens, repair grants).
+//
+// The cap is committed in its *verify projection* (ReadCap.VerifyCap().ReadCap()
+// — the same shape with a zeroed key), never with the reader's AES key. This is
+// what lets the identical signature validate both a full-cap pointer (the local
+// root file, which keeps the key so the owner can decrypt) and the key-stripped
+// pointer published to the public DHT: both project to the same signed bytes.
+// Kind, K/M and the content-addressed shard IDs stay signed, so blob integrity
+// and anti-rollback are unaffected — only the secret key drops out of the digest.
 func (r RootPointer) signingPayload() ([]byte, error) {
-	capBytes, err := r.Root.MarshalBinary()
+	capBytes, err := r.Root.VerifyCap().ReadCap().MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("manifest: marshal root cap: %w", err)
 	}

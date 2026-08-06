@@ -118,6 +118,38 @@ host advertised as a storage node; `FindNodes` discovers candidate storage targe
 wait on routing-table readiness (bootstrap populates it asynchronously after the
 identify handshake). `Close` shuts the DHT down before the host.
 
+## Root pointer publication (`root.go`, `root_proto.go`)
+
+The one mutable anchor per User — `manifest.RootPointer` (`owner-pubkey → root cap`,
+signed, monotonic `Seq`) — is published IPNS-style so a namespace is
+network-visible and multi-device (Architecture §4). Two complementary paths:
+
+- **DHT value record (`root.go`).** `Discovery.PutRoot(ctx, rp)` publishes under
+  `/revika/<owner-pubkey>` after stripping the cap to its **verify projection**
+  (`rp.Root = rp.Root.VerifyCap().ReadCap()`) — the public record carries *no*
+  decryption key, yet the same signature still verifies because `RootPointer` signs
+  over exactly that projection. `Discovery.GetRoot(ctx, owner)` resolves it
+  (`routing.ErrNotFound` → `ok=false`) and re-verifies signature + owner binding.
+  `rootValidator` (registered via `dht.NamespacedValidator(RootNamespace, …)`) makes
+  the DHT itself enforce the rules: `Validate` rejects any record whose key doesn't
+  name the signing owner or whose signature fails; `Select` keeps the **highest
+  `Seq`**, so a node cannot serve a rolled-back root. DHT records expire after the
+  48h max age, so `RepublishRootLoop(ctx, load, every)` re-puts at ~12h.
+- **Direct node stream (`root_proto.go`).** `/revika/root/1.0.0` lets a client that
+  already has a node connection fetch a root in one round-trip (or a DHT-less
+  single-node/test setup serve one). `QueryRoot(ctx, h, peer, owner)` is the client
+  half; a node wires `Server.SetRootResolver(disc)` and answers from its DHT view via
+  `handleRoot` (same status-byte + length-prefixed framing as the shard protocol,
+  miss → `statusNotFound`). Read-only and unauthenticated — a `RootPointer` is a
+  public, signed, key-stripped record.
+
+The provider seam (`internal/provider.DHTRootStore`/`MultiRootStore`) rides on
+`Discovery` structurally via a local `RootPublisher` interface, so `provider` never
+imports `net`. `revika-ctl` publishes on every `cp`/`rm`/`revoke` commit (DHT mirror
+behind the durable local `root.json`) and resolves a published root with
+`ls -owner <pubkey>` — a verify-only inspector (integrity/liveness/revocation
+detection), never a decryption path.
+
 ## Client store (`client.go`)
 
 `NetStore` is a `store.Store` (and `stripe.Putter`) whose backend is a remote Node

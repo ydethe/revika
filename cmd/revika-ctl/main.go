@@ -21,7 +21,8 @@
 //	revika-ctl cp    [-root <ws>] [backend] <local> rvk:<path>            # store
 //	revika-ctl cp    [-root <ws>] [backend] rvk:<path> <local>           # retrieve
 //	revika-ctl ls    [-root <ws>] [backend] [-l] [-R] [rvk:<path>]       # browse
-//	revika-ctl rm    [-root <ws>] [backend] rvk:<path>                   # delete
+//	revika-ctl rm     [-root <ws>] [backend] rvk:<path>                  # delete
+//	revika-ctl revoke [-root <ws>] [backend] rvk:<path>                  # rotate caps
 //	revika-ctl share [-root <ws>] [backend] rvk:<path> -to <pubkey|@file> [-o <file>]
 //	revika-ctl node  [-root <ws>]                                        # list nodes
 //
@@ -77,6 +78,8 @@ func main() {
 		err = cmdLs(args)
 	case "rm":
 		err = cmdRm(args)
+	case "revoke":
+		err = cmdRevoke(args)
 	case "share":
 		err = cmdShare(args)
 	case "node":
@@ -142,15 +145,25 @@ Commands:
         signing key. Retrieving resolves the rvk: path and reconstructs it. A trailing
         slash (or an existing rvk: directory) means "into that directory".
 
-  ls [-root <ws|file>] [backend] [-key <privkey>] [-l] [-R] [rvk:<path>]
+  ls [-root <ws|file>] [backend] [-key <privkey>] [-owner <pubkey>] [-l] [-R] [rvk:<path>]
         List a directory in the namespace. Reads directory blobs only — no file
         content is fetched. Plain output is one name per line (directories end in /);
         -l adds kind, size and mtime; -R recurses. 'ls' or 'ls rvk:' lists the root.
+        -owner <base64 signing pubkey> instead resolves that identity's published
+        root from the DHT and prints its (verify-only) summary — liveness and
+        revocation detection; decrypting still needs the read key from a sealed share.
 
   rm [-root <ws|file>] [backend] [-signkey <path>] rvk:<path>
         Remove <path> from your -root (a file or a whole subtree) and drop your
         ownership claim on its shards. A node frees a shard's bytes only once its last
         owner leaves, so this never affects another User's shared copy. Owned root only.
+
+  revoke [-root <ws|file>] [backend] [-signkey <path>] rvk:<path>
+        Rotate the read-capabilities of a subtree (rvk: alone = the whole namespace):
+        re-encrypt every blob under it down to the data chunks with fresh keys, graft
+        the result into a new root, advance and republish the pointer, and reclaim the
+        orphaned old shards. A previously-shared cap can no longer read the current
+        data. Already-downloaded copies cannot be recalled. Owned root only.
 
   share [-root <ws|file>] [backend] [-key <privkey>] [-signkey <path>] rvk:<path>
         -to <recipient-pubkey|@file> [-o <file>]
@@ -173,8 +186,10 @@ as printed by revika-node on startup. A bootstrap peer is any running node; the
 client joins the revika DHT through the one(s) saved in the workspace by connect,
 and needs no central server.
 
-Note: a root file is currently local only. Sharing across machines (DHT root
-publish) is planned; until then a shared root travels as the sealed file above.
+Note: a write to your own root also publishes the signed pointer to the DHT
+(key-stripped, so nodes learn location + integrity but never a decryption key), so
+others can resolve it with 'ls -owner <your-pubkey>'. Sharing a readable subtree
+across machines still travels as the sealed file above (it carries the read key).
 `)
 }
 

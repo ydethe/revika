@@ -54,12 +54,11 @@ cap-addressed Merkle DAG ([`internal/manifest`](../manifest/README.md)) over any
 Nodes still see only content-addressed ciphertext shards; all naming, tree shape,
 versioning, and identity live here on the User side.
 
-### The one un-networked seam: `RootStore`
+### The mutable-anchor seam: `RootStore`
 
 Advancing the namespace means publishing a new signed `RootPointer`. Persisting /
-publishing that pointer is the single piece of the mount stack **not yet
-networked** (DHT `/revika/root` publication, §4/§6), so it is isolated behind the
-`RootStore` interface. Two implementations exist today:
+publishing that pointer is isolated behind the `RootStore` interface, which now has
+both a durable local implementation **and** a networked one:
 
 - **`MemRootStore`** — in-memory, for tests and a single-process mount.
 - **`FileRootStore`** (`file_rootstore.go`) — persists the signed pointer to a
@@ -70,10 +69,19 @@ networked** (DHT `/revika/root` publication, §4/§6), so it is isolated behind 
   store will. Its `EncodeRootPointer`/`DecodeRootPointer` codec is reused to build
   a **sealed shared root**: a `RootPointer` anchored at a shared subtree, wrapped
   to a recipient with ML-KEM-768 so only they can open it (`revika-ctl share`).
-
-Both carry the anti-rollback `Seq` check a networked store will enforce, so the
-API is complete today; dropping in a DHT-backed store is the only change needed to
-make the namespace multi-device and network-visible.
+- **`DHTRootStore`** (`rootstore.go`) — publishes/resolves the pointer over the DHT
+  (§4/§6), scoped to one owner. It rides on a local `RootPublisher` interface
+  (`PutRoot`/`GetRoot`), satisfied structurally by `*net.Discovery`, so `provider`
+  never imports `net` (the interface breaks the cycle). `PutRoot` strips the cap to
+  its **verify projection** before publishing, so a mirror never leaks a decryption
+  key to the public DHT; `Save` pre-checks owner-match + `Seq`-advance before it
+  hits the network.
+- **`MultiRootStore`** (`rootstore.go`) — composes a durable **primary** with
+  best-effort **mirrors**: `Load` reads the authoritative primary only; `Save`
+  commits the primary first and, only on success, fans out to the mirrors, logging
+  and swallowing a mirror failure so a DHT-publish outage can never fail a local
+  commit. This is the `revika-ctl` combination — `FileRootStore` primary +
+  `DHTRootStore` mirror.
 
 ## Item identity
 
@@ -108,7 +116,9 @@ directories they are derived from the blob cap (which commits to the subtree).
   tested (`provider_test.go`).
 - ✅ `FileRootStore` — durable local `RootPointer`, backing `revika-ctl`'s
   namespace commands and sealed shared roots (`file_rootstore_test.go`).
-- ⏳ DHT-backed `RootStore` (§4/§6) — publishing the pointer network-wide so a
-  shared root need not travel as a file.
+- ✅ `DHTRootStore` + `MultiRootStore` (§4/§6) — publishing the pointer network-wide
+  (behind the durable local file) so a namespace is multi-device and a published
+  root is resolvable by owner pubkey (`dht_rootstore_test.go`; the wire side lives in
+  [`internal/net`](../net/README.md)).
 - ⏳ Per-OS binding layer (`internal/mount` FUSE PoC first, then the native
   shims — a cgo/Swift/C# decision for the maintainer, §3.8).

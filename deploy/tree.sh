@@ -23,8 +23,12 @@
 #      from a tree without re-uploading it, and without a bearer token.
 #   6. `share rvk:tree/docs` seals a SUBTREE, and the recipient restores only that
 #      subtree — nothing outside the shared path leaks.
+#   7. the signed root was PUBLISHED to the DHT: a second client resolves it by
+#      `ls -owner <pubkey>` (verify-only, no decryption), and `revoke rvk:tree/docs`
+#      re-keys the shared subtree, advances the published sequence, and reclaims the
+#      orphaned shards so the recipient's previously-shared cap can no longer read it.
 #
-# Exit status is 0 only if all six hold, so a compose run surfaces a failure as
+# Exit status is 0 only if all seven hold, so a compose run surfaces a failure as
 # a non-zero exit for this service.
 set -euo pipefail
 
@@ -279,7 +283,75 @@ if [ -e "$DIR_OUT/root.txt" ]; then
 fi
 echo "OK: a subtree was shared from the tree and restored, leaking nothing outside it"
 
+# --- DHT root publication + revocation (Architecture §4/§6) -------------------
+# Every `cp`/`share`/`revoke` commit also publishes the signed RootPointer to the
+# DHT keyed by the owner's Ed25519 signing pubkey. A *second* client resolves that
+# published anchor with `ls -owner <pubkey>` — a verify-only view (shard IDs, seq,
+# k/m) that decrypts nothing. Then `revoke rvk:tree/docs` re-keys the shared subtree
+# under fresh keys, advances the published seq, and reclaims the orphaned old shards
+# so the recipient's previously-sealed cap can no longer read the subtree.
 echo
-echo "PASS: a directory tree was spread across all nodes, restored intact, and"
-echo "      shared out of (single files and subtrees) end-to-end encrypted, with"
-echo "      each shared root sealed to the recipient's key (no bearer token)."
+OWNER_PUB=$(tr -d '\n\r' <"$WORK/user.sign.pub")
+
+# Parse the "seq:" line out of `ls -owner` (empty if the root isn't resolvable yet).
+published_seq() {
+  revika-ctl ls -root "$RCPT_WS" -owner "$OWNER_PUB" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*seq:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1
+}
+
+echo ">> a second client resolves the OWNER's published root over the DHT (verify-only)"
+seq_before=""
+for attempt in 1 2 3 4 5 6; do
+  seq_before=$(published_seq)
+  [ -n "$seq_before" ] && break
+  echo "   published root not resolvable yet; retrying in 5s..."
+  sleep 5
+done
+[ -n "$seq_before" ] || { echo "FAIL: the owner's root was never published to the DHT"; exit 1; }
+echo "OK: a second client resolved the published root at seq $seq_before (no decryption key involved)"
+
+echo ">> revoke rvk:tree/$SHARE_DIR (re-key the shared subtree, advance + republish the root)"
+revoke_ok=""
+for attempt in 1 2 3 4 5; do
+  if revika-ctl revoke -root "$WS" -signkey "$SIGNKEY" "rvk:tree/$SHARE_DIR"; then
+    revoke_ok=1
+    break
+  fi
+  echo "   revoke attempt $attempt failed; retrying in 5s..."
+  sleep 5
+done
+[ -n "$revoke_ok" ] || { echo "FAIL: revoke never succeeded"; exit 1; }
+
+echo ">> the published root must now show an advanced sequence"
+seq_after=""
+for attempt in 1 2 3 4 5 6; do
+  seq_after=$(published_seq)
+  if [ -n "$seq_after" ] && [ "$seq_after" -gt "$seq_before" ]; then
+    break
+  fi
+  echo "   published seq still ${seq_after:-<none>} (want > $seq_before); retrying in 5s..."
+  sleep 5
+done
+{ [ -n "$seq_after" ] && [ "$seq_after" -gt "$seq_before" ]; } || {
+  echo "FAIL: the published root did not advance after revoke ($seq_before -> ${seq_after:-<none>})"
+  exit 1
+}
+echo "OK: revoke advanced the published root $seq_before -> $seq_after"
+
+# The recipient's previously-sealed subtree cap named the OLD shard IDs, now
+# reclaimed — so their retrieval must fail (future reads denied). RCPT_WS/root.json
+# is still the sealed docs subtree from the share above; reuse it verbatim.
+echo ">> the recipient's previously-shared cap must no longer reconstruct the subtree"
+REVOKED_OUT="$WORK/docs.revoked.out"   # must NOT pre-exist
+if revika-ctl cp -root "$RCPT_WS" -key "$RCPT_KEY" rvk: "$REVOKED_OUT" >/dev/null 2>&1; then
+  echo "FAIL: the revoked cap still reconstructed the subtree — revocation did not deny reads"
+  exit 1
+fi
+echo "OK: the revoked cap can no longer read the subtree (future reads denied)"
+
+echo
+echo "PASS: a directory tree was spread across all nodes, restored intact, shared"
+echo "      out of (single files and subtrees) end-to-end encrypted with each shared"
+echo "      root sealed to the recipient's key (no bearer token), published over the"
+echo "      DHT (resolvable by owner pubkey), and revoked by re-keying (advancing the"
+echo "      published seq and orphaning the shared cap)."

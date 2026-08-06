@@ -91,6 +91,36 @@ func StoreFile(ctx context.Context, s store.Store, cfg Config, r io.Reader) (Fil
 	return m, nil
 }
 
+// ReencryptFile rebuilds every chunk of m under fresh per-chunk keys, returning
+// a new manifest whose chunk keys and shard IDs are all different while the
+// reconstructed plaintext is byte-identical. It is the data-layer half of
+// revocation (manifest.Rekey, Architecture §3.5): re-encrypting down to the data
+// chunks mints new content addresses, so a previously-shared cap — which named
+// the old shard IDs — can no longer locate the current bytes. The old shards are
+// left in place for the caller to reclaim after the new root commits.
+//
+// It streams chunk-by-chunk (decrypt one, re-encrypt one) rather than
+// materialising the whole file, and preserves chunk boundaries so Size, Name and
+// Meta carry over unchanged. Cost is O(file bytes): it necessarily reads and
+// rewrites every shard. The caller must hold the read key (m has it), so a
+// sign-key-only holder cannot rekey.
+func ReencryptFile(ctx context.Context, s store.Store, m FileManifest) (FileManifest, error) {
+	out := m
+	out.Chunks = make([]ChunkRef, len(m.Chunks))
+	for i, ref := range m.Chunks {
+		plain, err := loadChunk(ctx, s, m.Params.Params, ref)
+		if err != nil {
+			return FileManifest{}, fmt.Errorf("pipeline: reencrypt chunk %d: %w", i, err)
+		}
+		newRef, err := storeChunk(ctx, s, m.Params, plain)
+		if err != nil {
+			return FileManifest{}, fmt.Errorf("pipeline: reencrypt chunk %d: %w", i, err)
+		}
+		out.Chunks[i] = newRef
+	}
+	return out, nil
+}
+
 func storeChunk(ctx context.Context, s store.Store, cfg Config, plain []byte) (ChunkRef, error) {
 	p := cfg.Params
 

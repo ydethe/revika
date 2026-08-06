@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 
+	"revika/internal/cap"
 	"revika/internal/manifest"
 )
 
@@ -18,9 +20,13 @@ import (
 //
 // Implementations:
 //   - MemRootStore — in-memory, for tests and a single-process mount.
-//   - a DHT-backed store publishing the pointer IPNS-style — [planned] (§4, §6);
-//     dropping it in here is the only change needed to make the namespace
-//     multi-device and network-visible.
+//   - FileRootStore — durable local JSON file (file_rootstore.go), the primary
+//     authoritative store.
+//   - DHTRootStore — publishes/resolves the pointer IPNS-style over the DHT (§4,
+//     §6), making the namespace multi-device and network-visible.
+//   - MultiRootStore — composes a durable primary with best-effort mirrors (e.g.
+//     FileRootStore primary + DHTRootStore mirror), the combination revika-ctl
+//     uses so a DHT publish failure never fails a local commit.
 type RootStore interface {
 	// Load returns the stored pointer. ok is false when none exists yet (a fresh
 	// namespace), in which case the Provider bootstraps an empty root.
@@ -85,4 +91,102 @@ func ParseAnchor(b []byte) (SyncAnchor, error) {
 		return SyncAnchor{}, fmt.Errorf("provider: parse sync anchor: %w", err)
 	}
 	return a, nil
+}
+
+// RootPublisher is the DHT seam a DHTRootStore rides on, kept as a local
+// interface so this package never imports internal/net (which imports this one —
+// the interface breaks the cycle). *net.Discovery satisfies it structurally via
+// PutRoot/GetRoot. PutRoot strips the cap to its verify projection before
+// publishing, so a mirror never leaks a decryption key to the public DHT.
+type RootPublisher interface {
+	PutRoot(ctx context.Context, rp manifest.RootPointer) error
+	GetRoot(ctx context.Context, owner cap.SignPubKey) (rp manifest.RootPointer, ok bool, err error)
+}
+
+// DHTRootStore is a RootStore that publishes and resolves the signed RootPointer
+// over the DHT (Architecture §4/§6). It is scoped to one owner so Load resolves
+// exactly that identity's namespace and Save refuses to publish a pointer signed
+// by anyone else. Used directly it makes a namespace network-visible; used as a
+// MultiRootStore mirror it keeps the DHT in step with the durable local file.
+//
+// A DHT record is public and carries only a *verify* cap (no AES key): Load
+// yields shard locations and integrity, but decrypting still needs the read key
+// (held locally or delivered by a sealed share).
+type DHTRootStore struct {
+	pub   RootPublisher
+	owner cap.SignPubKey
+}
+
+// NewDHTRootStore returns a DHTRootStore publishing/resolving owner's pointer via
+// pub.
+func NewDHTRootStore(pub RootPublisher, owner cap.SignPubKey) *DHTRootStore {
+	return &DHTRootStore{pub: pub, owner: owner}
+}
+
+// Load implements RootStore by resolving the owner's current pointer from the
+// DHT. ok is false when none is published yet.
+func (d *DHTRootStore) Load(ctx context.Context) (manifest.RootPointer, bool, error) {
+	return d.pub.GetRoot(ctx, d.owner)
+}
+
+// Save implements RootStore by publishing rp to the DHT. It pre-checks the same
+// invariants the on-wire validator enforces — valid signature, owner match, and a
+// Seq that advances any record already published — so a stale or foreign pointer
+// is rejected before it hits the network.
+func (d *DHTRootStore) Save(ctx context.Context, rp manifest.RootPointer) error {
+	if !rp.Verify() {
+		return fmt.Errorf("provider: refusing to publish an unsigned or invalid root pointer")
+	}
+	if rp.Owner != d.owner {
+		return fmt.Errorf("provider: root pointer owner mismatch (store is scoped to a different identity)")
+	}
+	if cur, ok, err := d.pub.GetRoot(ctx, d.owner); err != nil {
+		// A resolution failure must not block a first publish; treat it as "unknown"
+		// and let the on-wire validator's Select enforce monotonicity across replicas.
+		_ = err
+	} else if ok && rp.Seq <= cur.Seq {
+		return fmt.Errorf("provider: root pointer seq %d does not advance published seq %d", rp.Seq, cur.Seq)
+	}
+	return d.pub.PutRoot(ctx, rp)
+}
+
+// MultiRootStore composes one durable, authoritative primary RootStore with any
+// number of best-effort mirrors. Load reads only the primary (the source of
+// truth); Save writes the primary first and, only if that succeeds, fans out to
+// the mirrors — a mirror failure is logged, not propagated, so publishing to the
+// DHT can never fail a local commit. This is the revika-ctl combination:
+// FileRootStore primary + DHTRootStore mirror.
+type MultiRootStore struct {
+	primary RootStore
+	mirrors []RootStore
+	log     *slog.Logger
+}
+
+// NewMultiRootStore returns a MultiRootStore over primary and mirrors. A nil log
+// discards mirror-failure diagnostics.
+func NewMultiRootStore(log *slog.Logger, primary RootStore, mirrors ...RootStore) *MultiRootStore {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	return &MultiRootStore{primary: primary, mirrors: mirrors, log: log}
+}
+
+// Load implements RootStore, reading from the authoritative primary only.
+func (m *MultiRootStore) Load(ctx context.Context) (manifest.RootPointer, bool, error) {
+	return m.primary.Load(ctx)
+}
+
+// Save implements RootStore: the primary commit must succeed (its error is
+// returned); each mirror is then written best-effort, its failure logged and
+// swallowed so a mirror outage never rolls back a durable local commit.
+func (m *MultiRootStore) Save(ctx context.Context, rp manifest.RootPointer) error {
+	if err := m.primary.Save(ctx, rp); err != nil {
+		return err
+	}
+	for _, mir := range m.mirrors {
+		if err := mir.Save(ctx, rp); err != nil {
+			m.log.Warn("provider: mirror root publish failed", "event", "root.mirror", "owner", rp.Owner, "seq", rp.Seq, "err", err)
+		}
+	}
+	return nil
 }

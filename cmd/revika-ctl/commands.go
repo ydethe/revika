@@ -16,6 +16,7 @@ import (
 
 	"revika/internal/cap"
 	"revika/internal/manifest"
+	"revika/internal/net"
 	"revika/internal/pipeline"
 	"revika/internal/provider"
 	"revika/internal/store"
@@ -327,7 +328,12 @@ func currentRoot(ctx context.Context, s store.Store, cfg pipeline.Config, prev m
 // commitRoot signs a RootPointer advancing the namespace to newRoot and saves it
 // to the owned root file. Seq starts at 1 for a fresh namespace, else advances
 // the previous one. It refuses to modify a sealed (shared) or foreign-owned root.
-func commitRoot(ctx context.Context, file string, signer cap.SignKey, newRoot manifest.ReadCap, prev manifest.RootPointer, exists, sealed bool) error {
+//
+// When pub is non-nil, the pointer is also published to the DHT (best effort):
+// the durable local file stays authoritative (a DHT failure never fails the
+// commit), and the DHT carries only the key-stripped verify projection, so the
+// namespace becomes network-visible without leaking a decryption key.
+func commitRoot(ctx context.Context, file string, signer cap.SignKey, newRoot manifest.ReadCap, prev manifest.RootPointer, exists, sealed bool, pub provider.RootPublisher) error {
 	if sealed {
 		return fmt.Errorf("root %s is a shared, read-only root (sealed to you); it cannot be modified", file)
 	}
@@ -342,7 +348,22 @@ func commitRoot(ctx context.Context, file string, signer cap.SignKey, newRoot ma
 	if err != nil {
 		return err
 	}
-	return provider.NewFileRootStore(file).Save(ctx, rp)
+	var rs provider.RootStore = provider.NewFileRootStore(file)
+	if pub != nil {
+		rs = provider.NewMultiRootStore(ctlLog, rs, provider.NewDHTRootStore(pub, signer.Public()))
+	}
+	return rs.Save(ctx, rp)
+}
+
+// rootPublisher recovers the DHT root publisher from a write/read store, or nil
+// when the backend is not DHT-backed (a single -node store, which cannot publish
+// a root). A PlacementStore and a DHTStore both embed the DHT layer and expose it
+// via Discovery(); *net.Discovery satisfies provider.RootPublisher structurally.
+func rootPublisher(s store.Store) provider.RootPublisher {
+	if d, ok := s.(interface{ Discovery() *net.Discovery }); ok {
+		return d.Discovery()
+	}
+	return nil
 }
 
 // --- backends -------------------------------------------------------------
@@ -509,7 +530,7 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 	if err != nil {
 		return fmt.Errorf("graft rvk:%s: %w", dstPath, err)
 	}
-	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed); err != nil {
+	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
 		return err
 	}
 	fmt.Printf("Stored %s -> rvk:%s\n", label, dstPath)
@@ -626,10 +647,14 @@ func cmdLs(args []string) error {
 	node := addBackendFlags(fs)
 	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
+	owner := fs.String("owner", "", "resolve an owner's published root from the DHT by their signing pubkey (base64); reports the verify-only pointer, does not decrypt")
 	long := fs.Bool("l", false, "long format: kind, size, and mtime per entry")
 	recurse := fs.Bool("R", false, "list subdirectories recursively")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *owner != "" {
+		return lsPublishedRoot(*rootFlag, *node, *owner)
 	}
 	target := ""
 	switch fs.NArg() {
@@ -674,6 +699,51 @@ func cmdLs(args []string) error {
 		return nil
 	}
 	return lsDir(ctx, s, c, target, *long, *recurse)
+}
+
+// lsPublishedRoot resolves ownerB64's current signed RootPointer from the DHT and
+// prints its summary. The DHT record is a *verify* projection — it carries no
+// decryption key — so this reports liveness and the anchor (seq + verify cap)
+// rather than descending into the (encrypted) directory: it answers "is this
+// identity's namespace published, at what sequence, over which shards" and lets a
+// share recipient detect revocation (their old shard IDs vanish from the current
+// root after the owner runs `revoke`). Actually reading the content still needs
+// the read key, delivered out-of-band as a sealed share (-key).
+func lsPublishedRoot(rootFlag, node, ownerB64 string) error {
+	owner, err := cap.ParseSignPubKey(ownerB64)
+	if err != nil {
+		return fmt.Errorf("parse -owner: %w", err)
+	}
+	ws, err := resolveWorkspace(rootFlag)
+	if err != nil {
+		return err
+	}
+	eNode, eBootstrap := ws.backend(node)
+	ctx := context.Background()
+	s, closer, err := readBackend(ctx, eNode, eBootstrap)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	pub := rootPublisher(s)
+	if pub == nil {
+		return fmt.Errorf("-owner needs a DHT backend (a workspace with bootstrap peers); a single -node cannot resolve a published root")
+	}
+	rp, ok, err := pub.GetRoot(ctx, owner)
+	if err != nil {
+		return fmt.Errorf("resolve published root for %s: %w", owner, err)
+	}
+	if !ok {
+		return fmt.Errorf("no published root for owner %s", owner)
+	}
+	fmt.Printf("Published root for %s\n", owner)
+	fmt.Printf("  seq:    %d\n", rp.Seq)
+	fmt.Printf("  time:   %s\n", time.Unix(0, rp.TimeNS).Format(time.RFC3339))
+	fmt.Printf("  kind:   %s\n", rp.Root.Kind)
+	fmt.Printf("  shards: %d (verify-only; k=%d m=%d)\n", len(rp.Root.Shards), rp.Root.K, rp.Root.M)
+	fmt.Println("  (verify-only pointer — decrypting the namespace needs the read key from a sealed share)")
+	return nil
 }
 
 // lsDir lists the entries of the directory addressed by dirCap. With recurse it
@@ -791,7 +861,7 @@ func cmdRm(args []string) error {
 	if err != nil {
 		return fmt.Errorf("remove rvk:%s: %w", target, err)
 	}
-	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed); err != nil {
+	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
 		return err
 	}
 
@@ -845,6 +915,114 @@ func collectShards(ctx context.Context, s store.Store, c manifest.ReadCap, out m
 			}
 		}
 	}
+	return nil
+}
+
+// --- revoke ---------------------------------------------------------------
+
+// cmdRevoke rotates the read-capabilities of a subtree so a previously-shared
+// cap can no longer read the current bytes (Architecture §3.5). It re-encrypts
+// every blob at and below rvk:<path> down to the data chunks under fresh keys
+// (manifest.Rekey), grafts the freshly-encrypted subtree into a new root, commits
+// the advanced (and republished) RootPointer, then reclaims the orphaned old
+// shards. A holder of the old cap keeps only ciphertext that is being garbage
+// collected; they cannot follow the namespace forward.
+//
+// Honest limit: revocation denies *future* reads. Anyone who already downloaded
+// the old shards and holds the old key keeps that stale copy — keys cannot be
+// clawed back, only the data they open can be rotated out from under them.
+func cmdRevoke(args []string) error {
+	fs := flag.NewFlagSet("revoke", flag.ExitOnError)
+	node := addBackendFlags(fs)
+	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
+	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing the rekey (default <workspace>/keys/user.sign.key)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || !isRvk(fs.Arg(0)) {
+		return fmt.Errorf("revoke takes one rvk:<path> (rvk: alone rekeys the whole namespace)")
+	}
+	target := rvkPath(fs.Arg(0))
+
+	ws, err := resolveWorkspace(*rootFlag)
+	if err != nil {
+		return err
+	}
+	rootFile := ws.RootFile
+	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(*signKeyFlag))
+	if err != nil {
+		return err
+	}
+	prev, exists, sealed, err := loadRoot(rootFile, "")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to revoke", rootFile)
+	}
+	if sealed {
+		return fmt.Errorf("cannot revoke on a shared, read-only root (%s)", rootFile)
+	}
+	if prev.Owner != signer.Public() {
+		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", rootFile)
+	}
+
+	ctx := context.Background()
+	cfg := ws.pipelineConfig()
+	eNode, eBootstrap := ws.backend(*node)
+	s, closer, err := writeBackend(ctx, eNode, eBootstrap, signer, 0, cfg)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	// Snapshot the old subtree's shards before rekeying, so we can reclaim exactly
+	// the ones the rotation orphans.
+	oldSub, err := manifest.Resolve(ctx, s, prev.Root, target)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", target, err)
+	}
+	oldShards := map[store.ShardID]struct{}{}
+	if err := collectShards(ctx, s, oldSub, oldShards); err != nil {
+		return fmt.Errorf("enumerate shards of rvk:%s: %w", target, err)
+	}
+
+	newRoot, err := manifest.Rekey(ctx, s, cfg, prev.Root, target)
+	if err != nil {
+		return fmt.Errorf("rekey rvk:%s: %w", target, err)
+	}
+	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
+		return err
+	}
+
+	// Reclaim only shards the new namespace no longer references. Diffing against
+	// everything reachable from the new root (not just the new subtree) keeps any
+	// shard a sibling still shares by content address (best effort — the pointer
+	// already advanced, so a failed delete only leaves unreferenced ciphertext for
+	// the node's GC to reclaim).
+	keep := map[store.ShardID]struct{}{}
+	if err := collectShards(ctx, s, newRoot, keep); err != nil {
+		return fmt.Errorf("enumerate new namespace shards: %w", err)
+	}
+	var deleted, missing, failed, kept int
+	for id := range oldShards {
+		if _, ok := keep[id]; ok {
+			kept++
+			continue
+		}
+		switch err := s.Delete(ctx, id); {
+		case err == nil:
+			deleted++
+		case errors.Is(err, store.ErrNotFound):
+			missing++
+		default:
+			failed++
+			fmt.Fprintf(os.Stderr, "delete %s: %v\n", id, err)
+		}
+	}
+	fmt.Printf("Revoked rvk:%s — rotated caps under a fresh key, advanced root to seq %d\n", target, prev.Seq+1)
+	fmt.Printf("Reclaimed %d orphaned shard(s) (%d already absent, %d still shared, %d failed)\n", deleted, missing, kept, failed)
+	fmt.Println("Note: previously-shared caps can no longer read the current data; already-downloaded copies cannot be recalled.")
 	return nil
 }
 

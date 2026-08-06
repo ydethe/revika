@@ -38,6 +38,13 @@ func NewDHTStore(h host.Host, disc *Discovery) *DHTStore {
 	return &DHTStore{h: h, disc: disc, max: defaultMaxProviders}
 }
 
+// Discovery returns the DHT layer backing this store, so a caller that holds a
+// store.Store can recover the root publisher (PutRoot/GetRoot) when the concrete
+// type is a DHTStore or PlacementStore. Nil is never returned for a store built
+// via NewDHTStore/NewPlacementStore. It lets revika-ctl publish the signed root
+// pointer over the same DHT connection it already uses for shards.
+func (s *DHTStore) Discovery() *Discovery { return s.disc }
+
 var _ store.Store = (*DHTStore)(nil)
 
 func (s *DHTStore) Put(context.Context, []byte) (store.ShardID, error) {
