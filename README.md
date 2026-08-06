@@ -64,6 +64,32 @@ for a layer-by-layer `[implemented]`/`[partial]`/`[planned]` breakdown and
 - **Go 1.26** (declared in `go.mod`). The system `go` may be older; leave `GOTOOLCHAIN` at
   its default (`auto`) and it will fetch 1.26 on first build.
 
+### Recommended: increase the UDP receive buffer (QUIC)
+
+libp2p carries traffic over QUIC (UDP), which wants a large kernel receive buffer. If the
+system limit is too low you'll see a one-time startup warning like:
+
+```
+failed to sufficiently increase receive buffer size (was: 208 kiB, wanted: 7168 kiB, got: 416 kiB)
+```
+
+This is harmless — revika keeps working with the smaller buffer — but the undersized buffer
+can drop packets during bursts and cap throughput on high-bandwidth, high-latency (WAN)
+transfers. It has no measurable effect on small commands or LAN use, so tuning it is optional.
+
+To silence the warning and get full QUIC throughput, raise the limits (Linux):
+
+```bash
+sudo sysctl -w net.core.rmem_max=7500000
+sudo sysctl -w net.core.wmem_max=7500000
+```
+
+Make it persistent by adding the same two lines to `/etc/sysctl.d/99-revika.conf` (then
+`sudo sysctl -p`). See the [quic-go UDP buffer notes][quic-buffers] for details and macOS
+equivalents.
+
+[quic-buffers]: https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes
+
 ## Build & test
 
 ```bash
