@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -476,7 +477,9 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 		child manifest.ReadCap
 		stat  manifest.StatCache
 		label string
+		size  int64
 	)
+	start := time.Now()
 	if fi.IsDir() {
 		c, _, serr := storeTree(ctx, s, cfg, src)
 		if serr != nil {
@@ -485,6 +488,7 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 		child = c
 		stat = manifest.StatCache{Kind: manifest.KindDir, Mode: uint32(fi.Mode())}
 		label = "directory " + src
+		size = treeBytes(src)
 	} else {
 		fm, serr := runStore(ctx, s, cfg, src)
 		if serr != nil {
@@ -497,7 +501,9 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 		child = c
 		stat = statFromManifest(fm)
 		label = src
+		size = int64(fm.Size)
 	}
+	elapsed := time.Since(start)
 
 	dstPath := destPath(ctx, s, root, dstRvk, filepath.Base(src))
 	newRoot, err := manifest.Graft(ctx, s, cfg, root, dstPath, child, stat)
@@ -508,7 +514,32 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 		return err
 	}
 	fmt.Printf("Stored %s -> rvk:%s\n", label, dstPath)
+	if secs := elapsed.Seconds(); secs > 0 {
+		throughputMBps := (float64(size) / (1024 * 1024)) / secs
+		fmt.Printf("Transferred to revika in %s (~%.2f MB/s)\n", elapsed.Round(time.Millisecond), throughputMBps)
+	} else {
+		fmt.Printf("Transferred to revika in %s\n", elapsed.Round(time.Millisecond))
+	}
 	return nil
+}
+
+// treeBytes sums the sizes of the regular files under src for a throughput
+// estimate. It stats only; unreadable entries are skipped so a best-effort
+// figure is always available.
+func treeBytes(src string) int64 {
+	var total int64
+	filepath.WalkDir(src, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.Type().IsRegular() {
+			if fi, err := d.Info(); err == nil {
+				total += fi.Size()
+			}
+		}
+		return nil
+	})
+	return total
 }
 
 // destPath maps a cp destination rvk path to the namespace path a child is

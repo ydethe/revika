@@ -16,6 +16,7 @@ testfile.bin
 .test.rvk.json
 .test/
 .guest_test/
+.user
 
 # Test binary, built with `go test -c`
 *.test
