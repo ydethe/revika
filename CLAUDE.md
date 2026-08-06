@@ -57,6 +57,13 @@ User side — a node is trusted for *availability*, never *confidentiality*.
 - **Stay cgo-free / pure Go** — e.g. SQLite via `modernc.org/sqlite`, crypto from stdlib. Prefer
   stdlib over external crypto deps; isolate swappable choices behind small interfaces.
 - Match surrounding code style, naming, and comment density.
+- **Structured logging only (revika-node).** Every event `revika-node` emits — startup banner,
+  status, shutdown, everything — goes through the `*slog.Logger` built in
+  `cmd/revika-node/logging.go` (`log.Info`/`Warn`/`Error`/`Debug` with an `event` key). Never
+  `fmt.Printf`/`fmt.Println`/`fmt.Fprint*` to stdout for operational output: those bypass the
+  encoder and level, so they escape the JSON path (Grafana Alloy/Loki) and can't be filtered. The
+  one allowed exception is the pre-logger fatal fallback in `main()` (`run()` returned an error
+  before the logger existed), which writes to `os.Stderr`.
 - **Sudo commands:** don't run them — ask the maintainer to run in a separate terminal and paste
   the output.
 

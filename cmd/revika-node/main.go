@@ -324,22 +324,11 @@ func run() error {
 		"shards", shardsDir,
 		"mdns", *mdnsOn,
 		"dht", *dhtOn,
+		"advertise", *dhtOn && *advertiseOn,
 		"bootstrap", len(bootstrap),
 		"repair", *dhtOn && *repairOn,
 		"metrics", *metricsAddr,
 	)
-	fmt.Printf("revika-node %s (built %s)\n", version, buildDate)
-	fmt.Println("Peer ID:", h.ID())
-	fmt.Println("Listening on:")
-	for _, a := range h.Addrs() {
-		fmt.Printf("  %s/p2p/%s\n", a, h.ID())
-	}
-	if *dhtOn {
-		fmt.Printf("DHT: server mode, %d bootstrap peer(s), advertising=%v\n", len(bootstrap), *advertiseOn)
-	}
-	if *metricsAddr != "" {
-		fmt.Printf("Metrics: http://%s/status (also /healthz /readyz /metrics)\n", *metricsAddr)
-	}
 
 	// Block until interrupted, then shut down cleanly.
 	<-ctx.Done()
