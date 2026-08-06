@@ -6,9 +6,13 @@ this file only tracks the gaps.
 
 The engineering baseline is strong for the current stage: a green `go test -race`
 suite, multi-node/resilience/repair end-to-end jobs in CI, multi-arch image
-publishing, `/healthz` `/readyz` `/status` `/metrics` endpoints, and structured
-`slog` logging. The gaps below are at three levels — architectural blockers first,
-then hardening the design already calls for, then deferred layers and ops polish.
+publishing, `/healthz` `/readyz` `/status` `/metrics` endpoints, structured `slog`
+logging, up-front policy discovery (`/revika/params` → `net.FetchNodePolicy`, so
+admission *and* maintenance cadence propagate to joining nodes and to
+`revika-ctl connect` instead of surfacing as late failures), proof-of-work owner
+identities, and a maintenance-abuse detector with a persistent `blocklist.auto`.
+The gaps below are at three levels — architectural blockers first, then hardening
+the design already calls for, then deferred layers and ops polish.
 
 ## 1. Architectural blockers — not a working distributed product yet
 
@@ -41,16 +45,26 @@ then hardening the design already calls for, then deferred layers and ops polish
 ## 2. Hardening the design already calls for
 
 - **Write-verb rate limiting is still TODO** (per-owner / per-peer token bucket on
-  PUT/DELETE). Connection/rcmgr defenses exist (`internal/net/defense.go`);
-  flow control on writes does not.
-- **PoW difficulty advertisement** (`/revika/params`) — clients discover a node's
-  difficulty via a late auth failure instead of up front.
+  PUT/DELETE, with a `statusRateLimited` response — see `internal/net/README.md`).
+  Connection/rcmgr defenses exist (`internal/net/defense.go`) and a node now
+  locally blacklists maintenance abusers (`internal/net/abuse.go`,
+  `AbuseMonitor`) via a persistent `blocklist.auto`, but per-verb flow control on
+  writes does not exist.
 - **Repair still probes with `Store.Has`, not the `/revika/probe`
-  proof-of-possession** — a lying node defeats the availability check.
-  Repair-onto-fresh-nodes and repair cadence/threshold policy are open.
-- **Placement diversity not enforced**: the failure-domain `Spread` invariant isn't
-  applied on moves, capacity (`LoadReport`) is self-declared and untrusted, and the
-  per-shard cooldown is in-memory (lost on restart).
+  proof-of-possession** — `repair.Check` reads a single presence byte
+  (`internal/repair/repair.go` → `NetStore.Has`), so a lying node still defeats
+  the *repair* availability check. The fresh-nonce proof-of-possession protocol
+  (`/revika/probe/1.0.0`, `NetStore.Probe`) now exists and is used by **rebalance**
+  (make-before-break: a target must prove possession before the source releases,
+  and a failed proof feeds an abuse strike, `internal/net/rebalance.go`), but
+  repair does not use it. Repair-onto-fresh-nodes and repair cadence/threshold
+  policy are open.
+- **Placement diversity only partly enforced on moves**: rebalance now caps
+  per-peer stripe concentration (never let one peer hold more than `m` shards of a
+  stripe, `rebalance.go` `peerStripeLoad`) with a proof-gated release, but the
+  failure-domain `Spread` invariant (`internal/placement/spread.go`) is still not
+  applied on moves, capacity (`LoadReport`/`QueryLoad`) is self-declared and
+  untrusted, and the per-shard cooldown is in-memory (lost on restart).
 - **Fixed-size chunking only** — no content-defined chunking, so any edit
   re-uploads downstream chunks (dedup/bandwidth cost).
 
@@ -63,8 +77,9 @@ identity bans stay weak until then.
 
 ## 4. Ops and quality gaps
 
-- `cmd/revika-node` (the daemon binary) has **no unit tests** — startup/wiring is
-  only covered indirectly via compose.
+- `cmd/revika-node` now has **unit tests** (`main_test.go`, `logging_test.go`
+  cover flag parsing, GC/repair/reprovide loops, and logging), but startup wiring
+  is still exercised mainly through compose.
 - **No benchmarks** anywhere → no performance/regression guardrails; only one fuzz
   target (`FuzzOpen` in `internal/crypto`).
 - **Effectively Linux-only** today: `diskUsage` returns `ErrUnsupported` and
@@ -91,7 +106,9 @@ To reach production as the product described, in order:
    revocation.**~~ **Done.** Manifest/dir blobs are AES-256-GCM ciphertext; the
    write→read→verify cap chain and `revoke`-by-rekey ship (future-reads-only limit).
 3. **Ship the sync daemon binary** (`cmd/revika-daemon`).
-4. **Write-verb rate limiting + proof-of-possession repair.**
+4. **Write-verb rate limiting** (a `statusRateLimited` token bucket keyed on the
+   owner) **+ wire the existing `/revika/probe` proof-of-possession into repair**
+   (rebalance already uses it; `repair.Check` still trusts `Store.Has`).
 5. **Client-side republish scheduling** (today a client only publishes synchronously
    on commit; a long-lived republish loop belongs to the sync daemon) and **multi-device
    write reconciliation** (§3.7).
