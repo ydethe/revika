@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -325,40 +326,238 @@ func currentRoot(ctx context.Context, s store.Store, cfg pipeline.Config, prev m
 	return manifest.StoreDir(ctx, s, cfg, manifest.NewDir(pipeline.Metadata{}))
 }
 
-// commitRoot signs a RootPointer advancing the namespace to newRoot and saves it
-// to the owned root file. Seq starts at 1 for a fresh namespace, else advances
-// the previous one. It refuses to modify a sealed (shared) or foreign-owned root.
+// commitConfig carries the inputs commitRoot needs beyond the pointer itself to
+// run the multi-device read-merge-publish loop. The merge path activates only
+// when every field it needs is present — a DHT backend that speaks the sealed
+// self-root companion (pub is a fullRootPublisher) and the owner ML-KEM keys
+// (mlkemOK). Absent either (a single -node store, a file-mode root, or missing
+// keys) commit degrades to a plain local sign+save (+ best-effort DHT mirror),
+// exactly as before multi-device support.
+type commitConfig struct {
+	file     string      // authoritative local root.json
+	basePath string      // merge-base sidecar; "" disables base tracking / merge
+	signer   cap.SignKey // owner Ed25519
+	mlkemOK  bool        // owner ML-KEM pair loaded (below)
+	priv     cap.PrivateKey
+	pub      cap.PublicKey
+	label    manifest.MergeLabeler // conflict-copy namer (device-tagged)
+	s        store.Store
+	cfg      pipeline.Config
+}
+
+// newCommitConfig assembles the commit inputs from a workspace: the base
+// sidecar path, the owner ML-KEM keys (if present — absent disables merge), and
+// the device-tagged conflict labeler. It never fails for a missing key file;
+// only a malformed one is an error.
+func (w *Workspace) newCommitConfig(rootFile string, signer cap.SignKey, s store.Store, cfg pipeline.Config) (commitConfig, error) {
+	priv, pub, ok, err := w.ownerMLKEM()
+	if err != nil {
+		return commitConfig{}, err
+	}
+	return commitConfig{
+		file:     rootFile,
+		basePath: w.basePath(),
+		signer:   signer,
+		mlkemOK:  ok,
+		priv:     priv,
+		pub:      pub,
+		label:    w.deviceLabeler(),
+		s:        s,
+		cfg:      cfg,
+	}, nil
+}
+
+// fullRootPublisher is the DHT surface commitRoot needs for multi-device merge:
+// the plain RootPublisher (verify-root) plus the sealed self-root companion that
+// delivers a decryptable remote root to the owner's other devices.
+// *net.Discovery satisfies it structurally.
+type fullRootPublisher interface {
+	provider.RootPublisher
+	PutFullRoot(ctx context.Context, r manifest.FullRootRecord) error
+	GetFullRoot(ctx context.Context, owner cap.SignPubKey, priv cap.PrivateKey, pub cap.PublicKey, verifyRoot manifest.ReadCap) (manifest.ReadCap, bool, error)
+}
+
+// commitMaxAttempts bounds the read-merge-publish retry loop. A DHT has no CAS,
+// so each attempt narrows but cannot close the publish race; after this many
+// concurrent-writer collisions the commit stays durable locally (root.json) and
+// its changes fold in on the next write.
+const commitMaxAttempts = 5
+
+// commitRoot advances the namespace to newRoot, reconciling with any concurrent
+// write another of the User's devices published under the shared owner key. It
+// refuses to modify a sealed (shared) or foreign-owned root.
 //
-// When pub is non-nil, the pointer is also published to the DHT (best effort):
-// the durable local file stays authoritative (a DHT failure never fails the
-// commit), and the DHT carries only the key-stripped verify projection, so the
-// namespace becomes network-visible without leaking a decryption key.
-func commitRoot(ctx context.Context, file string, signer cap.SignKey, newRoot manifest.ReadCap, prev manifest.RootPointer, exists, sealed bool, pub provider.RootPublisher) error {
+// With a DHT backend and the owner ML-KEM keys it runs a read-merge-publish
+// loop: read the current DHT root (and, on a fork, its decryptable companion),
+// three-way merge divergent trees via manifest.Merge3 (conflicting leaves become
+// device-tagged conflict copies, never silent losses), sign at a monotonically
+// higher Seq, publish companion then verify-root, and re-read to catch a racing
+// writer — folding and retrying if one won. The durable local root.json stays
+// authoritative (a DHT failure never fails the commit). Absent the DHT or the
+// keys it degrades to commitLocalOnly.
+func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, prev manifest.RootPointer, exists, sealed bool, pub provider.RootPublisher) error {
 	if sealed {
-		return fmt.Errorf("root %s is a shared, read-only root (sealed to you); it cannot be modified", file)
+		return fmt.Errorf("root %s is a shared, read-only root (sealed to you); it cannot be modified", cc.file)
 	}
-	if exists && prev.Owner != signer.Public() {
-		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", file)
+	if exists && prev.Owner != cc.signer.Public() {
+		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", cc.file)
 	}
+
+	frp, canMerge := pub.(fullRootPublisher)
+	if !canMerge || !cc.mlkemOK {
+		// No decryptable-remote channel: single-writer or degraded. Publish as before.
+		return commitLocalOnly(ctx, cc, newRoot, prev, exists, pub)
+	}
+	owner := cc.signer.Public()
+
+	localTip := newRoot
+	prevSeq := uint64(0)
+	if exists {
+		prevSeq = prev.Seq
+	}
+
+	for attempt := 0; attempt < commitMaxAttempts; attempt++ {
+		remote, hasRemote, err := pub.GetRoot(ctx, owner)
+		if err != nil {
+			// DHT resolution failed this round; fall back to a durable local commit
+			// (with best-effort mirror) so the write is not lost to a transient miss.
+			ctlLog.Warn("commit: dht root read failed, committing locally", "event", "root.commit", "err", err)
+			return commitLocalOnly(ctx, cc, localTip, prev, exists, pub)
+		}
+		base, hasBase, err := loadBase(cc.basePath)
+		if err != nil {
+			return err
+		}
+
+		newSeq := prevSeq + 1
+		if hasRemote && remote.Seq+1 > newSeq {
+			newSeq = remote.Seq + 1
+		}
+
+		merged := localTip
+		var conflicts []string
+		switch {
+		case !hasRemote:
+			// Nothing published yet.
+		case hasBase && remote.Seq < base.Seq:
+			// We are strictly ahead of the published root; it is our own ancestor.
+		case hasBase && sameVerify(remote.Root, base.Root):
+			// The published root is exactly our merge base: a pure local advance.
+		default:
+			// Fork (or unknown ancestor): fetch the decryptable remote root and merge.
+			remoteFull, ok, ferr := frp.GetFullRoot(ctx, owner, cc.priv, cc.pub, remote.Root)
+			if ferr != nil || !ok {
+				// Cannot decrypt the remote (companion missing/stale/mismatched). Do
+				// not silently overwrite it: keep our advance durable locally and
+				// surface it; the other device's next reconcile still sees our root.
+				ctlLog.Warn("commit: remote root present but its companion could not be opened; publishing our root without merge",
+					"event", "root.commit", "remote_seq", remote.Seq, "err", ferr)
+			} else {
+				baseCap := manifest.ReadCap{}
+				if hasBase {
+					baseCap = base.Root
+				}
+				m, cf, merr := manifest.Merge3(ctx, cc.s, cc.cfg, baseCap, localTip, remoteFull, cc.label)
+				if merr != nil {
+					return fmt.Errorf("merge divergent roots: %w", merr)
+				}
+				merged, conflicts = m, cf
+			}
+		}
+
+		rp, err := manifest.SignRoot(cc.signer, merged, newSeq, time.Now().UnixNano())
+		if err != nil {
+			return err
+		}
+		rec, err := manifest.SealFullRoot(cc.signer, cc.pub, merged, newSeq)
+		if err != nil {
+			return err
+		}
+		// Publish the companion first (so a reader that sees the verify-root can
+		// open it), then the verify-root. Both best-effort: the local save below is
+		// authoritative and a mirror failure must not fail the commit.
+		if err := frp.PutFullRoot(ctx, rec); err != nil {
+			ctlLog.Warn("commit: publish self-root companion failed", "event", "root.commit", "seq", newSeq, "err", err)
+		}
+		if err := pub.PutRoot(ctx, rp); err != nil {
+			ctlLog.Warn("commit: publish verify-root failed", "event", "root.commit", "seq", newSeq, "err", err)
+		}
+
+		// Re-read to catch a writer that raced us to this Seq. If someone else's
+		// record won (equal-or-higher Seq, different root), fold our merge in and
+		// retry at a higher Seq so no side's changes are dropped.
+		if cur, ok, rerr := pub.GetRoot(ctx, owner); rerr == nil && ok && cur.Seq >= newSeq && !sameVerify(cur.Root, merged) {
+			localTip = merged
+			prevSeq = cur.Seq
+			continue
+		}
+
+		if err := provider.NewFileRootStore(cc.file).Save(ctx, rp); err != nil {
+			return err
+		}
+		if err := saveBase(cc.basePath, baseRecord{Root: merged, Seq: newSeq}); err != nil {
+			return err
+		}
+		reportConflicts(conflicts)
+		return nil
+	}
+	// Exhausted retries against a hot race; the local root file still holds our
+	// last signed attempt and its changes fold in on the next write.
+	return fmt.Errorf("commit: gave up after %d attempts racing a concurrent writer (change kept locally, will reconcile on next write)", commitMaxAttempts)
+}
+
+// commitLocalOnly is the pre-multi-device commit: sign at prev.Seq+1 (1 for a
+// fresh namespace) and save to the durable local file, mirroring to the DHT
+// verify-root best-effort when a publisher is available. It advances the merge
+// base too so a later multi-device-capable commit has an ancestor.
+func commitLocalOnly(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, prev manifest.RootPointer, exists bool, pub provider.RootPublisher) error {
 	seq := uint64(1)
 	if exists {
 		seq = prev.Seq + 1
 	}
-	rp, err := manifest.SignRoot(signer, newRoot, seq, time.Now().UnixNano())
+	rp, err := manifest.SignRoot(cc.signer, newRoot, seq, time.Now().UnixNano())
 	if err != nil {
 		return err
 	}
-	var rs provider.RootStore = provider.NewFileRootStore(file)
+	var rs provider.RootStore = provider.NewFileRootStore(cc.file)
 	if pub != nil {
-		rs = provider.NewMultiRootStore(ctlLog, rs, provider.NewDHTRootStore(pub, signer.Public()))
+		rs = provider.NewMultiRootStore(ctlLog, rs, provider.NewDHTRootStore(pub, cc.signer.Public()))
 	}
-	return rs.Save(ctx, rp)
+	if err := rs.Save(ctx, rp); err != nil {
+		return err
+	}
+	return saveBase(cc.basePath, baseRecord{Root: newRoot, Seq: seq})
+}
+
+// sameVerify reports whether two caps address the identical blob ignoring their
+// AES key — comparing verify projections. It bridges the key-stripped DHT root
+// (remote.Root) and the key-bearing local caps (base, merged) when detecting a
+// fork or a race.
+func sameVerify(a, b manifest.ReadCap) bool {
+	ab, err := a.VerifyCap().ReadCap().MarshalBinary()
+	if err != nil {
+		return false
+	}
+	bb, err := b.VerifyCap().ReadCap().MarshalBinary()
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(ab, bb)
+}
+
+// reportConflicts prints the paths a merge filed as conflict copies, so a User
+// sees a genuine divergence rather than it passing silently.
+func reportConflicts(conflicts []string) {
+	for _, p := range conflicts {
+		fmt.Printf("conflict: rvk:%s diverged across devices; kept both (see the conflict copy)\n", p)
+	}
 }
 
 // rootPublisher recovers the DHT root publisher from a write/read store, or nil
 // when the backend is not DHT-backed (a single -node store, which cannot publish
 // a root). A PlacementStore and a DHTStore both embed the DHT layer and expose it
-// via Discovery(); *net.Discovery satisfies provider.RootPublisher structurally.
+// via Discovery(); *net.Discovery satisfies provider.RootPublisher (and
+// fullRootPublisher) structurally.
 func rootPublisher(s store.Store) provider.RootPublisher {
 	if d, ok := s.(interface{ Discovery() *net.Discovery }); ok {
 		return d.Discovery()
@@ -530,7 +729,11 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 	if err != nil {
 		return fmt.Errorf("graft rvk:%s: %w", dstPath, err)
 	}
-	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
+	cc, err := ws.newCommitConfig(rootFile, signer, s, cfg)
+	if err != nil {
+		return err
+	}
+	if err := commitRoot(ctx, cc, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
 		return err
 	}
 	fmt.Printf("Stored %s -> rvk:%s\n", label, dstPath)
@@ -865,7 +1068,11 @@ func cmdRm(args []string) error {
 	if err != nil {
 		return fmt.Errorf("remove rvk:%s: %w", target, err)
 	}
-	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
+	cc, err := ws.newCommitConfig(rootFile, signer, s, cfg)
+	if err != nil {
+		return err
+	}
+	if err := commitRoot(ctx, cc, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
 		return err
 	}
 
@@ -995,7 +1202,11 @@ func cmdRevoke(args []string) error {
 	if err != nil {
 		return fmt.Errorf("rekey rvk:%s: %w", target, err)
 	}
-	if err := commitRoot(ctx, rootFile, signer, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
+	cc, err := ws.newCommitConfig(rootFile, signer, s, cfg)
+	if err != nil {
+		return err
+	}
+	if err := commitRoot(ctx, cc, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
 		return err
 	}
 

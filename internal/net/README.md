@@ -220,8 +220,25 @@ network-visible and multi-device (Architecture §4). Two complementary paths:
   `rootValidator` (registered via `dht.NamespacedValidator(RootNamespace, …)`) makes
   the DHT itself enforce the rules: `Validate` rejects any record whose key doesn't
   name the signing owner or whose signature fails; `Select` keeps the **highest
-  `Seq`**, so a node cannot serve a rolled-back root. DHT records expire after the
+  `Seq`**, so a node cannot serve a rolled-back root. An equal-`Seq` fork (two
+  devices sharing one owner key that both advanced to the same sequence against
+  different roots) is broken by a **total byte-order** on the encoded record, *not*
+  first-seen — so every replica/reader converges on the same visible tip and the
+  losing device folds its change in on its next write. DHT records expire after the
   48h max age, so `RepublishRootLoop(ctx, load, every)` re-puts at ~12h.
+- **Sealed self-root companion (`root.go`).** For multi-device reconciliation
+  (Architecture §3.7.1), each commit also publishes a `manifest.FullRootRecord` under
+  `/revika-fullcap/<owner>` (`FullRootNamespace`): the **full** root cap (AES key
+  retained) sealed to the owner's own ML-KEM key, so the User's *other* devices can
+  decrypt and three-way-merge — the public verify-root above stays key-stripped.
+  `Discovery.PutFullRoot(ctx, r)` publishes it; `Discovery.GetFullRoot(ctx, owner,
+  priv, pub, verifyRoot)` resolves it, opens the seal with the owner ML-KEM keys, and
+  **binds** the opened cap to the presented verify-root (`companion.VerifyCap() ==
+  verifyRoot`) so a stale or forged companion is rejected rather than merged.
+  `fullRootValidator` (registered via `dht.NamespacedValidator(FullRootNamespace, …)`)
+  gates it exactly as `rootValidator` does the verify-root — owner-binding + signature,
+  highest-`Seq` with a byte-order tie-break — but never opens the seal (confidentiality
+  is the ML-KEM layer's job).
 - **Direct node stream (`root_proto.go`).** `/revika/root/1.0.0` lets a client that
   already has a node connection fetch a root in one round-trip (or a DHT-less
   single-node/test setup serve one). `QueryRoot(ctx, h, peer, owner)` is the client

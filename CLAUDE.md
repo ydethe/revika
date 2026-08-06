@@ -149,7 +149,24 @@ clawed back); `node` lists DHT-discovered nodes. Own root = mutable; a shared ro
 the DHT (best-effort mirror behind the durable local `root.json`); `ls -owner
 <pubkey-file>` resolves someone's published root, but only to its verify-cap form
 (shard locations + integrity, no decryption) — a liveness/revocation inspector, not
-a browse path. Public keys are always passed as *files*, never as literals on the
+a browse path. Commit is now a **multi-device read-merge-publish loop**
+(`commitRoot`, Architecture §3.7.1): several devices sharing one owner signing key
+reconcile without lost updates. Each commit reads the current DHT root; if it
+diverged from this device's merge base (a local, unsigned sidecar
+`<workspace>/base.json`), it three-way-merges via `manifest.Merge3` — conflicting
+leaves become device-tagged conflict copies (`Config.DeviceTag`, a random 4-byte
+hex minted per-workspace, never signed), never silent losses — signs at
+`max(local,remote).Seq+1`, and re-reads to catch a racing writer. The decryptable
+remote root reaches the other device via the **sealed self-root companion**: each
+commit also publishes `manifest.FullRootRecord` (full root cap sealed to the
+owner's own ML-KEM key) under DHT namespace `/revika-fullcap/<owner>`
+(`net.PutFullRoot`/`GetFullRoot`), so the public verify-root stays key-stripped
+while a User's own devices can still open it. `rootValidator.Select` breaks an
+equal-`Seq` fork by total byte-order (not first-seen) so replicas converge. Merge
+runs only with a DHT backend + owner ML-KEM keys present; otherwise commit degrades
+to the prior local sign+save (+best-effort DHT mirror). A background daemon that
+would reconcile an equal-`Seq` `Select`-loser that never writes again is still out
+of scope. Public keys are always passed as *files*, never as literals on the
 command line: `share -to <recipient-pubkey-file>` and `ls -owner <signing-pubkey-file>`
 read the base64 key from the named file (no `@file` prefix, no inline key).
 

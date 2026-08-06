@@ -83,6 +83,12 @@ both a durable local implementation **and** a networked one:
   commit. This is the `revika-ctl` combination — `FileRootStore` primary +
   `DHTRootStore` mirror.
 
+For multi-device reconciliation (Architecture §3.7.1), `fullroot.go` adds
+`EncodeFullRoot`/`DecodeFullRoot` — the JSON codec for `manifest.FullRootRecord`,
+the sealed self-root companion `net` publishes under `/revika-fullcap/<owner>`
+alongside the verify-root. It mirrors `EncodeRootPointer` (base64 byte fields);
+the sealed cap is opaque here — only the owner's ML-KEM key can open it.
+
 ## Item identity
 
 The frameworks require an identifier that is **stable across renames and moves**

@@ -20,15 +20,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"revika/internal/cap"
 	"revika/internal/erasure"
+	"revika/internal/manifest"
 	"revika/internal/net"
 	"revika/internal/pipeline"
 )
@@ -51,6 +55,12 @@ type Config struct {
 	Bootstrap []string      `json:"bootstrap"`
 	Erasure   ErasureConfig `json:"erasure"`
 	PoW       PoWConfig     `json:"pow"`
+	// DeviceTag is a random per-device marker (4-byte hex) minted on first write
+	// and stored here so conflict copies produced by multi-device reconciliation
+	// are traceable to the device that made them (e.g. "report (conflict a1b2).pdf").
+	// It is per-workspace-directory (one config.json per device) so it is naturally
+	// distinct across devices; it is NOT a key, an identity, or ever signed.
+	DeviceTag string `json:"device_tag,omitempty"`
 }
 
 // ErasureConfig is the code rate this workspace stores files at: any K of K+M
@@ -136,6 +146,82 @@ func (w *Workspace) signKeyPath(flagVal string) string {
 		return flagVal
 	}
 	return w.keyPrefix() + ".sign.key"
+}
+
+// basePath is the merge-base sidecar location for this workspace, or "" in
+// file mode (a bare root pointer has no workspace dir to keep per-device state).
+func (w *Workspace) basePath() string {
+	if w == nil || w.fileMode {
+		return ""
+	}
+	return filepath.Join(w.Dir, "base.json")
+}
+
+// ownerMLKEM loads this workspace's ML-KEM owner key pair (keys/user.key, its
+// public half derived), used to seal/open the self-root companion for
+// multi-device reconciliation. ok is false when the key file is absent, in which
+// case commit degrades to a plain publish with no cross-device merge.
+func (w *Workspace) ownerMLKEM() (priv cap.PrivateKey, pub cap.PublicKey, ok bool, err error) {
+	if w == nil {
+		return cap.PrivateKey{}, cap.PublicKey{}, false, nil
+	}
+	path := w.keyPrefix() + ".key"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cap.PrivateKey{}, cap.PublicKey{}, false, nil
+		}
+		return cap.PrivateKey{}, cap.PublicKey{}, false, err
+	}
+	priv, err = cap.ParsePrivateKey(strings.TrimSpace(string(data)))
+	if err != nil {
+		return cap.PrivateKey{}, cap.PublicKey{}, false, fmt.Errorf("parse owner ML-KEM key %s: %w", path, err)
+	}
+	pub, err = priv.Public()
+	if err != nil {
+		return cap.PrivateKey{}, cap.PublicKey{}, false, err
+	}
+	return priv, pub, true, nil
+}
+
+// deviceLabeler returns the conflict-copy namer for this workspace, tagged with
+// the device marker so a copy is traceable to the device that produced it. It
+// mints and persists a DeviceTag on first use when a config.json exists; absent
+// a config (file mode, or a config-less workspace) it falls back to the untagged
+// manifest.DefaultLabeler rather than fail a commit over a cosmetic tag.
+func (w *Workspace) deviceLabeler() manifest.MergeLabeler {
+	tag := w.deviceTag()
+	if tag == "" {
+		return manifest.DefaultLabeler
+	}
+	return func(name string) string {
+		ext := path.Ext(name)
+		return strings.TrimSuffix(name, ext) + " (conflict " + tag + ")" + ext
+	}
+}
+
+// deviceTag returns this workspace's device marker, minting and persisting one
+// on first use. It returns "" (untagged) when there is no config.json to store
+// it in, or if minting/persisting fails — the tag is cosmetic and must never
+// block a write.
+func (w *Workspace) deviceTag() string {
+	if w == nil || w.Config == nil {
+		return ""
+	}
+	if w.Config.DeviceTag != "" {
+		return w.Config.DeviceTag
+	}
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	tag := hex.EncodeToString(b[:])
+	w.Config.DeviceTag = tag
+	if err := saveConfig(filepath.Join(w.Dir, configFileName), *w.Config); err != nil {
+		// Best-effort: keep the tag in memory for this run even if the write failed.
+		return tag
+	}
+	return tag
 }
 
 // pipelineConfig starts from the pipeline defaults and applies this workspace's

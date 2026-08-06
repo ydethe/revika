@@ -283,6 +283,36 @@ services:
       SEED_ADDR: *seed_addr
     restart: "no"
 
+  # Multi-device write reconciliation client (profile: race). A self-contained
+  # scenario driven by deploy/race.sh proving Architecture §3.7.1: two devices of
+  # ONE User share a single Ed25519 owner signing key (the sole authority to
+  # advance the namespace root) but keep separate workspaces. Because the DHT has
+  # no compare-and-swap, each commit runs a read-merge-publish loop — fetching the
+  # peer's verify-root plus a "sealed self-root" companion (the full cap sealed to
+  # the owner's own ML-KEM key, published under /revika-fullcap/<owner>), three-way
+  # merging (manifest.Merge3), and publishing a root holding BOTH sides. It asserts
+  # disjoint writes converge with no lost update and a genuine same-path collision
+  # yields a "(conflict <tag>)" copy keeping both versions. Only needs the nodes
+  # up; run it with:
+  #   docker compose run --build --rm race
+  race:
+    profiles: ["race"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    entrypoint: ["/usr/local/bin/race.sh"]
+    depends_on:
+      seed:
+        condition: service_started
+      node2:
+        condition: service_started
+      node3:
+        condition: service_started
+    environment:
+      SEED_ADDR: *seed_addr
+    restart: "no"
+
   # --- node-down resilience scenario (profile: resilience) -------------------
   # Two one-shot clients driven by deploy/resilience.sh, which stops a node
   # between them to prove erasure-coded durability: store spreads 6 shards

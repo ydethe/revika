@@ -2,9 +2,9 @@ name: CI
 
 # Test the solution: static checks + race-enabled unit tests, then a full
 # multi-node end-to-end run in containers (authorized round-trip, the
-# unauthorized-access checks, the delete-protection checks, and a directory-tree
-# round-trip that also exercises DHT root publication and revocation) via docker
-# compose.
+# unauthorized-access checks, the delete-protection checks, a directory-tree
+# round-trip that also exercises DHT root publication and revocation, and a
+# multi-device write-reconciliation run) via docker compose.
 on:
   push:
     branches: [main]
@@ -81,6 +81,14 @@ jobs:
       # a shared subtree (advancing the published seq + orphaning the shared cap).
       - name: Directory tree, DHT publish & revocation round-trip
         run: docker compose run --build --rm tree
+
+      # Multi-device write reconciliation (Architecture §3.7.1): two devices of one
+      # User share the owner signing key but separate workspaces; each commit runs
+      # the read-merge-publish loop (sealed self-root companion + manifest.Merge3).
+      # Disjoint writes must converge with no lost update; a same-path collision
+      # must yield a conflict copy keeping both versions.
+      - name: Multi-device write reconciliation
+        run: docker compose run --build --rm race
 
       - name: Tear down
         if: always()

@@ -106,6 +106,7 @@ func NewDiscovery(ctx context.Context, h host.Host, cfg DiscoveryConfig) (*Disco
 		dht.Mode(cfg.Mode.libp2p()),
 		dht.ProtocolPrefix(revikaDHTPrefix),
 		dht.NamespacedValidator(RootNamespace, rootValidator{}),
+		dht.NamespacedValidator(FullRootNamespace, fullRootValidator{}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("revika/net: new dht: %w", err)

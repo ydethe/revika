@@ -546,6 +546,44 @@ and reconcile:
 - conflicts → resolved by sequence number + a conflict-copy fallback (never silently lose
   data).
 
+#### 3.7.1 Multi-device write reconciliation (inline) — **[implemented]**
+
+Several devices of one User share the **same** Ed25519 owner signing key — that is the only
+way to advance the root. Concurrent commits from two devices at the same `Seq` would otherwise
+silently lose one side (the DHT has no compare-and-swap). The client resolves this **inline on
+every `cp`/`rm`/`revoke`**, without needing the (still-planned) sync daemon:
+
+- **Read-merge-publish loop** (`cmd/revika-ctl` `commitRoot`). Before publishing, the client
+  reads the current DHT root. If it diverged from this device's *merge base* (a local, unsigned
+  sidecar `<workspace>/base.json` recording the last root this device reconciled), the client
+  three-way-merges the two roots, signs at `max(local, remote).Seq + 1`, publishes, and re-reads
+  to catch a racing writer — folding and retrying if one won. The durable local `root.json`
+  stays authoritative; a DHT failure never fails the commit.
+- **Merge primitive** (`manifest.Merge3`). Recursive over the COW Merkle DAG with cap-equality
+  pruning: an unchanged subtree keeps an identical cap on both sides and is taken whole. Only a
+  genuinely divergent directory is descended. A leaf both sides changed differently is never
+  dropped — the local edit keeps its name and the remote edit is filed as a **conflict copy**
+  (device-tagged, e.g. `report (conflict a1b2).pdf`); a delete racing an edit keeps the edit.
+- **Read-key delivery — the sealed self-root companion.** Per-blob AES keys are random per
+  write and the public DHT root is *key-stripped* (verify projection), so a second device learns
+  shard locations from the public root but **cannot decrypt or merge** another device's content.
+  Alongside the verify-root, each commit therefore publishes a companion record
+  (`manifest.FullRootRecord`) under `/revika-fullcap/<owner>`: the **full** root cap (with its
+  AES key) sealed to the owner's own ML-KEM-768 public key (`manifest.WrapCap`). Every device
+  holds the shared owner ML-KEM private key, so every device can open it; the public DHT still
+  never carries a decryption key. A reader binds the companion to the signed verify-root
+  (`companion.VerifyCap() == verifyRoot.Root`), tying the decryptable cap to the authentic,
+  monotonic `Seq` without a second signature.
+- **Convergence & residual.** `Seq` is monotonic and `Merge3` is content-complete, so published
+  roots form a rising, eventually-agreeing chain; divergent writes surface as conflict copies,
+  never silent loss. Because a DHT has no CAS, the read→publish window cannot be fully closed —
+  the re-read+retry narrows it. Worst case (an equal-`Seq` fork whose `rootValidator.Select`
+  loser never writes again): its change stays in its local `root.json`/base until its next write
+  re-enters the loop and folds it in. Closing that permanently needs the background sync daemon
+  (§3.7), still out of scope. Both DHT records (verify-root + companion) refresh on each write
+  and share the DHT record lifetime; a device that never writes again lets them expire like any
+  other stale namespace state.
+
 ### 3.8 OS filesystem integration (mount layer) — **[planned]**
 
 Where the sync engine (§3.7) mirrors the network into a *plain local folder*, the mount layer
@@ -662,8 +700,12 @@ Design:
   is an integrity/liveness inspector (detecting revocation), not a decryption path. Readers
   verify the signature and take the highest sequence number.
 - Conflict resolution is single-writer-per-key by construction (only the holder of the
-  signing key can advance the sequence); multi-device writes for the same user reconcile
-  via sequence + conflict copies in the sync layer.
+  signing key can advance the sequence); multiple **devices** of the same User share that one
+  key and reconcile inline on every commit — read-merge-publish against the DHT root, three-way
+  `manifest.Merge3` with device-tagged conflict copies, and a sealed self-root companion that
+  delivers the decryptable remote root between the owner's own devices (§3.7.1). `Select` breaks
+  an equal-`Seq` fork by a total byte-order (not first-seen), so every replica converges on the
+  same visible tip and the loser folds its change in on its next write.
 
 **This per-User signed index is what `.revika/`'s "ledger" refers to** — a private
 index/accounting of the user's own data and where it lives, *not* a global shared ledger.

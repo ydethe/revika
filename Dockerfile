@@ -99,8 +99,9 @@ CMD ["-data", "/data", \
 # grep) to drive put/get and assert results, so it is based on debian-slim. Used
 # by the `client` service (authorized round-trip, verify.sh — the default
 # entrypoint), the `tree` service (directory round-trip, tree.sh), the
-# `attacker` service (unauthorized-access checks, attack.sh), and the `deleter`
-# service (delete-protection checks, delete-protection.sh), each selecting its
+# `attacker` service (unauthorized-access checks, attack.sh), the `deleter`
+# service (delete-protection checks, delete-protection.sh), and the `race`
+# service (multi-device write reconciliation, race.sh), each selecting its
 # script via an entrypoint override in docker-compose.yml.
 FROM debian:bookworm-slim AS client
 LABEL org.opencontainers.image.title="revika-ctl-testharness" \
@@ -113,9 +114,10 @@ COPY deploy/attack.sh /usr/local/bin/attack.sh
 COPY deploy/delete-protection.sh /usr/local/bin/delete-protection.sh
 COPY deploy/resilience-client.sh /usr/local/bin/resilience-client.sh
 COPY deploy/repair-client.sh /usr/local/bin/repair-client.sh
+COPY deploy/race.sh /usr/local/bin/race.sh
 RUN chmod +x /usr/local/bin/verify.sh /usr/local/bin/tree.sh /usr/local/bin/attack.sh \
       /usr/local/bin/delete-protection.sh /usr/local/bin/resilience-client.sh \
-      /usr/local/bin/repair-client.sh
+      /usr/local/bin/repair-client.sh /usr/local/bin/race.sh
 
 ENTRYPOINT ["/usr/local/bin/verify.sh"]
 
