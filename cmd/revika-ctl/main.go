@@ -23,7 +23,7 @@
 //	revika-ctl ls    [-root <ws>] [backend] [-l] [-R] [rvk:<path>]       # browse
 //	revika-ctl rm     [-root <ws>] [backend] rvk:<path>                  # delete
 //	revika-ctl revoke [-root <ws>] [backend] rvk:<path>                  # rotate caps
-//	revika-ctl share [-root <ws>] [backend] rvk:<path> -to <pubkey|@file> [-o <file>]
+//	revika-ctl share [-root <ws>] [backend] rvk:<path> -to <pubkey-file> [-o <file>]
 //	revika-ctl node  [-root <ws>]                                        # list nodes
 //
 // [backend] is -node <ma>; it overrides the workspace config's bootstrap peers
@@ -145,13 +145,14 @@ Commands:
         signing key. Retrieving resolves the rvk: path and reconstructs it. A trailing
         slash (or an existing rvk: directory) means "into that directory".
 
-  ls [-root <ws|file>] [backend] [-key <privkey>] [-owner <pubkey>] [-l] [-R] [rvk:<path>]
+  ls [-root <ws|file>] [backend] [-key <privkey>] [-owner <pubkey-file>] [-l] [-R] [rvk:<path>]
         List a directory in the namespace. Reads directory blobs only — no file
         content is fetched. Plain output is one name per line (directories end in /);
         -l adds kind, size and mtime; -R recurses. 'ls' or 'ls rvk:' lists the root.
-        -owner <base64 signing pubkey> instead resolves that identity's published
-        root from the DHT and prints its (verify-only) summary — liveness and
-        revocation detection; decrypting still needs the read key from a sealed share.
+        -owner <file> reads a signing pubkey from that file and instead resolves that
+        identity's published root from the DHT, printing its (verify-only) summary —
+        liveness and revocation detection; decrypting still needs the read key from a
+        sealed share.
 
   rm [-root <ws|file>] [backend] [-signkey <path>] rvk:<path>
         Remove <path> from your -root (a file or a whole subtree) and drop your
@@ -166,10 +167,11 @@ Commands:
         data. Already-downloaded copies cannot be recalled. Owned root only.
 
   share [-root <ws|file>] [backend] [-key <privkey>] [-signkey <path>] rvk:<path>
-        -to <recipient-pubkey|@file> [-o <file>]
+        -to <recipient-pubkey-file> [-o <file>]
         Wrap a read-capability to the subtree at rvk:<path> for a recipient: it builds
         a RootPointer anchored there, signed by you, and SEALS it to the recipient's
-        public key (only they can open it). Writes a shared root file (default
+        public key, read from the -to file (only they can open it). Writes a shared
+        root file (default
         <name>.root.json). The recipient reads it with:
           revika-ctl ls -root <file> -key <their-privkey>
           revika-ctl cp -root <file> -key <their-privkey> rvk:… <dst>
@@ -188,7 +190,7 @@ and needs no central server.
 
 Note: a write to your own root also publishes the signed pointer to the DHT
 (key-stripped, so nodes learn location + integrity but never a decryption key), so
-others can resolve it with 'ls -owner <your-pubkey>'. Sharing a readable subtree
+others can resolve it with 'ls -owner <your-pubkey-file>'. Sharing a readable subtree
 across machines still travels as the sealed file above (it carries the read key).
 `)
 }
@@ -461,19 +463,16 @@ func runLoad(ctx context.Context, s store.Store, m pipeline.FileManifest, w io.W
 	return pipeline.LoadFile(ctx, s, m, w)
 }
 
-// resolveRecipient reads a recipient public key from a literal base64 string or,
-// if prefixed with '@', from a file (as written by keygen's .pub).
-func resolveRecipient(to string) (cap.PublicKey, error) {
-	if to == "" {
-		return cap.PublicKey{}, fmt.Errorf("missing -to <recipient-pubkey|@file>")
+// resolveRecipient reads a recipient public key from the file at path (as written
+// by keygen's .pub). The key is never accepted as a literal on the command line —
+// only a file path is — so a pubkey is never exposed in shell history or argv.
+func resolveRecipient(path string) (cap.PublicKey, error) {
+	if path == "" {
+		return cap.PublicKey{}, fmt.Errorf("missing -to <recipient-pubkey-file>")
 	}
-	s := to
-	if strings.HasPrefix(to, "@") {
-		raw, err := os.ReadFile(to[1:])
-		if err != nil {
-			return cap.PublicKey{}, fmt.Errorf("read recipient key file: %w", err)
-		}
-		s = strings.TrimSpace(string(raw))
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return cap.PublicKey{}, fmt.Errorf("read recipient key file: %w", err)
 	}
-	return cap.ParsePublicKey(s)
+	return cap.ParsePublicKey(strings.TrimSpace(string(raw)))
 }

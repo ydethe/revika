@@ -630,7 +630,7 @@ Design:
   keeps a live namespace resolvable. `revika-ctl` publishes on every `cp`/`rm`/`revoke`
   commit (best-effort mirror behind the durable local `root.json`, via
   `provider.MultiRootStore` + `DHTRootStore`) and resolves a published root by
-  `ls -owner <pubkey>`. Because the DHT record carries only a verify-cap, `-owner` resolution
+  `ls -owner <pubkey-file>` (the signing pubkey is read from a file, never a literal). Because the DHT record carries only a verify-cap, `-owner` resolution
   is an integrity/liveness inspector (detecting revocation), not a decryption path. Readers
   verify the signature and take the highest sequence number.
 - Conflict resolution is single-writer-per-key by construction (only the holder of the

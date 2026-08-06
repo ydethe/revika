@@ -106,7 +106,7 @@ func TestNamespaceE2E(t *testing.T) {
 	sharedFile := filepath.Join(t.TempDir(), "docs.root.json")
 	capture(t, func() error {
 		return cmdShare([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign,
-			"-to", "@" + recipientPub, "-o", sharedFile, "rvk:docs"})
+			"-to", recipientPub, "-o", sharedFile, "rvk:docs"})
 	})
 
 	// The recipient's -root is the sealed file, opened with their private key. The

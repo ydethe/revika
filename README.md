@@ -166,14 +166,15 @@ tree, so `share` needs a backend:
 go run ./cmd/revika-ctl keygen -key bob            # writes bob.key (private) + bob.pub (public)
 
 # you (sender): seal a share of one file (or a whole subtree) so only bob can open it
-go run ./cmd/revika-ctl share -node "$NODE" -to @bob.pub -o ./shared.root.json rvk:docs/myfile.txt
+go run ./cmd/revika-ctl share -node "$NODE" -to bob.pub -o ./shared.root.json rvk:docs/myfile.txt
 
 # recipient: open the sealed root with their key and browse / retrieve it
 go run ./cmd/revika-ctl ls -node "$NODE" -root ./shared.root.json -key bob.key rvk:
 go run ./cmd/revika-ctl cp -node "$NODE" -root ./shared.root.json -key bob.key rvk: ./bob-out.txt
 ```
 
-`-to` accepts a literal base64 public key or `@file`. Point `share` at a subdirectory
+`-to` takes a file holding the recipient's base64 public key (as written by `keygen`);
+a literal key on the command line is not accepted. Point `share` at a subdirectory
 instead (`rvk:docs`) to share a whole subtree; `ls`/`cp` auto-detect file vs. subtree from
 the cap's `Kind`. Run any command with `-h`, or `revika-ctl help`, for the full flag list.
 

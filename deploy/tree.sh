@@ -202,7 +202,7 @@ echo ">> share rvk:tree/$SHARE_REL (seal one file to the recipient)"
 share_ok=""
 for attempt in 1 2 3 4 5; do
   if revika-ctl share -root "$WS" -signkey "$SIGNKEY" \
-      -to "@$RCPT_PUB" -o "$FILE_SEALED" "rvk:tree/$SHARE_REL"; then
+      -to "$RCPT_PUB" -o "$FILE_SEALED" "rvk:tree/$SHARE_REL"; then
     share_ok=1
     break
   fi
@@ -246,7 +246,7 @@ echo ">> share rvk:tree/$SHARE_DIR (seal a subtree to the recipient)"
 share_ok=""
 for attempt in 1 2 3 4 5; do
   if revika-ctl share -root "$WS" -signkey "$SIGNKEY" \
-      -to "@$RCPT_PUB" -o "$DIR_SEALED" "rvk:tree/$SHARE_DIR"; then
+      -to "$RCPT_PUB" -o "$DIR_SEALED" "rvk:tree/$SHARE_DIR"; then
     share_ok=1
     break
   fi
@@ -291,7 +291,9 @@ echo "OK: a subtree was shared from the tree and restored, leaking nothing outsi
 # under fresh keys, advances the published seq, and reclaims the orphaned old shards
 # so the recipient's previously-sealed cap can no longer read the subtree.
 echo
-OWNER_PUB=$(tr -d '\n\r' <"$WORK/user.sign.pub")
+# `ls -owner` reads the signing pubkey from a FILE (never a literal), so point it
+# straight at the owner's .sign.pub rather than passing the key text.
+OWNER_PUB="$WORK/user.sign.pub"
 
 # Parse the "seq:" line out of `ls -owner` (empty if the root isn't resolvable yet).
 published_seq() {

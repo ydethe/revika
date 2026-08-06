@@ -164,7 +164,7 @@ if [ -d /handoff ]; then
   echo ">> preparing handoff for the unauthorized-access client"
   revika-ctl keygen -key "$WORK/thirdparty" -pow-difficulty 0 >/dev/null
   revika-ctl share -root "$WS" -signkey "$SIGNKEY" \
-    -to "@$WORK/thirdparty.pub" -o /handoff/secret.root.json rvk:testfile.bin >/dev/null
+    -to "$WORK/thirdparty.pub" -o /handoff/secret.root.json rvk:testfile.bin >/dev/null
   printf '%s' "$MARKER" >/handoff/marker.txt
   echo "   wrote /handoff/secret.root.json (sealed for a third party) and /handoff/marker.txt"
 fi

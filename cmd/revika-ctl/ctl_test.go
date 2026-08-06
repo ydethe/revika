@@ -158,7 +158,8 @@ func TestEndToEndPutShareGet(t *testing.T) {
 	}
 }
 
-// TestResolveRecipientFromFile checks the @file form used by `share -to`.
+// TestResolveRecipientFromFile checks that `share -to` reads the recipient's
+// public key from a file (and only a file — a literal base64 key is rejected).
 func TestResolveRecipientFromFile(t *testing.T) {
 	_, pub, _ := cap.GenerateIdentity()
 	dir := t.TempDir()
@@ -167,18 +168,23 @@ func TestResolveRecipientFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolveRecipient("@" + pubFile)
+	got, err := resolveRecipient(pubFile)
 	if err != nil {
-		t.Fatalf("resolveRecipient @file: %v", err)
+		t.Fatalf("resolveRecipient from file: %v", err)
 	}
 	if got != pub {
-		t.Fatal("recipient from @file mismatch")
+		t.Fatal("recipient from file mismatch")
 	}
 
-	// Literal base64 form too.
-	got, err = resolveRecipient(pub.String())
-	if err != nil || got != pub {
-		t.Fatalf("resolveRecipient literal: %v, %v", got, err)
+	// A literal base64 key on the command line is no longer accepted: it is
+	// treated as a path, so opening it as a file fails.
+	if _, err := resolveRecipient(pub.String()); err == nil {
+		t.Fatal("resolveRecipient accepted a literal base64 key; want a file path only")
+	}
+
+	// The historical @file form is gone too: the '@' is part of the path now.
+	if _, err := resolveRecipient("@" + pubFile); err == nil {
+		t.Fatal("resolveRecipient accepted the @file form; want a plain file path")
 	}
 }
 

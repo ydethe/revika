@@ -84,7 +84,7 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -conn-high -conn-grace -pow-difficulty -pow-puzzle
                           #   -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | ls | rm | share | revoke | node
-                          #   (see -h). `ls -owner <pubkey>` resolves a namespace's DHT-published
+                          #   (see -h). `ls -owner <pubkey-file>` resolves a namespace's DHT-published
                           #   root (verify-only); `revoke rvk:PATH` re-keys a shared subtree.
 ```
 
@@ -115,7 +115,7 @@ persisted via `provider.FileRootStore` (`<workspace>/root.json`, overridable wit
 `-root`/`$REVIKA_ROOT`). `cp` writes/reads
 scp-style (`cp file rvk:docs/` stores, `cp rvk:docs/file .` retrieves); `ls`
 browses (dir blobs only, `-l`/`-R`); `rm` grafts-out a subtree and releases its
-shards; `share rvk:PATH -to <key>` seals a `RootPointer` anchored at that subtree
+shards; `share rvk:PATH -to <key-file>` seals a `RootPointer` anchored at that subtree
 to the recipient's ML-KEM key (a *sealed shared root* file the recipient uses as
 `-root … -key <priv>` — never a bearer token); `revoke rvk:PATH` re-keys that
 subtree down to its data chunks (`manifest.Rekey`), advances + republishes the
@@ -124,9 +124,11 @@ read the current bytes (future reads only — already-downloaded copies can't be
 clawed back); `node` lists DHT-discovered nodes. Own root = mutable; a shared root
 = read-only. Every `cp`/`rm`/`revoke` commit also **publishes** the signed root to
 the DHT (best-effort mirror behind the durable local `root.json`); `ls -owner
-<pubkey>` resolves someone's published root, but only to its verify-cap form (shard
-locations + integrity, no decryption) — a liveness/revocation inspector, not a
-browse path.
+<pubkey-file>` resolves someone's published root, but only to its verify-cap form
+(shard locations + integrity, no decryption) — a liveness/revocation inspector, not
+a browse path. Public keys are always passed as *files*, never as literals on the
+command line: `share -to <recipient-pubkey-file>` and `ls -owner <signing-pubkey-file>`
+read the base64 key from the named file (no `@file` prefix, no inline key).
 
 `keygen` writes two keypairs: `<prefix>.key/.pub` (ML-KEM-768, receiving shares) and
 `<prefix>.sign.key/.sign.pub` (Ed25519, the storage owner identity). The signing key is

@@ -147,7 +147,7 @@ The provider seam (`internal/provider.DHTRootStore`/`MultiRootStore`) rides on
 `Discovery` structurally via a local `RootPublisher` interface, so `provider` never
 imports `net`. `revika-ctl` publishes on every `cp`/`rm`/`revoke` commit (DHT mirror
 behind the durable local `root.json`) and resolves a published root with
-`ls -owner <pubkey>` — a verify-only inspector (integrity/liveness/revocation
+`ls -owner <pubkey-file>` — a verify-only inspector (integrity/liveness/revocation
 detection), never a decryption path.
 
 ## Client store (`client.go`)

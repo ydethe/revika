@@ -647,7 +647,7 @@ func cmdLs(args []string) error {
 	node := addBackendFlags(fs)
 	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
-	owner := fs.String("owner", "", "resolve an owner's published root from the DHT by their signing pubkey (base64); reports the verify-only pointer, does not decrypt")
+	owner := fs.String("owner", "", "file holding an owner's signing pubkey (base64); resolves their published root from the DHT and reports the verify-only pointer, does not decrypt")
 	long := fs.Bool("l", false, "long format: kind, size, and mtime per entry")
 	recurse := fs.Bool("R", false, "list subdirectories recursively")
 	if err := fs.Parse(args); err != nil {
@@ -709,10 +709,14 @@ func cmdLs(args []string) error {
 // share recipient detect revocation (their old shard IDs vanish from the current
 // root after the owner runs `revoke`). Actually reading the content still needs
 // the read key, delivered out-of-band as a sealed share (-key).
-func lsPublishedRoot(rootFlag, node, ownerB64 string) error {
-	owner, err := cap.ParseSignPubKey(ownerB64)
+func lsPublishedRoot(rootFlag, node, ownerFile string) error {
+	raw, err := os.ReadFile(ownerFile)
 	if err != nil {
-		return fmt.Errorf("parse -owner: %w", err)
+		return fmt.Errorf("read -owner key file: %w", err)
+	}
+	owner, err := cap.ParseSignPubKey(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return fmt.Errorf("parse -owner key file %s: %w", ownerFile, err)
 	}
 	ws, err := resolveWorkspace(rootFlag)
 	if err != nil {
@@ -1040,7 +1044,7 @@ func cmdShare(args []string) error {
 	rootFlag := fs.String("root", "", "workspace folder or root file to share from (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root you are re-sharing from")
 	signKeyFlag := fs.String("signkey", "", "your signing key, to sign the shared root (default <workspace>/keys/user.sign.key)")
-	to := fs.String("to", "", "recipient public key (base64) or @file")
+	to := fs.String("to", "", "file holding the recipient's public key (base64, as written by keygen's .pub)")
 	out := fs.String("o", "", "output shared root file (default <name>.root.json)")
 	if err := fs.Parse(args); err != nil {
 		return err
