@@ -95,6 +95,10 @@ func TestDHTProvideAndFind(t *testing.T) {
 	}
 
 	waitRoutingTable(t, finder)
+	// Announce needs the seed's own routing table to be non-empty; the seed
+	// learns about the finder asynchronously after it dials in, so wait for it
+	// too (otherwise Announce races and fails with "no peer in table" in CI).
+	waitRoutingTable(t, seed)
 	actx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := seed.Announce(actx, id); err != nil {
