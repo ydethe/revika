@@ -29,8 +29,9 @@ User side — a node is trusted for *availability*, never *confidentiality*.
 - **Redundancy = erasure coding**, not replication: `k` data + `m` parity shards, any `k`
   reconstruct. Use `klauspost/reedsolomon`, don't hand-roll. Default `k=4`, `m=2`.
 - **Networking = go-libp2p** (+ `go-libp2p-kad-dht`). Use it for discovery (Kademlia DHT on a
-  private `/revika` prefix for WAN, mDNS for LAN), NAT traversal, and transport. Build revika
-  protocols as versioned libp2p stream protocols; don't roll a bespoke wire protocol.
+  private `/revika` prefix; no LAN/mDNS path — discovery is DHT-only), NAT traversal, and
+  transport. Build revika protocols as versioned libp2p stream protocols; don't roll a bespoke
+  wire protocol.
 - **Everything is encrypted client-side** before shards leave the machine.
 - **Sharing = wrapping/sharing keys**, never copying plaintext. A read-capability = manifest
   location + decryption key, wrapped with the recipient's public key.
@@ -75,7 +76,7 @@ go test ./...             # run all tests (use -race)
 go test ./path/to/pkg     # test a single package
 go test -run TestName ./path/to/pkg
 go vet ./...
-go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -mdns -dht -bootstrap
+go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstrap
                           #   -advertise -quota -lease-ttl -gc-interval -gc-expired-leases
                           #   -repair -repair-interval -rebalance -rebalance-interval
                           #   -rebalance-threshold -capacity -metrics -blocklist -conn-low
@@ -89,9 +90,11 @@ The client is **workspace-centric** on top of a namespace. `connect` creates a
 `config.json` — the bootstrap peer(s), erasure `k`/`m` (default 4/2), and the
 node's proof-of-work admission policy — alongside where `root.json` and the
 User's keys (`keys/user.*`) live. Every namespace command selects a workspace with
-`-root <folder>`; the saved config supplies the bootstrap peers and PoW policy so
-`-bootstrap`/`-k`/`-m` need not be repeated (an explicit `-node`/`-bootstrap`/`-mdns`
-still overrides). The identity is minted lazily on the first write (`cp`/`rm`/`share`)
+`-root <folder>`; the saved config supplies the bootstrap peers, erasure `k`/`m`,
+and PoW policy so they need not be repeated. Bootstrap peers come *only* from the
+workspace config (set by `connect`) — namespace commands no longer take a
+`-bootstrap` flag; an explicit `-node` still overrides the backend. The
+identity is minted lazily on the first write (`cp`/`rm`/`share`)
 after a confirmation prompt. `-root` is overloaded: a directory is a workspace; a
 regular file is a bare root pointer (own root, or a sealed shared root opened with
 `-key`) with no config — the historical behaviour.

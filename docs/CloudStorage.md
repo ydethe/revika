@@ -380,8 +380,8 @@ Responsibilities:
 1. **Load keys** — the User ML-KEM keypair (receiving shares) and the Ed25519 signing identity
    (the storage owner; self-certifying via PoW, `internal/cap/pow.go`). `signer` for the
    `Provider` comes from the Ed25519 key.
-2. **Stand up the network** — a libp2p host with discovery (Kademlia DHT on `/revika` for WAN,
-   mDNS for LAN) and the shard/probe protocols (`internal/net`); wire node connections into a
+2. **Stand up the network** — a libp2p host with discovery (Kademlia DHT on `/revika`, DHT-only)
+   and the shard/probe protocols (`internal/net`); wire node connections into a
    `store.Store` (`DHTStore`/`PlacementStore`).
 3. **Construct one `provider.Manifest` per mounted domain** — `provider.New(ctx, store, signer,
    rootStore, WithConfig(cfg))`.
@@ -392,7 +392,7 @@ Responsibilities:
    host.
 
 Suggested flags (mirror `revika-node` conventions): `-data`, `-mount <path>`, `-sync <path>`,
-`-bootstrap`, `-dht`, `-mdns`, `-signkey`, `-key`, `-repair-interval`, `-metrics`, `-v`.
+`-bootstrap`, `-dht`, `-signkey`, `-key`, `-repair-interval`, `-metrics`, `-v`.
 
 ### 6.2 Sync engine (`internal/sync`, planned)
 

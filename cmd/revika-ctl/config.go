@@ -15,7 +15,8 @@ package main
 //     workspace: the root pointer is <dir>/root.json, keys default to
 //     <dir>/keys/user.*, and <dir>/config.json (if present) supplies the
 //     bootstrap peers, erasure parameters, and proof-of-work policy so commands
-//     need no repeated -bootstrap/-k/-m flags.
+//     need no per-command network flags (bootstrap peers come only from here,
+//     set by `connect`; -node can still override the backend).
 
 import (
 	"encoding/json"
@@ -127,17 +128,19 @@ func (w *Workspace) pipelineConfig() pipeline.Config {
 	return cfg
 }
 
-// backend merges explicit -node/-bootstrap/-mdns flags with the workspace's
-// saved bootstrap peers: any explicit selector wins outright; otherwise the
-// config's bootstrap peers stand in so commands need no repeated flags.
-func (w *Workspace) backend(node string, bootstrap []string, mdns bool) (string, []string, bool) {
-	if node != "" || len(bootstrap) > 0 || mdns {
-		return node, bootstrap, mdns
+// backend resolves the store selectors for a namespace command. An explicit
+// -node override (pinning a single node) wins outright; otherwise the
+// workspace's saved bootstrap peers stand in so commands need no repeated flags.
+// Bootstrap peers are only ever supplied by the workspace config (via -root /
+// connect), never a per-command flag.
+func (w *Workspace) backend(node string) (string, []string) {
+	if node != "" {
+		return node, nil
 	}
 	if w != nil && w.Config != nil && len(w.Config.Bootstrap) > 0 {
-		return "", w.Config.Bootstrap, false
+		return "", w.Config.Bootstrap
 	}
-	return node, bootstrap, mdns
+	return node, nil
 }
 
 // powSettings returns the proof-of-work puzzle and difficulty a newly minted

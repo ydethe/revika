@@ -32,5 +32,5 @@
 | SHR004 | Content-Defined Chunking | ❌ | Fixed-size chunking only (`chunk.Fixed`, 4 MiB). CDC documented as planned. |
 | SHR005 | CRDT | ❌ | No CRDT code in the tree. |
 | SHR006 | Modifications traced with Vector Clocks | ❌ | No vector-clock code in the tree. |
-| DCV001 | Seamless node disconnect / reconnect / join | ✅ (largely) | Kademlia DHT + mDNS discovery, provider records + 12h reprovide, `Reconcile` on startup, autonomous repair loop regenerates shards after node loss; clients survive a node vanishing mid-fetch via "any k of k+m." |
+| DCV001 | Seamless node disconnect / reconnect / join | ✅ (largely) | Kademlia DHT discovery, provider records + 12h reprovide, `Reconcile` on startup, autonomous repair loop regenerates shards after node loss; clients survive a node vanishing mid-fetch via "any k of k+m." |
 

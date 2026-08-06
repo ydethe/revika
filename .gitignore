@@ -17,6 +17,7 @@ testfile.bin
 .test/
 .guest_test/
 .user
+.jcloud
 
 # Test binary, built with `go test -c`
 *.test

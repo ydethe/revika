@@ -232,8 +232,9 @@ func TestDiscoverNodeInfos(t *testing.T) {
 	seedAddr, seedID := startStorageNode(t, ctx, "")
 	_, node2ID := startStorageNode(t, ctx, seedAddr)
 
-	// The client joins the DHT via the seed — exactly as `nodes -bootstrap` does.
-	h, disc, closer, err := joinDHT(ctx, []string{seedAddr}, false)
+	// The client joins the DHT via the seed — exactly as `node` does with the
+	// workspace's saved bootstrap peers.
+	h, disc, closer, err := joinDHT(ctx, []string{seedAddr})
 	if err != nil {
 		t.Fatalf("joinDHT: %v", err)
 	}

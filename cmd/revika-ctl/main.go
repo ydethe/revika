@@ -11,7 +11,7 @@
 // A workspace ties this together: `connect` writes a folder (default .revika)
 // holding config.json — the bootstrap peers, erasure k/m, and node proof-of-work
 // policy — alongside where root.json and the User's keys live. Every namespace
-// command selects it with -root <folder> and then needs no repeated -bootstrap
+// command selects it with -root <folder> and then needs no per-command backend
 // flags; the identity is minted on the first write, after a confirmation prompt.
 //
 // Usage:
@@ -23,10 +23,11 @@
 //	revika-ctl ls    [-root <ws>] [backend] [-l] [-R] [rvk:<path>]       # browse
 //	revika-ctl rm    [-root <ws>] [backend] rvk:<path>                   # delete
 //	revika-ctl share [-root <ws>] [backend] rvk:<path> -to <pubkey|@file> [-o <file>]
-//	revika-ctl node  (-bootstrap <ma>… | -mdns)                          # list nodes
+//	revika-ctl node  [-root <ws>]                                        # list nodes
 //
-// [backend] is -node <ma> / -bootstrap <ma>… / -mdns; it overrides the workspace
-// config's bootstrap peers when given. -root accepts a workspace folder or a bare
+// [backend] is -node <ma>; it overrides the workspace config's bootstrap peers
+// when given, which otherwise supply the DHT entry point. -root accepts a
+// workspace folder or a bare
 // root file (a plaintext own root, or a sealed shared root opened with -key). A
 // <multiaddr> is a node's full dial address including its peer ID, e.g.
 // /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW…, as printed by revika-node on startup.
@@ -54,8 +55,8 @@ import (
 )
 
 // ctlLog is the client's logger. It reports discovery activity (each new storage
-// node found via the DHT or mDNS) to stderr so the User can see the network
-// forming under cp/ls/node.
+// node found via the DHT) to stderr so the User can see the network forming under
+// cp/ls/node.
 var ctlLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 func main() {
@@ -104,9 +105,9 @@ your keys; every command selects it with -root <folder>. Your own root is mutabl
 a root someone shared with you (opened with -root <file> -key <privkey>) is
 read-only.
 
-Every rvk: command takes a backend: -node <ma> for one node, or -bootstrap <ma>…
-/ -mdns to reach nodes over the DHT. In a workspace these default to the bootstrap
-peers saved in config.json, so you rarely pass them after connect.
+Every rvk: command reaches nodes over the DHT through the bootstrap peers saved in
+the workspace's config.json (set by connect), so you rarely pass a backend. Override
+it per command with -node <ma> to pin a single node.
 
 Commands:
   connect (-bootstrap <ma>… | <ma>…) [-root <dir>] [-label <s>] [-k 4] [-m 2]
@@ -160,15 +161,17 @@ Commands:
           revika-ctl ls -root <file> -key <their-privkey>
           revika-ctl cp -root <file> -key <their-privkey> rvk:… <dst>
 
-  node (-bootstrap <ma>... | -mdns)
+  node [-root <ws>]
         List the storage nodes the client can discover on the DHT — the nodes it
-        is aware of and could place shards on. Reports each node's peer ID,
-        reachability, and advertised addresses. No file contact.
+        is aware of and could place shards on. Joins through the workspace's saved
+        bootstrap peers (-root). Reports each node's peer ID, reachability, and
+        advertised addresses. No file contact.
 
 A <multiaddr> includes the node's peer ID, e.g.
   /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW...
-as printed by revika-node on startup. A -bootstrap peer is any running node; the
-client joins the revika DHT through it and needs no central server.
+as printed by revika-node on startup. A bootstrap peer is any running node; the
+client joins the revika DHT through the one(s) saved in the workspace by connect,
+and needs no central server.
 
 Note: a root file is currently local only. Sharing across machines (DHT root
 publish) is planned; until then a shared root travels as the sealed file above.
@@ -190,8 +193,8 @@ const dialTimeout = 30 * time.Second
 // shard's providers) before we give up.
 const discoveryTimeout = 30 * time.Second
 
-// dialHost builds an ephemeral client host (no persistent identity, no mDNS)
-// and connects it to the node at nodeAddr, returning the host, the node's peer
+// dialHost builds an ephemeral client host (no persistent identity) and connects
+// it to the node at nodeAddr, returning the host, the node's peer
 // ID, and a closer.
 func dialHost(ctx context.Context, nodeAddr string) (host.Host, peer.ID, func(), error) {
 	if nodeAddr == "" {
@@ -201,7 +204,7 @@ func dialHost(ctx context.Context, nodeAddr string) (host.Host, peer.ID, func(),
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("invalid -node address %q: %w", nodeAddr, err)
 	}
-	h, err := net.NewHost(net.HostConfig{}) // ephemeral identity, random port, mDNS off
+	h, err := net.NewHost(net.HostConfig{}) // ephemeral identity, random port
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -235,14 +238,14 @@ func dialSigned(ctx context.Context, nodeAddr string, signer cap.SignKey) (*net.
 }
 
 // joinDHT builds an ephemeral client-mode DHT host and joins the network via the
-// given bootstrap peers (and/or mDNS on the LAN). It returns the host, the
-// Discovery, and a closer that tears both down. At least one of bootstrap/mdns
-// must be provided — a client with no way in cannot reach the DHT.
-func joinDHT(ctx context.Context, bootstrap []string, mdns bool) (host.Host, *net.Discovery, func(), error) {
-	if len(bootstrap) == 0 && !mdns {
-		return nil, nil, nil, fmt.Errorf("DHT mode needs -bootstrap <multiaddr> (or -mdns on a LAN)")
+// given bootstrap peers. It returns the host, the Discovery, and a closer that
+// tears both down. At least one bootstrap peer must be provided — a client with
+// no way in cannot reach the DHT.
+func joinDHT(ctx context.Context, bootstrap []string) (host.Host, *net.Discovery, func(), error) {
+	if len(bootstrap) == 0 {
+		return nil, nil, nil, fmt.Errorf("DHT mode needs a workspace with saved bootstrap peers (select it with -root, set by connect)")
 	}
-	h, err := net.NewHost(net.HostConfig{EnableMDNS: mdns, Log: ctlLog})
+	h, err := net.NewHost(net.HostConfig{Log: ctlLog})
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -267,8 +270,8 @@ func joinDHT(ctx context.Context, bootstrap []string, mdns bool) (host.Host, *ne
 
 // dialDHT returns a read store that retrieves shards by discovering their
 // providers on the DHT — no explicit node needed. Used by `cp` (retrieve)/`ls`.
-func dialDHT(ctx context.Context, bootstrap []string, mdns bool) (store.Store, func(), error) {
-	h, disc, closer, err := joinDHT(ctx, bootstrap, mdns)
+func dialDHT(ctx context.Context, bootstrap []string) (store.Store, func(), error) {
+	h, disc, closer, err := joinDHT(ctx, bootstrap)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -278,8 +281,8 @@ func dialDHT(ctx context.Context, bootstrap []string, mdns bool) (store.Store, f
 // dialPlacement joins the DHT, discovers storage nodes, and returns a
 // PlacementStore that spreads shards across them, signing writes with signer.
 // Used by `cp` (store) and `rm`.
-func dialPlacement(ctx context.Context, bootstrap []string, mdns bool, signer cap.SignKey) (*net.PlacementStore, func(), error) {
-	h, disc, closer, err := joinDHT(ctx, bootstrap, mdns)
+func dialPlacement(ctx context.Context, bootstrap []string, signer cap.SignKey) (*net.PlacementStore, func(), error) {
+	h, disc, closer, err := joinDHT(ctx, bootstrap)
 	if err != nil {
 		return nil, nil, err
 	}

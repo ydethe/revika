@@ -289,7 +289,7 @@ func (m *MetricsServer) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 
 func (m *MetricsServer) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	// With the DHT on, "ready" means the routing table can route a query. Without
-	// it (mDNS-only or single node) the node is ready as soon as it is up.
+	// it (a single node) the node is ready as soon as it is up.
 	ready := m.disc == nil || m.disc.RoutingTableSize() > 0
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	if !ready {

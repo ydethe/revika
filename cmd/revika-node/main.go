@@ -51,8 +51,8 @@ const reprovideInterval = 12 * time.Hour
 
 // discoveryInterval is how often a node actively scans the DHT for other
 // advertised storage nodes, and discoveryScanTimeout bounds one such scan.
-// Without this a node at rest — mDNS off, holding no shards, so its repair loop
-// makes no DHT queries — never emits a "discovered node" line even though
+// Without this a node at rest — holding no shards, so its repair loop makes no
+// DHT queries — never emits a "discovered node" line even though
 // bootstrap succeeded and the routing tables interconnect. The scan also warms
 // each node's view of its peers rather than only learning them lazily on the
 // first client or repair query.
@@ -88,7 +88,6 @@ func run() error {
 		verbose     = flag.Bool("v", false, "verbose (debug) logging; shorthand for -log-level debug")
 		logFormat   = flag.String("log-format", "auto", "log encoding: auto (text on a terminal, JSON otherwise), text, or json. JSON is structured for Grafana Alloy/Loki (time, level, msg, event fields)")
 		logLevel    = flag.String("log-level", "info", "minimum log level: debug, info, warn, or error")
-		mdnsOn      = flag.Bool("mdns", true, "enable mDNS LAN peer discovery")
 		dhtOn       = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
 		advertiseOn = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
 		quota       = flag.Int64("quota", 0, "per-owner storage quota in bytes (0 = unlimited)")
@@ -178,7 +177,6 @@ func run() error {
 	h, err := net.NewHost(net.HostConfig{
 		ListenAddrs:  listen,
 		IdentityPath: filepath.Join(*dataDir, "keys", "node.key"),
-		EnableMDNS:   *mdnsOn,
 		PublicIP:     *publicIP,
 		Defense:      defense,
 		Log:          log,
@@ -322,7 +320,6 @@ func run() error {
 		"peer", h.ID().String(),
 		"addrs", addrs,
 		"shards", shardsDir,
-		"mdns", *mdnsOn,
 		"dht", *dhtOn,
 		"advertise", *dhtOn && *advertiseOn,
 		"bootstrap", len(bootstrap),

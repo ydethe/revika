@@ -45,7 +45,7 @@ Exported errors: `ErrRemote`, `ErrUnauthorized`, `ErrQuotaExceeded`.
 `NewHost(HostConfig)` builds the libp2p host. `HostConfig` carries `ListenAddrs`
 (defaulting to all interfaces on OS-assigned TCP + QUIC-v1 ports), `IdentityPath`
 (a persistent Ed25519 identity loaded or generated+persisted at 0600; empty means
-an ephemeral in-memory key for tests), `EnableMDNS`, `PublicIP`, `Defense`, and `Log`.
+an ephemeral in-memory key for tests), `PublicIP`, `Defense`, and `Log`.
 
 **Public IP / NAT.** A node behind NAT only observes private/unspecified listen
 addresses, so WAN peers cannot dial it. Set `HostConfig.PublicIP` (the node's
@@ -57,11 +57,10 @@ assumes the public port equals the bound port (a 1:1 port forward, which holds f
 fixed `-listen` ports mapped straight through). The public variants flow through to
 the DHT and to `/status`'s bootstrap strings.
 
-**LAN discovery (mDNS).** When `EnableMDNS` is set, `startMDNS` runs an mDNS service
-scoped by the `revika` service tag. `mdnsNotifee.HandlePeerFound` best-effort dials
-each newly seen LAN peer and logs it once. NAT traversal / transport concerns are
-otherwise handled by libp2p itself (QUIC + TCP transports, the identify service that
-populates peer addresses); revika does not roll its own.
+**Discovery / transport.** Peer discovery is the Kademlia DHT (see `Discovery`
+below); there is no LAN/mDNS path. NAT traversal / transport concerns are handled
+by libp2p itself (QUIC + TCP transports, the identify service that populates peer
+addresses); revika does not roll its own.
 
 ## Self-defence (`defense.go`)
 

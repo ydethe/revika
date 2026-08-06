@@ -26,13 +26,8 @@ Share a single file (seals a shared root to the recipient's key — no bearer to
 
      go run ./cmd/revika-ctl share -root ws -to @guest/keys/user.pub -o share.root.json rvk:folder/testfile.bin
 
-Retrieve a shared file (the recipient opens the sealed root file with their key;
--root here names a file, so it is a bare root pointer, not a workspace) :
-
-     go run ./cmd/revika-ctl cp -root share.root.json -key guest/keys/user.key -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx rvk: ./testfile.bin
-
 Share a whole subtree instead — point `share` at a directory, then browse/retrieve it :
 
      go run ./cmd/revika-ctl share -root ws -to @guest/keys/user.pub -o shared-dir.root.json rvk:folder
-     go run ./cmd/revika-ctl ls -root shared-dir.root.json -key guest/keys/user.key -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx rvk:
-     go run ./cmd/revika-ctl cp -root shared-dir.root.json -key guest/keys/user.key -bootstrap /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx rvk: .guest_test
+     go run ./cmd/revika-ctl ls -root shared-dir.root.json -key guest/keys/user.key -node /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx rvk:
+     go run ./cmd/revika-ctl cp -root shared-dir.root.json -key guest/keys/user.key -node /ip4/127.0.0.1/tcp/4001/p2p/xxxxxx rvk: .guest_test

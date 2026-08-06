@@ -1,25 +1,18 @@
 package net
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/libp2p/go-libp2p"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	ma "github.com/multiformats/go-multiaddr"
 )
-
-// mdnsServiceTag scopes LAN discovery to revika peers.
-const mdnsServiceTag = "revika"
 
 // Defence controls (security/Defence.md; primitives P17, P24 in security/frameworks.md):
 //   SC-8  (Transmission Confidentiality and Integrity) — partial: libp2p's default transport
@@ -37,9 +30,6 @@ type HostConfig struct {
 	// written there (0600). The PeerID derived from this key is the node's
 	// stable network identity across restarts.
 	IdentityPath string
-	// EnableMDNS turns on mDNS LAN peer discovery (auto-dial peers found on the
-	// local network). Useful for development and single-LAN deployments.
-	EnableMDNS bool
 	// PublicIP, when set, is the node's externally reachable IP address (IPv4 or
 	// IPv6). A node behind NAT only observes private/unspecified listen addresses,
 	// so peers cannot dial it from the WAN. Setting this installs an address
@@ -54,8 +44,8 @@ type HostConfig struct {
 	// see defense.go. Nil (the default, used by tests) leaves libp2p's own
 	// defaults in place and installs no gater.
 	Defense *DefenseConfig
-	// Log receives host lifecycle lines: peer connect/disconnect (Debug) and each
-	// new peer discovered via mDNS (Info). If nil, this logging is discarded.
+	// Log receives host lifecycle lines: peer connect/disconnect (Debug). If nil,
+	// this logging is discarded.
 	Log *slog.Logger
 }
 
@@ -67,8 +57,7 @@ func defaultListenAddrs() []string {
 }
 
 // NewHost builds a libp2p host from cfg. The caller owns the returned host and
-// must Close it. If cfg.EnableMDNS is set, LAN discovery is started and its
-// service is closed together with the host.
+// must Close it.
 func NewHost(cfg HostConfig) (host.Host, error) {
 	priv, err := loadOrCreateIdentity(cfg.IdentityPath)
 	if err != nil {
@@ -117,14 +106,8 @@ func NewHost(cfg HostConfig) (host.Host, error) {
 	}
 	// Log the underlying peer connection lifecycle. This is churn on a busy DHT,
 	// so it stays at Debug; the meaningful "discovered node" lines are emitted at
-	// Info by the mDNS/DHT discovery layers.
+	// Info by the DHT discovery layer.
 	notifyConnections(h, log)
-	if cfg.EnableMDNS {
-		if err := startMDNS(h, log); err != nil {
-			h.Close()
-			return nil, err
-		}
-	}
 	return h, nil
 }
 
@@ -231,45 +214,4 @@ func loadOrCreateIdentity(path string) (libp2pcrypto.PrivKey, error) {
 		return nil, fmt.Errorf("revika/net: write identity %s: %w", path, err)
 	}
 	return priv, nil
-}
-
-// mdnsNotifee dials peers discovered on the LAN and logs each new one.
-type mdnsNotifee struct {
-	h   host.Host
-	log *slog.Logger
-
-	// seen dedups repeated mDNS announcements so each node is logged only the
-	// first time it is found on the LAN.
-	mu   sync.Mutex
-	seen map[peer.ID]struct{}
-}
-
-func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
-	if pi.ID == n.h.ID() {
-		return // ourselves
-	}
-	n.mu.Lock()
-	_, known := n.seen[pi.ID]
-	if !known {
-		n.seen[pi.ID] = struct{}{}
-	}
-	n.mu.Unlock()
-	if !known {
-		n.log.Info("discovered node", "peer", pi.ID, "via", "mdns", "addrs", pi.Addrs)
-	}
-	// Best-effort connect; failures are transient and left to libp2p to retry.
-	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
-	defer cancel()
-	_ = n.h.Connect(ctx, pi)
-}
-
-func startMDNS(h host.Host, log *slog.Logger) error {
-	svc := mdns.NewMdnsService(h, mdnsServiceTag, &mdnsNotifee{h: h, log: log, seen: map[peer.ID]struct{}{}})
-	if err := svc.Start(); err != nil {
-		return fmt.Errorf("revika/net: start mdns: %w", err)
-	}
-	// The service's lifetime is tied to the host: libp2p closes registered
-	// network-notifee style services on host Close. mdns.Service also stops
-	// when the host's context is cancelled.
-	return nil
 }

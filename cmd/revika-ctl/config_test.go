@@ -117,28 +117,24 @@ func TestResolveWorkspaceFileMode(t *testing.T) {
 	}
 }
 
-// TestBackendMerge checks explicit selectors override config bootstrap while an
-// empty selector set falls back to it.
+// TestBackendMerge checks an explicit -node overrides config bootstrap while an
+// empty selector falls back to it.
 func TestBackendMerge(t *testing.T) {
 	ws := &Workspace{Config: &Config{Bootstrap: []string{"/cfg/a", "/cfg/b"}}}
 
 	// No explicit selector: config bootstrap stands in.
-	node, boots, mdns := ws.backend("", nil, false)
-	if node != "" || mdns || len(boots) != 2 || boots[0] != "/cfg/a" {
-		t.Fatalf("fallback merge = %q %v %v", node, boots, mdns)
+	node, boots := ws.backend("")
+	if node != "" || len(boots) != 2 || boots[0] != "/cfg/a" {
+		t.Fatalf("fallback merge = %q %v", node, boots)
 	}
-	// Explicit -node wins, config ignored.
-	if n, b, _ := ws.backend("/node/x", nil, false); n != "/node/x" || len(b) != 0 {
+	// Explicit -node wins, config bootstrap ignored.
+	if n, b := ws.backend("/node/x"); n != "/node/x" || len(b) != 0 {
 		t.Fatalf("explicit node not honoured: %q %v", n, b)
-	}
-	// Explicit -bootstrap wins.
-	if _, b, _ := ws.backend("", []string{"/flag/z"}, false); len(b) != 1 || b[0] != "/flag/z" {
-		t.Fatalf("explicit bootstrap not honoured: %v", b)
 	}
 
 	// A workspace with no config leaves the selectors untouched.
 	empty := &Workspace{}
-	if n, b, m := empty.backend("", nil, false); n != "" || len(b) != 0 || m {
-		t.Fatalf("empty workspace altered selectors: %q %v %v", n, b, m)
+	if n, b := empty.backend(""); n != "" || len(b) != 0 {
+		t.Fatalf("empty workspace altered selectors: %q %v", n, b)
 	}
 }

@@ -86,7 +86,7 @@ network layer and the two `cmd/` binaries do not.
   its public key. Node identity and (optionally) User network identity are libp2p keys.
 - **Secure, multiplexed transport** — authenticated + encrypted channels (Noise/TLS),
   stream multiplexing over TCP and QUIC.
-- **Discovery** — Kademlia DHT (`go-libp2p-kad-dht`) for the WAN, mDNS for LAN.
+- **Discovery** — Kademlia DHT (`go-libp2p-kad-dht`) on a private `/revika` prefix; DHT-only (no LAN/mDNS path).
 - **NAT traversal** — AutoNAT, hole-punching (DCUtR), and relay for peers behind NAT.
 
 Do not roll a bespoke wire protocol. All revika interactions are **libp2p stream
@@ -196,7 +196,7 @@ to the erasure margin) → erasure-decode → decrypt → decompress → reassem
 **Placement — [partial]** (`internal/net`, `PlacementStore`). Shards are spread across
 `n = k + m` nodes discovered on the DHT: a first-cut **round-robin** policy sends a
 chunk's consecutive shards to distinct nodes, so no single node holds enough of a file to
-matter (the `revika-ctl cp … -bootstrap …` path). Each holding node announces a
+matter (the `revika-ctl cp` DHT path, bootstrapped from the workspace). Each holding node announces a
 **provider record** to the DHT (`shardID → {peers holding it}`) on receipt, keyed by a
 CIDv1(raw codec) wrapping the shard's SHA-256; a client's `cp` (retrieve) resolves those records to
 fetch shards it has no prior knowledge of. Still **[planned]**: richer node selection —
@@ -724,7 +724,7 @@ Currently in `go.mod`:
 | Erasure coding | `github.com/klauspost/reedsolomon` **v1.14.1** | in use |
 | Symmetric AEAD | stdlib `crypto/aes` + `crypto/cipher` (AES-256-GCM) | in use |
 | Hashing        | stdlib `crypto/sha256` (content addresses) | in use |
-| P2P / transport / discovery | `github.com/libp2p/go-libp2p` (TCP+QUIC, Noise/TLS, mDNS) | in use |
+| P2P / transport / discovery | `github.com/libp2p/go-libp2p` (TCP+QUIC, Noise/TLS, Kademlia DHT) | in use |
 | DHT discovery / provider records | `github.com/libp2p/go-libp2p-kad-dht` (`/revika` prefix) | in use |
 | Cap wrapping   | stdlib `crypto/mlkem` (ML-KEM-768, FIPS 203) + AES-256-GCM DEM | in use |
 

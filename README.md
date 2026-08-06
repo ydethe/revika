@@ -113,7 +113,7 @@ go run ./cmd/revika-node
 ```
 
 Useful flags: `-data <dir>` (state root, default `.revika`), `-listen <multiaddr>`
-(repeatable), `-mdns=false` (disable LAN discovery), `-v` (debug logging).
+(repeatable), `-v` (debug logging).
 
 **2. Create your identity.** `keygen` writes an ML-KEM-768 (FIPS 203) keypair (for receiving
 shared files) and an Ed25519 signing keypair — your storage *owner* identity, which authorizes
@@ -126,8 +126,9 @@ go run ./cmd/revika-ctl keygen        # writes .revika/keys/user.key/.pub + user
 Your files live in a **namespace**: one mutable root directory addressed by `rvk:` paths
 (e.g. `rvk:docs/report.pdf`). The root in effect is the `-root` file (default
 `$REVIKA_ROOT`, else `.revika/root.json`); your own root is mutable, a root someone shared
-with you is read-only. Every `rvk:` command takes a backend: `-node <ma>` for one node, or
-`-bootstrap <ma>…` / `-mdns` to reach nodes over the DHT.
+with you is read-only. Every `rvk:` command reaches nodes over the DHT through the
+bootstrap peers saved in the workspace (set by `connect`); override per command with
+`-node <ma>` to pin a single node.
 
 **3. Store a file** into your namespace with `cp`, using the node's full multiaddr. The
 store is signed with your signing key (default `.revika/keys/user.sign.key`, override with
@@ -209,7 +210,7 @@ defences.
 | Erasure coding | [`klauspost/reedsolomon`](https://github.com/klauspost/reedsolomon) v1.14.1 |
 | Symmetric AEAD | stdlib `crypto/aes` + `crypto/cipher` (AES-256-GCM) |
 | Content addressing | stdlib `crypto/sha256` |
-| P2P transport & discovery | [`libp2p/go-libp2p`](https://github.com/libp2p/go-libp2p) (TCP+QUIC, Noise/TLS, mDNS) |
+| P2P transport & discovery | [`libp2p/go-libp2p`](https://github.com/libp2p/go-libp2p) (TCP+QUIC, Noise/TLS, Kademlia DHT) |
 | Capability wrapping | `golang.org/x/crypto/nacl/box` + `curve25519` (X25519 anonymous seal) |
 
 ## Layout

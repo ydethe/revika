@@ -347,25 +347,24 @@ func commitRoot(ctx context.Context, file string, signer cap.SignKey, newRoot ma
 
 // --- backends -------------------------------------------------------------
 
-// addBackendFlags registers the shared node/DHT selection flags on fs.
-func addBackendFlags(fs *flag.FlagSet) (node *string, bootstrap *multiFlag, mdns *bool) {
-	node = fs.String("node", "", "use this single node multiaddr (with /p2p/<peerid>)")
-	bootstrap = &multiFlag{}
-	fs.Var(bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable); use the DHT instead of one node")
-	mdns = fs.Bool("mdns", false, "discover nodes via mDNS on the LAN")
+// addBackendFlags registers the shared node-selection flag on fs. The DHT
+// bootstrap peers come from the workspace (-root); -node overrides it, pinning a
+// single node.
+func addBackendFlags(fs *flag.FlagSet) (node *string) {
+	node = fs.String("node", "", "use this single node multiaddr (with /p2p/<peerid>); overrides the workspace's bootstrap peers")
 	return
 }
 
 // readBackend selects a read store: a single node (-node) or a DHT-backed store
-// that discovers each shard's providers (-bootstrap / -mdns).
-func readBackend(ctx context.Context, node string, bootstrap []string, mdns bool) (store.Store, func(), error) {
+// that discovers each shard's providers via the workspace's bootstrap peers.
+func readBackend(ctx context.Context, node string, bootstrap []string) (store.Store, func(), error) {
 	switch {
 	case node != "":
 		return dial(ctx, node)
-	case len(bootstrap) > 0 || mdns:
-		return dialDHT(ctx, bootstrap, mdns)
+	case len(bootstrap) > 0:
+		return dialDHT(ctx, bootstrap)
 	default:
-		return nil, nil, fmt.Errorf("provide -node <ma>, or -bootstrap/-mdns to use the DHT")
+		return nil, nil, fmt.Errorf("no backend: pass -node <ma>, or select a workspace with saved bootstrap peers via -root")
 	}
 }
 
@@ -373,12 +372,12 @@ func readBackend(ctx context.Context, node string, bootstrap []string, mdns bool
 // -node it targets that single node (a NetStore does Get/Put/Delete); otherwise
 // it joins the DHT and returns a PlacementStore, which spreads new shards across
 // discovered nodes while still reading directory blobs back via the DHT.
-func writeBackend(ctx context.Context, node string, bootstrap []string, mdns bool, signer cap.SignKey, grantExpiry int64, cfg pipeline.Config) (store.Store, func(), error) {
+func writeBackend(ctx context.Context, node string, bootstrap []string, signer cap.SignKey, grantExpiry int64, cfg pipeline.Config) (store.Store, func(), error) {
 	switch {
 	case node != "":
 		return dialSigned(ctx, node, signer)
-	case len(bootstrap) > 0 || mdns:
-		ps, closer, err := dialPlacement(ctx, bootstrap, mdns, signer)
+	case len(bootstrap) > 0:
+		ps, closer, err := dialPlacement(ctx, bootstrap, signer)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -390,7 +389,7 @@ func writeBackend(ctx context.Context, node string, bootstrap []string, mdns boo
 		}
 		return ps, closer, nil
 	default:
-		return nil, nil, fmt.Errorf("provide -node <ma>, or -bootstrap/-mdns to use the DHT")
+		return nil, nil, fmt.Errorf("no backend: pass -node <ma>, or select a workspace with saved bootstrap peers via -root")
 	}
 }
 
@@ -402,7 +401,7 @@ func writeBackend(ctx context.Context, node string, bootstrap []string, mdns boo
 // resolves the rvk: path and reconstructs it locally.
 func cmdCp(args []string) error {
 	fs := flag.NewFlagSet("cp", flag.ExitOnError)
-	node, bootstrap, mdns := addBackendFlags(fs)
+	node := addBackendFlags(fs)
 	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
 	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing writes (default <workspace>/keys/user.sign.key)")
@@ -422,9 +421,9 @@ func cmdCp(args []string) error {
 
 	switch {
 	case isRvk(dst) && !isRvk(src):
-		return cpStore(ctx, ws, src, rvkPath(dst), *keyPath, *signKeyFlag, *node, *bootstrap, *mdns, *grantTTL)
+		return cpStore(ctx, ws, src, rvkPath(dst), *keyPath, *signKeyFlag, *node, *grantTTL)
 	case isRvk(src) && !isRvk(dst):
-		return cpRetrieve(ctx, ws, rvkPath(src), dst, *keyPath, *node, *bootstrap, *mdns)
+		return cpRetrieve(ctx, ws, rvkPath(src), dst, *keyPath, *node)
 	case isRvk(src) && isRvk(dst):
 		return fmt.Errorf("cp between two rvk: paths is not supported; retrieve to a local path, then store")
 	default:
@@ -435,7 +434,7 @@ func cmdCp(args []string) error {
 // cpStore stores the local src (a file, symlink, or directory) into the
 // namespace at dstRvk, grafting it into the -root and committing an advanced
 // RootPointer.
-func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFlag, node string, bootstrap []string, mdns bool, grantTTL time.Duration) error {
+func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFlag, node string, grantTTL time.Duration) error {
 	rootFile := ws.RootFile
 	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(signKeyFlag))
 	if err != nil {
@@ -457,8 +456,8 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 	if grantTTL > 0 {
 		grantExpiry = time.Now().Add(grantTTL).Unix()
 	}
-	node, bootstrap, mdns = ws.backend(node, bootstrap, mdns)
-	s, closer, err := writeBackend(ctx, node, bootstrap, mdns, signer, grantExpiry, cfg)
+	node, bootstrap := ws.backend(node)
+	s, closer, err := writeBackend(ctx, node, bootstrap, signer, grantExpiry, cfg)
 	if err != nil {
 		return err
 	}
@@ -563,7 +562,7 @@ func destPath(ctx context.Context, s store.Store, root manifest.ReadCap, dst, ba
 // cpRetrieve reconstructs what srcRvk addresses (a file or a subtree) into the
 // local dst. Writing into an existing local directory keeps the source's base
 // name; otherwise dst is the literal output path.
-func cpRetrieve(ctx context.Context, ws *Workspace, srcRvk, dst, keyPath, node string, bootstrap []string, mdns bool) error {
+func cpRetrieve(ctx context.Context, ws *Workspace, srcRvk, dst, keyPath, node string) error {
 	rootFile := ws.RootFile
 	prev, exists, _, err := loadRoot(rootFile, keyPath)
 	if err != nil {
@@ -572,8 +571,8 @@ func cpRetrieve(ctx context.Context, ws *Workspace, srcRvk, dst, keyPath, node s
 	if !exists {
 		return fmt.Errorf("namespace root %s does not exist; nothing to retrieve", rootFile)
 	}
-	node, bootstrap, mdns = ws.backend(node, bootstrap, mdns)
-	s, closer, err := readBackend(ctx, node, bootstrap, mdns)
+	node, bootstrap := ws.backend(node)
+	s, closer, err := readBackend(ctx, node, bootstrap)
 	if err != nil {
 		return err
 	}
@@ -624,7 +623,7 @@ func cpRetrieve(ctx context.Context, ws *Workspace, srcRvk, dst, keyPath, node s
 // adds kind/size/mtime and -R recurses.
 func cmdLs(args []string) error {
 	fs := flag.NewFlagSet("ls", flag.ExitOnError)
-	node, bootstrap, mdns := addBackendFlags(fs)
+	node := addBackendFlags(fs)
 	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
 	long := fs.Bool("l", false, "long format: kind, size, and mtime per entry")
@@ -658,8 +657,8 @@ func cmdLs(args []string) error {
 	}
 
 	ctx := context.Background()
-	eNode, eBootstrap, eMdns := ws.backend(*node, *bootstrap, *mdns)
-	s, closer, err := readBackend(ctx, eNode, eBootstrap, eMdns)
+	eNode, eBootstrap := ws.backend(*node)
+	s, closer, err := readBackend(ctx, eNode, eBootstrap)
 	if err != nil {
 		return err
 	}
@@ -733,7 +732,7 @@ func printLsEntry(w io.Writer, name string, st manifest.StatCache, long bool) {
 // once its last owner leaves, so this never affects another User's shared copy.
 func cmdRm(args []string) error {
 	fs := flag.NewFlagSet("rm", flag.ExitOnError)
-	node, bootstrap, mdns := addBackendFlags(fs)
+	node := addBackendFlags(fs)
 	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing the delete (default <workspace>/keys/user.sign.key)")
 	if err := fs.Parse(args); err != nil {
@@ -772,8 +771,8 @@ func cmdRm(args []string) error {
 
 	ctx := context.Background()
 	cfg := ws.pipelineConfig()
-	eNode, eBootstrap, eMdns := ws.backend(*node, *bootstrap, *mdns)
-	s, closer, err := writeBackend(ctx, eNode, eBootstrap, eMdns, signer, 0, cfg)
+	eNode, eBootstrap := ws.backend(*node)
+	s, closer, err := writeBackend(ctx, eNode, eBootstrap, signer, 0, cfg)
 	if err != nil {
 		return err
 	}
@@ -859,7 +858,7 @@ func collectShards(ctx context.Context, s store.Store, c manifest.ReadCap, out m
 // as their -root, opening it with -key.
 func cmdShare(args []string) error {
 	fs := flag.NewFlagSet("share", flag.ExitOnError)
-	node, bootstrap, mdns := addBackendFlags(fs)
+	node := addBackendFlags(fs)
 	rootFlag := fs.String("root", "", "workspace folder or root file to share from (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root you are re-sharing from")
 	signKeyFlag := fs.String("signkey", "", "your signing key, to sign the shared root (default <workspace>/keys/user.sign.key)")
@@ -894,8 +893,8 @@ func cmdShare(args []string) error {
 	}
 
 	ctx := context.Background()
-	eNode, eBootstrap, eMdns := ws.backend(*node, *bootstrap, *mdns)
-	s, closer, err := readBackend(ctx, eNode, eBootstrap, eMdns)
+	eNode, eBootstrap := ws.backend(*node)
+	s, closer, err := readBackend(ctx, eNode, eBootstrap)
 	if err != nil {
 		return err
 	}
@@ -941,20 +940,23 @@ func cmdShare(args []string) error {
 // --- node -----------------------------------------------------------------
 
 // cmdNode lists the storage nodes the client can discover on the DHT — the nodes
-// it is "aware of" and could place shards on. It joins the network via
-// -bootstrap/-mdns, then reports each advertised node with its peer ID, whether
-// we could reach it, and its advertised addresses.
+// it is "aware of" and could place shards on. It joins the network through the
+// workspace's saved bootstrap peers (-root), then reports each advertised node
+// with its peer ID, whether we could reach it, and its advertised addresses.
 func cmdNode(args []string) error {
 	fs := flag.NewFlagSet("node", flag.ExitOnError)
-	var bootstrap multiFlag
-	fs.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr (repeatable)")
-	mdns := fs.Bool("mdns", false, "discover storage nodes via mDNS on the LAN")
+	rootFlag := fs.String("root", "", "workspace folder supplying the bootstrap peers (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	ws, err := resolveWorkspace(*rootFlag)
+	if err != nil {
+		return err
+	}
+	_, bootstrap := ws.backend("")
 
 	ctx := context.Background()
-	h, disc, closer, err := joinDHT(ctx, bootstrap, *mdns)
+	h, disc, closer, err := joinDHT(ctx, bootstrap)
 	if err != nil {
 		return err
 	}

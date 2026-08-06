@@ -47,8 +47,8 @@ type NetStore struct {
 }
 
 // NewNetStore returns a store backed by the node identified by peer, dialed
-// through h. The peer's addresses must already be known to h (via mDNS, the
-// DHT, or an explicit h.Connect / peerstore entry). It signs no requests — use
+// through h. The peer's addresses must already be known to h (via the DHT, or an
+// explicit h.Connect / peerstore entry). It signs no requests — use
 // it for reads, or against a node that runs no ledger.
 func NewNetStore(h host.Host, p peer.ID) *NetStore {
 	return &NetStore{h: h, peer: p}
