@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -44,49 +45,14 @@ func cmdKeygen(args []string) error {
 		return err
 	}
 
+	pub, err := mintAndWriteIdentity(*prefix, puzzle, cap.Difficulty(*powDifficulty), *powFail)
+	if err != nil {
+		return err
+	}
 	privPath := *prefix + ".key"
 	pubPath := *prefix + ".pub"
-	if _, err := os.Stat(privPath); err == nil {
-		return fmt.Errorf("refusing to overwrite existing private key %s", privPath)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
 	signPrivPath := *prefix + ".sign.key"
 	signPubPath := *prefix + ".sign.pub"
-	if _, err := os.Stat(signPrivPath); err == nil {
-		return fmt.Errorf("refusing to overwrite existing signing key %s", signPrivPath)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	priv, pub, err := cap.GenerateIdentity()
-	if err != nil {
-		return err
-	}
-	mint := mintSigningKey
-	if *powFail {
-		mint = mintFailingSigningKey
-	}
-	signKey, signPub, err := mint(puzzle, cap.Difficulty(*powDifficulty))
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(privPath), 0o700); err != nil {
-		return fmt.Errorf("create key dir: %w", err)
-	}
-	if err := os.WriteFile(privPath, []byte(priv.String()+"\n"), 0o600); err != nil {
-		return fmt.Errorf("write private key: %w", err)
-	}
-	if err := os.WriteFile(pubPath, []byte(pub.String()+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write public key: %w", err)
-	}
-	if err := os.WriteFile(signPrivPath, []byte(signKey.String()+"\n"), 0o600); err != nil {
-		return fmt.Errorf("write signing key: %w", err)
-	}
-	if err := os.WriteFile(signPubPath, []byte(signPub.String()+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write signing public key: %w", err)
-	}
 
 	fmt.Printf("Identity written:\n")
 	fmt.Printf("  encryption private: %s (keep secret — unwraps files shared to you)\n", privPath)
@@ -165,8 +131,58 @@ func mintFailingSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, ca
 	return cap.SignKey{}, cap.SignPubKey{}, fmt.Errorf("could not find a key failing difficulty %d after 1e6 attempts", d)
 }
 
-// defaultSignKeyPath is where cp/rm/share look for the User's signing key.
-const defaultSignKeyPath = ".revika/keys/user.sign.key"
+// mintAndWriteIdentity generates a User identity — an ML-KEM-768 encryption
+// keypair for receiving shares and a proof-of-work-ground Ed25519 signing
+// (owner) keypair — and writes all four files under prefix
+// (<prefix>.key/.pub/.sign.key/.sign.pub), refusing to overwrite existing
+// private keys. It returns the encryption public key for the caller to report.
+// Shared by `keygen` and the on-demand identity creation a first write triggers
+// inside a workspace (loadOrCreateSignKey).
+func mintAndWriteIdentity(prefix string, puzzle cap.Puzzle, d cap.Difficulty, powFail bool) (cap.PublicKey, error) {
+	privPath := prefix + ".key"
+	pubPath := prefix + ".pub"
+	signPrivPath := prefix + ".sign.key"
+	signPubPath := prefix + ".sign.pub"
+	if _, err := os.Stat(privPath); err == nil {
+		return cap.PublicKey{}, fmt.Errorf("refusing to overwrite existing private key %s", privPath)
+	} else if !os.IsNotExist(err) {
+		return cap.PublicKey{}, err
+	}
+	if _, err := os.Stat(signPrivPath); err == nil {
+		return cap.PublicKey{}, fmt.Errorf("refusing to overwrite existing signing key %s", signPrivPath)
+	} else if !os.IsNotExist(err) {
+		return cap.PublicKey{}, err
+	}
+
+	priv, pub, err := cap.GenerateIdentity()
+	if err != nil {
+		return cap.PublicKey{}, err
+	}
+	mint := mintSigningKey
+	if powFail {
+		mint = mintFailingSigningKey
+	}
+	signKey, signPub, err := mint(puzzle, d)
+	if err != nil {
+		return cap.PublicKey{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(privPath), 0o700); err != nil {
+		return cap.PublicKey{}, fmt.Errorf("create key dir: %w", err)
+	}
+	if err := os.WriteFile(privPath, []byte(priv.String()+"\n"), 0o600); err != nil {
+		return cap.PublicKey{}, fmt.Errorf("write private key: %w", err)
+	}
+	if err := os.WriteFile(pubPath, []byte(pub.String()+"\n"), 0o644); err != nil {
+		return cap.PublicKey{}, fmt.Errorf("write public key: %w", err)
+	}
+	if err := os.WriteFile(signPrivPath, []byte(signKey.String()+"\n"), 0o600); err != nil {
+		return cap.PublicKey{}, fmt.Errorf("write signing key: %w", err)
+	}
+	if err := os.WriteFile(signPubPath, []byte(signPub.String()+"\n"), 0o644); err != nil {
+		return cap.PublicKey{}, fmt.Errorf("write signing public key: %w", err)
+	}
+	return pub, nil
+}
 
 // loadSignKey reads the User's Ed25519 signing key from path.
 func loadSignKey(path string) (cap.SignKey, error) {
@@ -184,15 +200,66 @@ func loadSignKey(path string) (cap.SignKey, error) {
 	return k, nil
 }
 
+// loadOrCreateSignKey returns the signing key at path. When it is missing, a
+// write into a freshly `connect`ed workspace has no identity yet, so — if stdin
+// is a terminal — it offers to mint one in place (both keypairs, at path's
+// prefix), grinding proof-of-work to match the workspace's node policy. Declined
+// or non-interactive, it errors rather than silently proceeding.
+func loadOrCreateSignKey(w *Workspace, path string) (cap.SignKey, error) {
+	if _, err := os.Stat(path); err == nil {
+		return loadSignKey(path)
+	} else if !os.IsNotExist(err) {
+		return cap.SignKey{}, err
+	}
+	if !isTerminal(os.Stdin) {
+		return cap.SignKey{}, fmt.Errorf("no signing identity at %s; run `revika-ctl keygen` first (or pass -signkey)", path)
+	}
+	puzzle, d, err := w.powSettings()
+	if err != nil {
+		return cap.SignKey{}, err
+	}
+	prefix := strings.TrimSuffix(path, ".sign.key")
+	prompt := fmt.Sprintf("No revika identity found at %s.*\nCreate one now", prefix)
+	if d > 0 {
+		prompt += fmt.Sprintf(" (grinding %s proof-of-work at %d bits — may take a while)", puzzle.Name(), d)
+	}
+	prompt += "? [y/N] "
+	ok, err := confirm(prompt)
+	if err != nil {
+		return cap.SignKey{}, err
+	}
+	if !ok {
+		return cap.SignKey{}, fmt.Errorf("aborted: no identity created")
+	}
+	pub, err := mintAndWriteIdentity(prefix, puzzle, d, false)
+	if err != nil {
+		return cap.SignKey{}, err
+	}
+	fmt.Fprintf(os.Stderr, "Created identity at %s.* — encryption public key (share to receive files):\n%s\n", prefix, pub.String())
+	return loadSignKey(path)
+}
+
+// confirm writes prompt to stderr and reads a yes/no answer from stdin,
+// defaulting to no on a blank line or EOF.
+func confirm(prompt string) (bool, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
 // --- namespace addressing -------------------------------------------------
 
 // rvkScheme prefixes an address that names the namespace rather than the local
 // filesystem, e.g. rvk:docs/report.pdf.
 const rvkScheme = "rvk:"
-
-// defaultRootPath is where a User's namespace anchor lives when neither -root nor
-// $REVIKA_ROOT is set.
-const defaultRootPath = ".revika/root.json"
 
 // isRvk reports whether s addresses the namespace (carries the rvk: scheme).
 func isRvk(s string) bool { return strings.HasPrefix(s, rvkScheme) }
@@ -200,18 +267,6 @@ func isRvk(s string) bool { return strings.HasPrefix(s, rvkScheme) }
 // rvkPath strips the rvk: scheme, returning the slash-separated namespace path
 // (empty for the root itself).
 func rvkPath(s string) string { return strings.TrimPrefix(s, rvkScheme) }
-
-// rootPath resolves the namespace anchor file to use: the -root flag if set, else
-// $REVIKA_ROOT, else the default .revika/root.json.
-func rootPath(flagVal string) string {
-	if flagVal != "" {
-		return flagVal
-	}
-	if env := os.Getenv("REVIKA_ROOT"); env != "" {
-		return env
-	}
-	return defaultRootPath
-}
 
 // loadRoot reads the namespace anchor at file. It returns the current signed
 // RootPointer, whether the file existed (a fresh namespace when false), and
@@ -347,9 +402,9 @@ func writeBackend(ctx context.Context, node string, bootstrap []string, mdns boo
 func cmdCp(args []string) error {
 	fs := flag.NewFlagSet("cp", flag.ExitOnError)
 	node, bootstrap, mdns := addBackendFlags(fs)
-	rootFlag := fs.String("root", "", "namespace root file (default $REVIKA_ROOT, else "+defaultRootPath+")")
+	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
-	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing writes into your namespace")
+	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing writes (default <workspace>/keys/user.sign.key)")
 	grantTTL := fs.Duration("grant-ttl", 0, "expiry of the repair grants attached to stored shards (0 = never)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -358,14 +413,17 @@ func cmdCp(args []string) error {
 		return fmt.Errorf("cp takes <src> <dst>; exactly one carries the rvk: prefix")
 	}
 	src, dst := fs.Arg(0), fs.Arg(1)
-	rootFile := rootPath(*rootFlag)
+	ws, err := resolveWorkspace(*rootFlag)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	switch {
 	case isRvk(dst) && !isRvk(src):
-		return cpStore(ctx, rootFile, src, rvkPath(dst), *keyPath, *signKeyPath, *node, *bootstrap, *mdns, *grantTTL)
+		return cpStore(ctx, ws, src, rvkPath(dst), *keyPath, *signKeyFlag, *node, *bootstrap, *mdns, *grantTTL)
 	case isRvk(src) && !isRvk(dst):
-		return cpRetrieve(ctx, rootFile, rvkPath(src), dst, *keyPath, *node, *bootstrap, *mdns)
+		return cpRetrieve(ctx, ws, rvkPath(src), dst, *keyPath, *node, *bootstrap, *mdns)
 	case isRvk(src) && isRvk(dst):
 		return fmt.Errorf("cp between two rvk: paths is not supported; retrieve to a local path, then store")
 	default:
@@ -376,8 +434,9 @@ func cmdCp(args []string) error {
 // cpStore stores the local src (a file, symlink, or directory) into the
 // namespace at dstRvk, grafting it into the -root and committing an advanced
 // RootPointer.
-func cpStore(ctx context.Context, rootFile, src, dstRvk, keyPath, signKeyPath, node string, bootstrap []string, mdns bool, grantTTL time.Duration) error {
-	signer, err := loadSignKey(signKeyPath)
+func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFlag, node string, bootstrap []string, mdns bool, grantTTL time.Duration) error {
+	rootFile := ws.RootFile
+	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(signKeyFlag))
 	if err != nil {
 		return err
 	}
@@ -392,11 +451,12 @@ func cpStore(ctx context.Context, rootFile, src, dstRvk, keyPath, signKeyPath, n
 		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", rootFile)
 	}
 
-	cfg := pipeline.DefaultConfig()
+	cfg := ws.pipelineConfig()
 	var grantExpiry int64
 	if grantTTL > 0 {
 		grantExpiry = time.Now().Add(grantTTL).Unix()
 	}
+	node, bootstrap, mdns = ws.backend(node, bootstrap, mdns)
 	s, closer, err := writeBackend(ctx, node, bootstrap, mdns, signer, grantExpiry, cfg)
 	if err != nil {
 		return err
@@ -472,7 +532,8 @@ func destPath(ctx context.Context, s store.Store, root manifest.ReadCap, dst, ba
 // cpRetrieve reconstructs what srcRvk addresses (a file or a subtree) into the
 // local dst. Writing into an existing local directory keeps the source's base
 // name; otherwise dst is the literal output path.
-func cpRetrieve(ctx context.Context, rootFile, srcRvk, dst, keyPath, node string, bootstrap []string, mdns bool) error {
+func cpRetrieve(ctx context.Context, ws *Workspace, srcRvk, dst, keyPath, node string, bootstrap []string, mdns bool) error {
+	rootFile := ws.RootFile
 	prev, exists, _, err := loadRoot(rootFile, keyPath)
 	if err != nil {
 		return err
@@ -480,6 +541,7 @@ func cpRetrieve(ctx context.Context, rootFile, srcRvk, dst, keyPath, node string
 	if !exists {
 		return fmt.Errorf("namespace root %s does not exist; nothing to retrieve", rootFile)
 	}
+	node, bootstrap, mdns = ws.backend(node, bootstrap, mdns)
 	s, closer, err := readBackend(ctx, node, bootstrap, mdns)
 	if err != nil {
 		return err
@@ -532,7 +594,7 @@ func cpRetrieve(ctx context.Context, rootFile, srcRvk, dst, keyPath, node string
 func cmdLs(args []string) error {
 	fs := flag.NewFlagSet("ls", flag.ExitOnError)
 	node, bootstrap, mdns := addBackendFlags(fs)
-	rootFlag := fs.String("root", "", "namespace root file (default $REVIKA_ROOT, else "+defaultRootPath+")")
+	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
 	long := fs.Bool("l", false, "long format: kind, size, and mtime per entry")
 	recurse := fs.Bool("R", false, "list subdirectories recursively")
@@ -551,7 +613,11 @@ func cmdLs(args []string) error {
 		return fmt.Errorf("ls takes at most one rvk: path")
 	}
 
-	rootFile := rootPath(*rootFlag)
+	ws, err := resolveWorkspace(*rootFlag)
+	if err != nil {
+		return err
+	}
+	rootFile := ws.RootFile
 	prev, exists, _, err := loadRoot(rootFile, *keyPath)
 	if err != nil {
 		return err
@@ -561,7 +627,8 @@ func cmdLs(args []string) error {
 	}
 
 	ctx := context.Background()
-	s, closer, err := readBackend(ctx, *node, *bootstrap, *mdns)
+	eNode, eBootstrap, eMdns := ws.backend(*node, *bootstrap, *mdns)
+	s, closer, err := readBackend(ctx, eNode, eBootstrap, eMdns)
 	if err != nil {
 		return err
 	}
@@ -636,8 +703,8 @@ func printLsEntry(w io.Writer, name string, st manifest.StatCache, long bool) {
 func cmdRm(args []string) error {
 	fs := flag.NewFlagSet("rm", flag.ExitOnError)
 	node, bootstrap, mdns := addBackendFlags(fs)
-	rootFlag := fs.String("root", "", "namespace root file (default $REVIKA_ROOT, else "+defaultRootPath+")")
-	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, authorizing the delete")
+	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
+	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing the delete (default <workspace>/keys/user.sign.key)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -649,8 +716,12 @@ func cmdRm(args []string) error {
 		return fmt.Errorf("refusing to remove the namespace root itself")
 	}
 
-	rootFile := rootPath(*rootFlag)
-	signer, err := loadSignKey(*signKeyPath)
+	ws, err := resolveWorkspace(*rootFlag)
+	if err != nil {
+		return err
+	}
+	rootFile := ws.RootFile
+	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(*signKeyFlag))
 	if err != nil {
 		return err
 	}
@@ -669,8 +740,9 @@ func cmdRm(args []string) error {
 	}
 
 	ctx := context.Background()
-	cfg := pipeline.DefaultConfig()
-	s, closer, err := writeBackend(ctx, *node, *bootstrap, *mdns, signer, 0, cfg)
+	cfg := ws.pipelineConfig()
+	eNode, eBootstrap, eMdns := ws.backend(*node, *bootstrap, *mdns)
+	s, closer, err := writeBackend(ctx, eNode, eBootstrap, eMdns, signer, 0, cfg)
 	if err != nil {
 		return err
 	}
@@ -757,9 +829,9 @@ func collectShards(ctx context.Context, s store.Store, c manifest.ReadCap, out m
 func cmdShare(args []string) error {
 	fs := flag.NewFlagSet("share", flag.ExitOnError)
 	node, bootstrap, mdns := addBackendFlags(fs)
-	rootFlag := fs.String("root", "", "namespace root file to share from (default $REVIKA_ROOT, else "+defaultRootPath+")")
+	rootFlag := fs.String("root", "", "workspace folder or root file to share from (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root you are re-sharing from")
-	signKeyPath := fs.String("signkey", defaultSignKeyPath, "your signing key, to sign the shared root")
+	signKeyFlag := fs.String("signkey", "", "your signing key, to sign the shared root (default <workspace>/keys/user.sign.key)")
 	to := fs.String("to", "", "recipient public key (base64) or @file")
 	out := fs.String("o", "", "output shared root file (default <name>.root.json)")
 	if err := fs.Parse(args); err != nil {
@@ -773,11 +845,15 @@ func cmdShare(args []string) error {
 	if err != nil {
 		return err
 	}
-	signer, err := loadSignKey(*signKeyPath)
+	ws, err := resolveWorkspace(*rootFlag)
 	if err != nil {
 		return err
 	}
-	rootFile := rootPath(*rootFlag)
+	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(*signKeyFlag))
+	if err != nil {
+		return err
+	}
+	rootFile := ws.RootFile
 	prev, exists, _, err := loadRoot(rootFile, *keyPath)
 	if err != nil {
 		return err
@@ -787,7 +863,8 @@ func cmdShare(args []string) error {
 	}
 
 	ctx := context.Background()
-	s, closer, err := readBackend(ctx, *node, *bootstrap, *mdns)
+	eNode, eBootstrap, eMdns := ws.backend(*node, *bootstrap, *mdns)
+	s, closer, err := readBackend(ctx, eNode, eBootstrap, eMdns)
 	if err != nil {
 		return err
 	}

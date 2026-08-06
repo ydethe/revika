@@ -457,10 +457,15 @@ reconstructs exactly that file or subtree and nothing outside the shared path. S
   `provider.FileRootStore`). The one mutable anchor per User (see §4): a signed
   `owner-pubkey → root-directory cap` record with a monotonic sequence, `SignRoot`/`Verify` over
   a domain-separated Ed25519 payload. The type + anti-rollback semantics exist and are now
-  **realized in the CLI**: `revika-ctl` persists the pointer to a local `root.json`
-  (`-root`/`$REVIKA_ROOT`, default `.revika/root.json`) and advances its `Seq` on every `cp`/`rm`
-  mutation; a *shared* root is that same pointer anchored at a shared subtree and sealed to a
-  recipient's ML-KEM key. **[planned]** is publishing/fetching the pointer over the DHT and the
+  **realized in the CLI**: `revika-ctl` persists the pointer to a local `root.json` inside a
+  *workspace* folder (`-root`/`$REVIKA_ROOT`, default `.revika`) and advances its `Seq` on every
+  `cp`/`rm` mutation. The workspace, created by `revika-ctl connect` (`cmd/revika-ctl/config.go`),
+  also holds a `config.json` recording how to reach the network (bootstrap peers), the erasure
+  rate (`k`/`m`), and the node's proof-of-work admission policy, plus the User's keys under
+  `keys/` — so a command needs only `-root <folder>` and mints its identity lazily on first write.
+  A *shared* root is that same pointer anchored at a shared subtree and sealed to a recipient's
+  ML-KEM key (passed as a bare `-root <file>`, outside any workspace). **[planned]** is
+  publishing/fetching the pointer over the DHT and the
   `/revika/root` protocol, which would let a shared root be resolved network-wide instead of
   travelling as a file.
 

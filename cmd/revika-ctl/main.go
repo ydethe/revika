@@ -8,18 +8,27 @@
 // into whichever root file is in effect (-root, default .revika/root.json). Your
 // own root is mutable; a root someone shared with you is read-only.
 //
+// A workspace ties this together: `connect` writes a folder (default .revika)
+// holding config.json — the bootstrap peers, erasure k/m, and node proof-of-work
+// policy — alongside where root.json and the User's keys live. Every namespace
+// command selects it with -root <folder> and then needs no repeated -bootstrap
+// flags; the identity is minted on the first write, after a confirmation prompt.
+//
 // Usage:
 //
+//	revika-ctl connect (-bootstrap <ma>… | <ma>…) [-root <dir>] [-label <s>] [-k 4] [-m 2] [-pow-…]
 //	revika-ctl keygen [-key <prefix>]
-//	revika-ctl cp    (-node <ma> | -bootstrap <ma>… | -mdns) <local> rvk:<path>       # store
-//	revika-ctl cp    (-node <ma> | -bootstrap <ma>… | -mdns) rvk:<path> <local>       # retrieve
-//	revika-ctl ls    (-node <ma> | -bootstrap <ma>… | -mdns) [-l] [-R] [rvk:<path>]   # browse
-//	revika-ctl rm    (-node <ma> | -bootstrap <ma>… | -mdns) rvk:<path>               # delete
-//	revika-ctl share (-node <ma> | -bootstrap <ma>… | -mdns) rvk:<path> -to <pubkey|@file> [-o <file>]
-//	revika-ctl node  (-bootstrap <ma>… | -mdns)                                       # list nodes
+//	revika-ctl cp    [-root <ws>] [backend] <local> rvk:<path>            # store
+//	revika-ctl cp    [-root <ws>] [backend] rvk:<path> <local>           # retrieve
+//	revika-ctl ls    [-root <ws>] [backend] [-l] [-R] [rvk:<path>]       # browse
+//	revika-ctl rm    [-root <ws>] [backend] rvk:<path>                   # delete
+//	revika-ctl share [-root <ws>] [backend] rvk:<path> -to <pubkey|@file> [-o <file>]
+//	revika-ctl node  (-bootstrap <ma>… | -mdns)                          # list nodes
 //
-// A shared root file is opened with -root <file> -key <privkey>. A <multiaddr> is
-// a node's full dial address including its peer ID, e.g.
+// [backend] is -node <ma> / -bootstrap <ma>… / -mdns; it overrides the workspace
+// config's bootstrap peers when given. -root accepts a workspace folder or a bare
+// root file (a plaintext own root, or a sealed shared root opened with -key). A
+// <multiaddr> is a node's full dial address including its peer ID, e.g.
 // /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW…, as printed by revika-node on startup.
 package main
 
@@ -57,6 +66,8 @@ func main() {
 	cmd, args := os.Args[1], os.Args[2:]
 	var err error
 	switch cmd {
+	case "connect":
+		err = cmdConnect(args)
 	case "keygen":
 		err = cmdKeygen(args)
 	case "cp":
@@ -87,14 +98,25 @@ func usage() {
 	fmt.Fprint(os.Stderr, `revika-ctl — revika User client
 
 Your files live in a namespace: one mutable root directory addressed by rvk: paths
-(e.g. rvk:docs/report.pdf). The tree in effect is the -root file (default
-$REVIKA_ROOT, else .revika/root.json). Your own root is mutable; a root someone
-shared with you (opened with -root <file> -key <privkey>) is read-only.
+(e.g. rvk:docs/report.pdf). A workspace folder (default .revika, made by connect)
+groups the connection profile (config.json), the namespace anchor (root.json), and
+your keys; every command selects it with -root <folder>. Your own root is mutable;
+a root someone shared with you (opened with -root <file> -key <privkey>) is
+read-only.
 
 Every rvk: command takes a backend: -node <ma> for one node, or -bootstrap <ma>…
-/ -mdns to reach nodes over the DHT.
+/ -mdns to reach nodes over the DHT. In a workspace these default to the bootstrap
+peers saved in config.json, so you rarely pass them after connect.
 
 Commands:
+  connect (-bootstrap <ma>… | <ma>…) [-root <dir>] [-label <s>] [-k 4] [-m 2]
+          [-pow-puzzle argon2id|sha256] [-pow-difficulty <bits>] [-force]
+        Create a workspace folder (default .revika) with a config.json recording
+        the bootstrap peer(s), erasure parameters (k data + m parity, default
+        4+2), the node's proof-of-work admission policy, and an optional label.
+        root.json and your keys live in the same folder. Writes no keys itself —
+        your identity is minted on the first write (cp/rm/share), after a prompt.
+
   keygen [-key <prefix>] [-pow-puzzle argon2id|sha256] [-pow-difficulty <bits>]
         Generate the User identity: an ML-KEM-768 (FIPS 203) keypair for receiving shared files
         (<prefix>.key/.pub) and an Ed25519 signing keypair that is your storage
@@ -106,9 +128,10 @@ Commands:
         verify — a banned owner cannot re-mint an identity for free. Default
         argon2id (memory-hard) at 12 bits; -pow-difficulty 0 disables it.
 
-  cp (backend) [-root <file>] [-key <privkey>] [-signkey <path>] <src> <dst>
+  cp [-root <ws|file>] [backend] [-key <privkey>] [-signkey <path>] <src> <dst>
         Copy between the local filesystem and the namespace; exactly one of <src>/<dst>
-        carries the rvk: prefix.
+        carries the rvk: prefix. In a workspace the backend defaults to config.json's
+        bootstrap peers, and a first store mints your identity after a prompt.
           cp report.pdf rvk:docs/      store report.pdf as docs/report.pdf
           cp report.pdf rvk:docs/r.pdf store under a chosen name
           cp rvk:docs/report.pdf .     retrieve into the current directory
@@ -118,17 +141,17 @@ Commands:
         signing key. Retrieving resolves the rvk: path and reconstructs it. A trailing
         slash (or an existing rvk: directory) means "into that directory".
 
-  ls (backend) [-root <file>] [-key <privkey>] [-l] [-R] [rvk:<path>]
+  ls [-root <ws|file>] [backend] [-key <privkey>] [-l] [-R] [rvk:<path>]
         List a directory in the namespace. Reads directory blobs only — no file
         content is fetched. Plain output is one name per line (directories end in /);
         -l adds kind, size and mtime; -R recurses. 'ls' or 'ls rvk:' lists the root.
 
-  rm (backend) [-root <file>] [-signkey <path>] rvk:<path>
+  rm [-root <ws|file>] [backend] [-signkey <path>] rvk:<path>
         Remove <path> from your -root (a file or a whole subtree) and drop your
         ownership claim on its shards. A node frees a shard's bytes only once its last
         owner leaves, so this never affects another User's shared copy. Owned root only.
 
-  share (backend) [-root <file>] [-key <privkey>] [-signkey <path>] rvk:<path>
+  share [-root <ws|file>] [backend] [-key <privkey>] [-signkey <path>] rvk:<path>
         -to <recipient-pubkey|@file> [-o <file>]
         Wrap a read-capability to the subtree at rvk:<path> for a recipient: it builds
         a RootPointer anchored there, signed by you, and SEALS it to the recipient's

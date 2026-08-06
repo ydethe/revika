@@ -81,13 +81,25 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -mdns -dht -bo
                           #   -rebalance-threshold -capacity -metrics -blocklist -conn-low
                           #   -conn-high -conn-grace -pow-difficulty -pow-puzzle
                           #   -log-format -log-level -v)
-go run ./cmd/revika-ctl   # User client: keygen | cp | ls | rm | share | node (see -h)
+go run ./cmd/revika-ctl   # User client: connect | keygen | cp | ls | rm | share | node (see -h)
 ```
 
-The client is **namespace-centric**: a User's files live under one mutable root
-directory addressed by `rvk:` paths (e.g. `rvk:docs/report.pdf`), anchored by a
-signed `manifest.RootPointer` persisted via `provider.FileRootStore` (default
-`.revika/root.json`, overridable with `-root`/`$REVIKA_ROOT`). `cp` writes/reads
+The client is **workspace-centric** on top of a namespace. `connect` creates a
+*workspace* folder (default `.revika`, `cmd/revika-ctl/config.go`) holding a
+`config.json` — the bootstrap peer(s), erasure `k`/`m` (default 4/2), and the
+node's proof-of-work admission policy — alongside where `root.json` and the
+User's keys (`keys/user.*`) live. Every namespace command selects a workspace with
+`-root <folder>`; the saved config supplies the bootstrap peers and PoW policy so
+`-bootstrap`/`-k`/`-m` need not be repeated (an explicit `-node`/`-bootstrap`/`-mdns`
+still overrides). The identity is minted lazily on the first write (`cp`/`rm`/`share`)
+after a confirmation prompt. `-root` is overloaded: a directory is a workspace; a
+regular file is a bare root pointer (own root, or a sealed shared root opened with
+`-key`) with no config — the historical behaviour.
+
+A User's files live under one mutable root directory addressed by `rvk:` paths
+(e.g. `rvk:docs/report.pdf`), anchored by a signed `manifest.RootPointer`
+persisted via `provider.FileRootStore` (`<workspace>/root.json`, overridable with
+`-root`/`$REVIKA_ROOT`). `cp` writes/reads
 scp-style (`cp file rvk:docs/` stores, `cp rvk:docs/file .` retrieves); `ls`
 browses (dir blobs only, `-l`/`-R`); `rm` grafts-out a subtree and releases its
 shards; `share rvk:PATH -to <key>` seals a `RootPointer` anchored at that subtree
