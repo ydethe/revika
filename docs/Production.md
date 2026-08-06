@@ -1,0 +1,85 @@
+# Production readiness
+
+Status snapshot: **2026-08-06.** What separates today's tree from a production
+self-hosted Drive. See [Architecture.md](../Architecture.md) for the full design;
+this file only tracks the gaps.
+
+The engineering baseline is strong for the current stage: a green `go test -race`
+suite, multi-node/resilience/repair end-to-end jobs in CI, multi-arch image
+publishing, `/healthz` `/readyz` `/status` `/metrics` endpoints, and structured
+`slog` logging. The gaps below are at three levels — architectural blockers first,
+then hardening the design already calls for, then deferred layers and ops polish.
+
+## 1. Architectural blockers — not a working distributed product yet
+
+- **The mutable root pointer never leaves the machine.** `manifest.RootPointer` is
+  signed and persisted only to a local `root.json`
+  (`internal/provider/file_rootstore.go`; `MemRootStore` is the only other impl).
+  The DHT / `/revika/root` publish path — all of Architecture §4 and the
+  `/revika/root/1.0.0` protocol — is planned. Without it there is no multi-device
+  access, and sharing only works by hand-carrying a sealed file out of band
+  (`cmd/revika-ctl/main.go:177`). This is *the* gap between "encode/store/repair
+  library" and "self-hosted Drive."
+- **Manifest and directory blobs aren't encrypted on the pipeline path yet.**
+  Build-order step 4 is in progress: encrypting the file manifest and encrypted
+  directories are still open — a confidentiality gap against the
+  everything-encrypted-client-side principle.
+- **Capability chain is half-built.** Cap *delivery* (ML-KEM wrap/unwrap) exists,
+  but the write-cap → read-cap → verify-cap derivation chain and signing keys for
+  mutable objects don't (step 5). **Revocation is not implemented**
+  (`internal/stripe/stripe.go:151`) — sharing is give-away-a-read-cap with no
+  take-back.
+- **Sync daemon and mount are absent as products.** `internal/sync` has the
+  reconcile/poll logic but there is **no `cmd/revika-daemon` binary** — it runs only
+  in tests. The FUSE / OS-mount layer (§3.8) is entirely planned. The actual
+  end-user surface (a folder that syncs) does not ship.
+
+## 2. Hardening the design already calls for
+
+- **Write-verb rate limiting is still TODO** (per-owner / per-peer token bucket on
+  PUT/DELETE). Connection/rcmgr defenses exist (`internal/net/defense.go`);
+  flow control on writes does not.
+- **PoW difficulty advertisement** (`/revika/params`) — clients discover a node's
+  difficulty via a late auth failure instead of up front.
+- **Repair still probes with `Store.Has`, not the `/revika/probe`
+  proof-of-possession** — a lying node defeats the availability check.
+  Repair-onto-fresh-nodes and repair cadence/threshold policy are open.
+- **Placement diversity not enforced**: the failure-domain `Spread` invariant isn't
+  applied on moves, capacity (`LoadReport`) is self-declared and untrusted, and the
+  per-shard cooldown is in-memory (lost on restart).
+- **Fixed-size chunking only** — no content-defined chunking, so any edit
+  re-uploads downstream chunks (dedup/bandwidth cost).
+
+## 3. Deliberately deferred (fine to defer, but they gate open-network scale)
+
+Global anti-Sybil, Byzantine reputation, and payment/incentive layers are out of
+scope by design. For a **trusted-operator / friends-and-family deployment** these
+are acceptable; for an **open permissionless network** they are required, and
+identity bans stay weak until then.
+
+## 4. Ops and quality gaps
+
+- `cmd/revika-node` (the daemon binary) has **no unit tests** — startup/wiring is
+  only covered indirectly via compose.
+- **No benchmarks** anywhere → no performance/regression guardrails; only one fuzz
+  target (`FuzzOpen` in `internal/crypto`).
+- **Effectively Linux-only** today: `diskUsage` returns `ErrUnsupported` and
+  `fsmeta` xattr/times are no-ops off Linux.
+- No Makefile / systemd units / k8s manifests — deployment is docker-compose +
+  shell scripts.
+- Doc inconsistency to resolve: §3.2 lists quotas/leases as planned while §5/§3.4
+  rely on them as implemented (they *are* implemented in `internal/ledger` and
+  `internal/net`).
+
+## Critical path
+
+To reach production as the product described, in order:
+
+1. **Publish the signed root pointer over the DHT** (§4) — unblocks the most.
+2. **Encrypt manifests/dirs and finish the read/write/verify cap chain with
+   revocation.**
+3. **Ship the sync daemon binary** (`cmd/revika-daemon`).
+4. **Write-verb rate limiting + proof-of-possession repair.**
+
+Everything else — mount layer, anti-Sybil, payments, benchmarks, non-Linux
+support — layers on after that.
