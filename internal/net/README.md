@@ -236,12 +236,17 @@ failed `PUT`. The node answers a read-only, unauthenticated `/revika/params` que
 by `Register`, same one-request/response framing as balance) with a `NodeParams` envelope whose
 `PoW` field carries the node's `PoWInfo` — the canonical short puzzle name (`cap.PuzzleName`,
 which `PuzzleByName` re-derives) and the minimum difficulty, or a zeroed policy when admission
-is off. `QueryParams(ctx, h, peer)` is the client half. `revika-ctl connect` calls it against
-each bootstrap peer, takes the strictest (max difficulty, consistent puzzle), saves it to the
-workspace config, and grinds the identity to match — so the operator supplies no PoW flags. It
-reveals only the node's own local policy, never shard content, so it needs no owner token. The
-`NodeParams` envelope leaves room to advertise more (e.g. suggested erasure `k`/`m`) without a
-protocol bump. See Architecture.md §5.
+is off. `QueryParams(ctx, h, peer)` is the client half; `FetchPoWPolicy(ctx, h, bootstrap,
+dialTimeout)` reconciles it across a bootstrap set into the single strictest requirement a new
+participant must satisfy — max difficulty, one consistent puzzle (a disagreement among
+PoW-enforcing nodes is a hard error), failing closed when no node answers. Two callers drive it
+through the same code path: `revika-ctl connect` (to grind an admissible identity, saved to the
+workspace config) and a joining `revika-node` that knows only `-bootstrap` and left
+`-pow-difficulty` unset (to inherit its bootstrap peers' admission bar instead of the operator
+re-typing it — only the network's seed node states the policy). It reveals only the node's own
+local policy, never shard content, so it needs no owner token. The `NodeParams` envelope leaves
+room to advertise more (e.g. suggested erasure `k`/`m`) without a protocol bump. See
+Architecture.md §5.
 
 ## DHT-backed stores (`placement.go`, `repair.go`)
 

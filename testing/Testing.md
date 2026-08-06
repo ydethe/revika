@@ -1,6 +1,12 @@
-Run the node :
+Run the seed node — the only node that states the PoW policy :
 
      go run ./cmd/revika-node -data=./.revika -listen=/ip4/127.0.0.1/tcp/4002 -pow-difficulty 2 -pow-puzzle argon2id
+
+Add a second node that only *joins* : it passes -bootstrap and no -pow flags, so
+it reads the seed's PoW policy over /revika/params and enforces the same bar (a
+joining node inherits admission; only the seed configures it) :
+
+     go run ./cmd/revika-node -data=./.revika-n2 -listen=/ip4/127.0.0.1/tcp/4003 -bootstrap /ip4/127.0.0.1/tcp/4002/p2p/xxxxxx
 
 Connect to it — create a workspace folder holding config.json (bootstrap peer,
 erasure k/m, PoW policy), where root.json and your keys will also live. `connect`

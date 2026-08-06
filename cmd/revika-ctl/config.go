@@ -27,8 +27,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/libp2p/go-libp2p/core/peer"
-
 	"revika/internal/cap"
 	"revika/internal/erasure"
 	"revika/internal/net"
@@ -232,50 +230,11 @@ func fetchNodeParams(ctx context.Context, bootstrap []string) (PoWConfig, error)
 	}
 	defer h.Close()
 
-	var (
-		out     PoWConfig
-		puzzle  string
-		reached int
-		lastErr error
-	)
-	for _, addr := range bootstrap {
-		info, err := peer.AddrInfoFromString(addr)
-		if err != nil {
-			return PoWConfig{}, fmt.Errorf("invalid bootstrap address %q: %w", addr, err)
-		}
-		cctx, cancel := context.WithTimeout(ctx, dialTimeout)
-		if err := net.Connect(cctx, h, *info); err != nil {
-			cancel()
-			lastErr = err
-			continue
-		}
-		np, err := net.QueryParams(cctx, h, info.ID)
-		cancel()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		reached++
-		if !np.PoW.Enabled {
-			continue // node enforces no PoW; leaves difficulty 0
-		}
-		if puzzle == "" {
-			puzzle = np.PoW.Puzzle
-		} else if np.PoW.Puzzle != puzzle {
-			return PoWConfig{}, fmt.Errorf("bootstrap nodes disagree on proof-of-work puzzle (%q vs %q); one identity cannot satisfy both — connect to a consistent node set", puzzle, np.PoW.Puzzle)
-		}
-		if np.PoW.Difficulty > out.Difficulty {
-			out.Difficulty = np.PoW.Difficulty
-		}
+	puzzle, diff, err := net.FetchPoWPolicy(ctx, h, bootstrap, dialTimeout)
+	if err != nil {
+		return PoWConfig{}, err
 	}
-	if reached == 0 {
-		if lastErr != nil {
-			return PoWConfig{}, fmt.Errorf("could not reach any bootstrap node (%s): %w", strings.Join(bootstrap, ", "), lastErr)
-		}
-		return PoWConfig{}, fmt.Errorf("could not reach any bootstrap node (%s)", strings.Join(bootstrap, ", "))
-	}
-	out.Puzzle = puzzle
-	return out, nil
+	return PoWConfig{Difficulty: diff, Puzzle: puzzle}, nil
 }
 
 // cmdConnect creates a workspace: a folder holding config.json (the connection

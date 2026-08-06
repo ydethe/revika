@@ -136,8 +136,13 @@ read the base64 key from the named file (no `@file` prefix, no inline key).
 argon2id@12) until its pubkey hashes under the target, so re-minting a banned identity costs
 CPU, not milliseconds (`internal/cap/pow.go`). Nodes admit writes only from owners meeting
 their own `-pow-difficulty` (default 0 = off), so client and node must use a matching puzzle
-and the client's difficulty must be ≥ the node's. `cp` (store)/`rm`/`share` sign with
-`-signkey` (default `.revika/keys/user.sign.key`).
+and the client's difficulty must be ≥ the node's. Only the network's **seed** node states the
+policy with `-pow-difficulty`/`-pow-puzzle`; a node that merely joins passes only `-bootstrap`
+and, when `-pow-difficulty` is left unset, learns the policy from its bootstrap peers over
+`/revika/params` (`net.FetchPoWPolicy`, strictest wins — the same handshake `revika-ctl connect`
+uses) and enforces that, so admission propagates without the operator re-typing it. Passing
+`-pow-difficulty` (even `0`) opts out and pins the local policy. `cp` (store)/`rm`/`share` sign
+with `-signkey` (default `.revika/keys/user.sign.key`).
 
 Runtime state lives under `.revika/` (git-ignored): node shares, SQLite ledger, keys, mock store.
 

@@ -61,6 +61,11 @@ const (
 	discoveryScanTimeout = 30 * time.Second
 )
 
+// bootstrapDialTimeout bounds connecting to and querying a single bootstrap peer
+// when a joining node learns the network's proof-of-work policy over
+// /revika/params (see the PoW block in run()).
+const bootstrapDialTimeout = 30 * time.Second
+
 // version is the build version reported on /status and /metrics. Override at
 // build time with -ldflags="-X main.version=v1.2.3".
 var version = "dev"
@@ -114,6 +119,18 @@ func run() error {
 	flag.Var(&listen, "listen", "multiaddr to listen on (repeatable; default all interfaces, random TCP+QUIC ports)")
 	flag.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr with /p2p/<id> (repeatable)")
 	flag.Parse()
+
+	// A seed node declares its own admission policy with -pow-difficulty; a node
+	// that merely joins an existing network omits it and inherits the policy its
+	// bootstrap peers enforce (below). Tell the two apart by whether the operator
+	// set the flag at all — an explicit -pow-difficulty 0 means "enforce none",
+	// distinct from "unset, adopt from bootstrap".
+	powDiffSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "pow-difficulty" {
+			powDiffSet = true
+		}
+	})
 
 	logLevelStr := *logLevel
 	if *verbose {
@@ -227,16 +244,42 @@ func run() error {
 	// Proof-of-work identity admission: when enabled, an owner's Ed25519 key must
 	// be self-certifying (hash under the difficulty target) to store shards, so a
 	// banned owner cannot re-mint a fresh identity for free. Off by default.
-	if *powDiff > 0 {
-		if *powDiff > 255 {
-			return fmt.Errorf("pow-difficulty %d out of range (0-255)", *powDiff)
+	//
+	// The effective policy is either declared locally (a seed node passes
+	// -pow-difficulty/-pow-puzzle) or, for a node that only knows -bootstrap and
+	// left -pow-difficulty unset, learned from its bootstrap peers over
+	// /revika/params (strictest wins) — the same handshake `revika-ctl connect`
+	// uses. So a node joining an existing network inherits the admission bar
+	// without the operator re-typing it; only the network's first (seed) node must
+	// state the policy.
+	effPuzzle, effDiff := *powPuzzle, *powDiff
+	if !powDiffSet && len(bootstrap) > 0 {
+		fctx, cancel := context.WithTimeout(ctx, time.Duration(len(bootstrap))*bootstrapDialTimeout)
+		puzzle, diff, perr := net.FetchPoWPolicy(fctx, h, bootstrap, bootstrapDialTimeout)
+		cancel()
+		if perr != nil {
+			return fmt.Errorf("learn proof-of-work policy from bootstrap: %w", perr)
 		}
-		puzzle, err := cap.PuzzleByName(*powPuzzle)
+		if puzzle != "" {
+			effPuzzle = puzzle
+		}
+		effDiff = diff
+		if diff > 0 {
+			log.Info("proof-of-work policy adopted from bootstrap", "event", "pow.adopt", "puzzle", effPuzzle, "min_bits", diff)
+		} else {
+			log.Info("proof-of-work policy adopted from bootstrap: none enforced", "event", "pow.adopt")
+		}
+	}
+	if effDiff > 0 {
+		if effDiff > 255 {
+			return fmt.Errorf("pow-difficulty %d out of range (0-255)", effDiff)
+		}
+		puzzle, err := cap.PuzzleByName(effPuzzle)
 		if err != nil {
 			return err
 		}
-		srv.SetPoW(puzzle, cap.Difficulty(*powDiff))
-		log.Info("proof-of-work admission enabled", "puzzle", puzzle.Name(), "min_bits", *powDiff)
+		srv.SetPoW(puzzle, cap.Difficulty(effDiff))
+		log.Info("proof-of-work admission enabled", "puzzle", puzzle.Name(), "min_bits", effDiff)
 	}
 
 	// Join the DHT (server mode: a node stores routing state + provider records
@@ -304,7 +347,7 @@ func run() error {
 	if *metricsAddr != "" {
 		ms := net.NewMetricsServer(h, led, disc, version, buildDate, startedAt, log)
 		ms.SetGCStats(gcStats)
-		ms.SetPoW(*powPuzzle, *powDiff)
+		ms.SetPoW(effPuzzle, effDiff)
 		ms.SetLoadSource(net.LoadSource(loadSource))
 		go func() {
 			if err := ms.Serve(ctx, *metricsAddr); err != nil {
