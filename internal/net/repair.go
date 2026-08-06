@@ -2,6 +2,7 @@ package net
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -41,6 +42,13 @@ type RepairStore struct {
 	desc  stripe.Descriptor
 	grant []byte
 
+	// verify turns Has into a proof-of-retrieval survival check: rather than trust
+	// a remote node's presence byte, it fetches the shard and lets the content
+	// address self-verify (a lying node cannot forge bytes that hash to the ID).
+	// Off (the default) keeps the cheap presence-byte check. Set with
+	// SetVerifyPossession; a local hit short-circuits either way (we hold it).
+	verify bool
+
 	mu   sync.Mutex
 	next int
 }
@@ -54,17 +62,44 @@ func NewRepairStore(h host.Host, local store.Store, disc *Discovery, d stripe.De
 
 var _ store.Store = (*RepairStore)(nil)
 
+// SetVerifyPossession turns on (or off) proof-of-retrieval survival checking for
+// remote shards: when on, Has confirms a remote shard by fetching and
+// self-verifying it (hash == ID) instead of trusting the holder's presence byte,
+// so a node that lies "I hold it" is caught and the shard is counted missing (→
+// regenerated). It costs a shard download per remote check, so it is opt-in
+// (revika-node -repair-verify) and, being a local defence, never inherited from
+// bootstrap. Call before driving repair.Check/Repair.
+func (r *RepairStore) SetVerifyPossession(v bool) { r.verify = v }
+
 // Delete is not meaningful for repair.
 func (r *RepairStore) Delete(context.Context, store.ShardID) error { return ErrReadOnly }
 
 // Has reports whether the shard survives anywhere the repairer can reach it: its
 // own local store first (the DHT hides the querier's own provider records), then
 // remote providers over the DHT.
+//
+// With verify off (the default), a remote check trusts the provider's presence
+// byte (cheap, but a lying node defeats it). With verify on, a remote check is a
+// proof of retrieval: the shard is fetched and self-verifies against its content
+// address, so a fabricated "I hold it" cannot pass — an unfetchable/corrupt shard
+// counts as missing (false), letting repair regenerate it.
 func (r *RepairStore) Has(ctx context.Context, id store.ShardID) (bool, error) {
 	if r.local != nil {
 		if ok, err := r.local.Has(ctx, id); err == nil && ok {
 			return true, nil
 		}
+	}
+	if r.verify {
+		if _, err := r.DHTStore.Get(ctx, id); err != nil {
+			// Unavailable or corrupt everywhere the DHT can reach: treat as a missing
+			// shard so repair regenerates it. Any other error (context cancelled, a
+			// DHT lookup failure) is inconclusive and surfaced to the caller.
+			if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCorrupt) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
 	}
 	return r.DHTStore.Has(ctx, id)
 }

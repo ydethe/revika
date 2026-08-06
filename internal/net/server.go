@@ -75,6 +75,13 @@ type Server struct {
 	// User's current signed RootPointer). Left nil, the node does not register the
 	// root handler — it offers no root-resolution service.
 	rootResolver RootResolver
+
+	// limiter, when set, meters fresh owner-initiated writes (PUT with a valid
+	// token, and DELETE) per Ed25519 owner, refusing a write that outpaces the
+	// node's per-owner rate cap with statusRateLimited. Grant-authorized
+	// maintenance writes (repair/rebalance) carry no token and are never metered.
+	// Left nil, no write-rate limiting happens (the default). See ratelimit.go.
+	limiter *OwnerRateLimiter
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -142,6 +149,12 @@ func (srv *Server) SetMaintenancePolicy(repair RepairInfo, rebalance RebalanceIn
 // schedule allows is locally blacklisted. Call before Register; safe to leave
 // unset (no schedule policing).
 func (srv *Server) SetAbuseMonitor(a *AbuseMonitor) { srv.abuse = a }
+
+// SetRateLimiter attaches a per-owner write-verb rate limiter (ratelimit.go), so
+// a fresh owner-initiated PUT or a DELETE that outpaces the owner's token bucket
+// is refused with statusRateLimited. Grant-authorized maintenance writes stay
+// exempt. Call before Register; a nil limiter (the default) meters nothing.
+func (srv *Server) SetRateLimiter(l *OwnerRateLimiter) { srv.limiter = l }
 
 // enforcePoW reports whether owner satisfies the node's proof-of-work admission
 // policy, returning ErrUnauthorized if not. A zero minimum difficulty accepts
@@ -292,6 +305,14 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 			if err := srv.enforcePoW(owner); err != nil {
 				srv.log.Debug("shard put: owner fails proof-of-work", "event", "shard.put.rejected", "reason", "proof_of_work", "peer", peer, "id", id, "min_bits", srv.powMin)
 				srv.replyErr(s, err)
+				return
+			}
+			// Write-rate cap: a fresh owner-initiated write is metered per owner. The
+			// grant branch below (repair/rebalance) is exempt — mandatory maintenance
+			// must not be throttled, and rebalance cadence is policed separately.
+			if !srv.limiter.Allow(owner, now) {
+				srv.log.Debug("shard put: owner over write-rate cap", "event", "shard.put.rejected", "reason", "rate_limited", "peer", peer, "id", id)
+				srv.replyErr(s, ErrRateLimited)
 				return
 			}
 		case stripeOK:
@@ -448,10 +469,18 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 		return
 	}
 
-	owner, err := verifyToken(token, opDelete, id, s.Conn().LocalPeer(), time.Now())
+	now := time.Now()
+	owner, err := verifyToken(token, opDelete, id, s.Conn().LocalPeer(), now)
 	if err != nil {
 		srv.log.Debug("shard delete: unauthorized", "peer", peer, "id", id, "err", err)
 		srv.replyErr(s, err)
+		return
+	}
+	// Write-rate cap: DELETE is metered per owner alongside PUT (same token bucket),
+	// so a flood of deletes cannot pin the node either.
+	if !srv.limiter.Allow(owner, now) {
+		srv.log.Debug("shard delete: owner over write-rate cap", "event", "shard.delete.rejected", "reason", "rate_limited", "peer", peer, "id", id)
+		srv.replyErr(s, ErrRateLimited)
 		return
 	}
 	// Drop only this owner's claim. ErrUnauthorized here means the caller never

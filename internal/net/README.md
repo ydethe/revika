@@ -41,9 +41,10 @@ the payloads are opaque and the verb set is tiny. Helpers: `writeByte`/`readByte
 
 Request verbs (`op`): `opPut`, `opGet`, `opHas`, `opDelete`. Response codes
 (`status`): `statusOK`, `statusNotFound`, `statusCorrupt`, `statusError` (message
-blob follows), `statusUnauthorized`, `statusQuotaExceeded`. `statusToErr` /
-`errToStatus` map between status bytes and `store`/`ledger` errors so a NetStore
-surfaces the same errors as a local store.
+blob follows), `statusUnauthorized`, `statusQuotaExceeded`, `statusRateLimited`
+(owner over the per-owner write-rate cap; transient, retry after the bucket
+refills). `statusToErr` / `errToStatus` map between status bytes and `store`/`ledger`
+errors so a NetStore surfaces the same errors as a local store.
 
 Guards: `MaxShardSize` (64 MiB) caps a single shard/blob allocation, `maxStripeBlob`
 (64 KiB) caps a serialized descriptor, `NonceSize` (32) is the probe nonce length.
@@ -112,9 +113,36 @@ the path (default `<data>/blocklist.auto`, `off` disables persistence). `Block` 
 appends peer IDs — identity is the unit the detector acts on; subnet rules stay operator policy.
 
 These are *connection/flow* caps that complement the ledger's *storage* cap (per-owner
-quota). **Still planned:** per-peer/per-owner rate limiting on the write verbs (a token
-bucket keyed on the Ed25519 owner) with a `statusRateLimited` response. See
+quota). The remaining *flow* cap — per-owner rate limiting on the write verbs — now ships
+as an optional `OwnerRateLimiter` (see **Write-verb rate limiting** below). See
 Architecture.md §3.1/§5.
+
+## Write-verb rate limiting (`ratelimit.go`)
+
+`OwnerRateLimiter` is an optional per-owner token bucket on the write verbs, the *flow*
+cap that complements the ledger's per-owner storage *volume* quota. Each owner (the
+Ed25519 key recovered from a PUT/DELETE auth token) gets a bucket of `burst` tokens that
+refills at `rate` tokens/second; a write costs one token, and a write that finds the bucket
+empty is refused with `statusRateLimited` (`ErrRateLimited`) — transient, so the caller may
+retry once tokens refill. It acts only on the owner identity, never decrypting or
+interpreting a shard, so the untrusted-blob-store trust model is untouched.
+
+- `NewOwnerRateLimiter(rate, burst)` returns `nil` when `rate <= 0` (disabled), and a nil
+  `*OwnerRateLimiter` meters nothing — so `Allow` is safe to call unconditionally.
+- `Allow(owner, now)` credits lazily accrued tokens (capped at `burst`), charges one, and
+  reports admission. An **empty owner is never metered**: the grant-authorized maintenance
+  flows (repair regeneration, rebalance moves) carry no owner token, so — exactly as
+  proof-of-work admission exempts them — throttling them (mandatory repair; rebalance is
+  policed separately by the `AbuseMonitor`) would strand durability.
+- Idle, full buckets are pruned (`pruneLocked`, at most once per `rateBucketIdle` = 10m) so
+  the map cannot grow unbounded; a full bucket is indistinguishable from a fresh one, so the
+  drop is lossless.
+
+`Server.SetRateLimiter` wires it in: `handlePut` meters only the token branch (a fresh
+owner-initiated write, after the PoW check), and `handleDelete` meters after the owner is
+verified. It is a **local** defence, wired from `revika-node -write-rate/-write-burst`
+(off by default, `-write-rate 0`) and — like the abuse-detector tuning — never inherited
+from bootstrap.
 
 ## Maintenance-abuse detection (`abuse.go`)
 
@@ -282,19 +310,24 @@ interprets, or trusts payloads.
   present) `handlePut` calls `RecordRebalanceMove` so the detector can police a peer that
   rebalances against this node too fast. The reason byte is read only on `ShardProtocol`
   (1.2.0); a 1.1.0 PUT defaults to `ReasonRepair` and is never counted as a rebalance move.
+- `SetRateLimiter(*OwnerRateLimiter)` — wires the optional per-owner write-verb rate cap
+  (see **Write-verb rate limiting**). `handlePut` meters the token branch (after the PoW
+  check) and `handleDelete` meters the verified owner; an over-rate write is refused with
+  `statusRateLimited` before any store/ledger work. Grant-authorized maintenance writes are
+  exempt. Nil (the default) meters nothing.
 
 Ordering is crash-safe: bytes are stored before ownership is recorded, and on
 DELETE the ledger row is removed before the blob — a crash in between leaves an
 orphan blob for GC to reclaim, never lost owner data. `handleProbe` returns
 `SHA-256(nonce || shardBytes)`. `serverStreamTimeout` (60s) bounds each exchange.
 
-**Planned abuse controls.** Beyond the per-owner storage quota the ledger already
-enforces, the server is the place for a *flow* cap: a per-peer and per-owner token bucket
-on `PUT`/`DELETE` (keyed on the Ed25519 owner from `verifyToken`), with anonymous
-`GET`/`HAS`/`PROBE` limited per-peer/IP only, surfaced by a new `statusRateLimited`
-response code. Transport-level blocking already lives in the host's `ConnectionGater`
-(see **Self-defence** above); together with the quota they form a node's acceptable-use
-enforcement. See Architecture.md §3.1/§5.
+**Abuse controls.** Beyond the per-owner storage quota the ledger enforces, the server
+carries a *flow* cap: an optional per-owner token bucket on `PUT`/`DELETE` (keyed on the
+Ed25519 owner from `verifyToken`), surfaced by the `statusRateLimited` response code — see
+**Write-verb rate limiting** above (`SetRateLimiter`). Transport-level blocking lives in the
+host's `ConnectionGater` (see **Self-defence**); together with the quota they form a node's
+acceptable-use enforcement. **Still planned:** rate-limiting the anonymous read verbs
+(`GET`/`HAS`/`PROBE`) per-peer/IP. See Architecture.md §3.1/§5.
 
 **Node policy advertisement (`params.go`, `/revika/params/1.0.0`).** A node answers a
 read-only, unauthenticated `/revika/params` query (registered by `Register`, same
@@ -344,7 +377,14 @@ a protocol bump. See Architecture.md §5.
   DHT, because `FindProviders` excludes the querier — a node can't discover its own
   shards over the DHT. `Put` places a regenerated shard (via `putGrant`) on a fresh
   discovered node that isn't already a provider, round-robining the start; if every
-  node already holds it, that's a no-op success.
+  node already holds it, that's a no-op success. `SetVerifyPossession(true)` (opt-in,
+  from `revika-node -repair-verify`) hardens the survival check: instead of trusting a
+  remote holder's `HAS` presence byte, `Has` fetches the shard and lets the content
+  address self-verify (`hash == ID`), so a node that lies "I hold it" cannot fake
+  availability — an unfetchable/corrupt shard counts as **missing** and repair
+  regenerates it. It costs a shard download per remote check, so it is off by default;
+  a local hit short-circuits either way. Being a local defence, it is never inherited
+  from bootstrap.
 
 ## Rebalancing (`balance.go`, `rebalance.go`)
 

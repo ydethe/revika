@@ -44,21 +44,30 @@ the design already calls for, then deferred layers and ops polish.
 
 ## 2. Hardening the design already calls for
 
-- **Write-verb rate limiting is still TODO** (per-owner / per-peer token bucket on
-  PUT/DELETE, with a `statusRateLimited` response — see `internal/net/README.md`).
-  Connection/rcmgr defenses exist (`internal/net/defense.go`) and a node now
-  locally blacklists maintenance abusers (`internal/net/abuse.go`,
-  `AbuseMonitor`) via a persistent `blocklist.auto`, but per-verb flow control on
-  writes does not exist.
-- **Repair still probes with `Store.Has`, not the `/revika/probe`
-  proof-of-possession** — `repair.Check` reads a single presence byte
-  (`internal/repair/repair.go` → `NetStore.Has`), so a lying node still defeats
-  the *repair* availability check. The fresh-nonce proof-of-possession protocol
-  (`/revika/probe/1.0.0`, `NetStore.Probe`) now exists and is used by **rebalance**
-  (make-before-break: a target must prove possession before the source releases,
-  and a failed proof feeds an abuse strike, `internal/net/rebalance.go`), but
-  repair does not use it. Repair-onto-fresh-nodes and repair cadence/threshold
-  policy are open.
+- **Write-verb rate limiting on PUT/DELETE now ships (optional).** A per-owner token
+  bucket (`net.OwnerRateLimiter`, `internal/net/ratelimit.go`) meters fresh
+  owner-initiated writes keyed on the Ed25519 owner, refusing an over-rate write with
+  the new `statusRateLimited` response; grant-authorized repair/rebalance writes are
+  exempt (as with PoW admission). It is wired via `Server.SetRateLimiter` from
+  `revika-node -write-rate/-write-burst`, off by default, and — like the abuse-detector
+  tuning — a **local** defence, never inherited from bootstrap. This joins the
+  connection/rcmgr defenses (`internal/net/defense.go`) and the maintenance-abuse
+  blocklister (`internal/net/abuse.go`, `AbuseMonitor`). **Still open:** per-peer/IP
+  rate limiting on the anonymous read verbs (`GET`/`HAS`/`PROBE`).
+- **Repair can now verify shard possession instead of trusting `Store.Has` (optional).**
+  By default `repair.Check` still reads a single presence byte
+  (`internal/repair/repair.go` → `NetStore.Has`), which a lying node defeats. With
+  `revika-node -repair-verify` the repairer's `net.RepairStore`
+  (`SetVerifyPossession`) upgrades each remote survival check to a **proof of
+  retrieval**: it fetches the shard and self-verifies its content address
+  (`hash == ID`), so a node that lies "I hold it" is caught and the shard counts as
+  missing (→ regenerated). It costs a shard download per remote check, so it is
+  opt-in and a **local** defence (never inherited). (The fresh-nonce
+  `/revika/probe/1.0.0` proof-of-possession — used by **rebalance**'s
+  make-before-break release, `internal/net/rebalance.go` — needs the verifier to hold
+  the shard bytes, which a repairer does not for remote positions, so repair uses the
+  self-verifying fetch instead.) Repair-onto-fresh-nodes and repair cadence/threshold
+  policy remain open.
 - **Placement diversity only partly enforced on moves**: rebalance now caps
   per-peer stripe concentration (never let one peer hold more than `m` shards of a
   stripe, `rebalance.go` `peerStripeLoad`) with a proof-gated release, but the
@@ -106,9 +115,15 @@ To reach production as the product described, in order:
    revocation.**~~ **Done.** Manifest/dir blobs are AES-256-GCM ciphertext; the
    write→read→verify cap chain and `revoke`-by-rekey ship (future-reads-only limit).
 3. **Ship the sync daemon binary** (`cmd/revika-daemon`).
-4. **Write-verb rate limiting** (a `statusRateLimited` token bucket keyed on the
-   owner) **+ wire the existing `/revika/probe` proof-of-possession into repair**
-   (rebalance already uses it; `repair.Check` still trusts `Store.Has`).
+4. ~~**Write-verb rate limiting** (a `statusRateLimited` token bucket keyed on the
+   owner) **+ harden the repair survival check against a lying `Store.Has`**.~~
+   **Done (optional, off by default).** Per-owner write-rate limiting ships as
+   `net.OwnerRateLimiter` (`-write-rate/-write-burst`); the repair check gains a
+   proof-of-retrieval verify path (`-repair-verify`, `RepairStore.SetVerifyPossession`)
+   that fetches + self-verifies a remote shard rather than trusting its presence byte.
+   Both are local defences (never inherited). Rebalance already used the fresh-nonce
+   `/revika/probe`; repair uses self-verifying fetch because the repairer lacks the
+   shard bytes a probe response must be checked against.
 5. **Client-side republish scheduling** (today a client only publishes synchronously
    on commit; a long-lived republish loop belongs to the sync daemon) and **multi-device
    write reconciliation** (§3.7).

@@ -58,7 +58,15 @@ User side — a node is trusted for *availability*, never *confidentiality*.
   rebalance move from schedule-exempt repair regeneration. Abuse-detector tuning
   (`-rebalance-abuse-tolerance/-coalesce/-strikes/-decay`) is a **local** defence — never
   inherited from bootstrap and never ignored on a joining node, unlike admission/maintenance
-  policy. Write-verb *rate* limiting is still TODO. Note ban-by-identity is weak while identities
+  policy. Two more *local* (never-inherited) defences are now wired the same way: an optional
+  per-owner write-verb *rate* cap (`net.OwnerRateLimiter`, `internal/net/ratelimit.go`; a token
+  bucket keyed on the Ed25519 owner refusing over-rate PUT/DELETE with `statusRateLimited`,
+  grant-authorized repair/rebalance writes exempt; `-write-rate/-write-burst`, off by default),
+  and an optional repair possession-verify (`net.RepairStore.SetVerifyPossession`,
+  `-repair-verify`) that upgrades `repair.Check`'s per-shard survival test from a trusted
+  `Store.Has` presence byte to a proof-of-retrieval fetch + content-address self-verify, catching
+  a node that lies about holding a shard. Read-verb (`GET`/`HAS`/`PROBE`) rate limiting is still
+  TODO. Note ban-by-identity is weak while identities
   are free to mint — proof-of-work identities raise the re-mint cost, but global anti-Sybil,
   reputation, and economic layers remain deferred (see Architecture.md §5).
 
@@ -96,6 +104,7 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -blocklist-auto -rebalance-abuse-tolerance
                           #   -rebalance-abuse-coalesce -rebalance-abuse-strikes
                           #   -rebalance-abuse-decay -conn-low -conn-high -conn-grace
+                          #   -write-rate -write-burst -repair-verify
                           #   -pow-difficulty -pow-puzzle -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | ls | rm | share | revoke | node
                           #   (see -h). `ls -owner <pubkey-file>` resolves a namespace's DHT-published

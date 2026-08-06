@@ -37,7 +37,12 @@ Two properties keep repair clean and confidential:
 
 - **`Check(ctx, s store.Store, m pipeline.FileManifest) (Report, error)`** —
   probes shard availability for every chunk via `store.Has`, without moving any
-  data. Returns a `Report`.
+  data. Returns a `Report`. The strength of a "present" verdict is the store's:
+  over a plain `NetStore`/`DHTStore` it trusts the holder's presence byte, but
+  over a `net.RepairStore` with possession-verify enabled (`SetVerifyPossession`,
+  `revika-node -repair-verify`) each remote `Has` becomes a proof of retrieval
+  (fetch + self-verify `hash == ID`), so a node lying about holding a shard is
+  caught and the shard counts as missing.
 - **`Repair(ctx, s store.Store, m pipeline.FileManifest) (Report, error)`** —
   regenerates missing shards for every chunk that is still recoverable
   (`>= K` shards present), restoring each to full redundancy. Chunks that have

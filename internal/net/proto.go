@@ -98,6 +98,7 @@ const (
 	statusError         status = 3 // server-side error; a message blob follows
 	statusUnauthorized  status = 4 // missing/invalid auth token, or not the shard's owner
 	statusQuotaExceeded status = 5 // owner is over their storage quota
+	statusRateLimited   status = 6 // owner is writing faster than the node's per-owner rate cap
 )
 
 // MaxShardSize caps the bytes accepted for a single shard, a guard against a
@@ -126,6 +127,11 @@ var ErrUnauthorized = errors.New("revika/net: unauthorized")
 // ErrQuotaExceeded is surfaced to a client when a PUT is rejected because the
 // owner is over their storage quota.
 var ErrQuotaExceeded = errors.New("revika/net: quota exceeded")
+
+// ErrRateLimited is surfaced to a client when a PUT/DELETE is refused because the
+// owner has exceeded the node's per-owner write-rate cap. It is transient: the
+// caller may retry once the owner's token bucket refills.
+var ErrRateLimited = errors.New("revika/net: rate limited")
 
 // --- low-level framing helpers -------------------------------------------
 
@@ -209,6 +215,8 @@ func statusToErr(s status, msg string) error {
 		return ErrUnauthorized
 	case statusQuotaExceeded:
 		return ErrQuotaExceeded
+	case statusRateLimited:
+		return ErrRateLimited
 	case statusError:
 		return &ErrRemote{Msg: msg}
 	default:
@@ -230,6 +238,8 @@ func errToStatus(err error) status {
 		return statusUnauthorized
 	case errors.Is(err, ledger.ErrQuotaExceeded), errors.Is(err, ErrQuotaExceeded):
 		return statusQuotaExceeded
+	case errors.Is(err, ErrRateLimited):
+		return statusRateLimited
 	default:
 		return statusError
 	}

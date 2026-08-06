@@ -103,6 +103,7 @@ func run() error {
 		gcExpired     = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
 		repairOn      = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
 		repairEvery   = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
+		repairVerify  = flag.Bool("repair-verify", false, "harden the repair survival check: confirm a remote shard by fetching and self-verifying it (hash==ID) instead of trusting the holder's presence byte, so a lying node cannot fake availability. Costs a shard download per remote check. LOCAL defence, never inherited")
 		rebalanceOn   = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
 		rebalEvery    = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
 		rebalThresh   = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
@@ -117,6 +118,8 @@ func run() error {
 		connLow       = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
 		connHigh      = flag.Int("conn-high", 0, "connection-manager high watermark, above which idle connections are trimmed (0 = built-in default; <0 disables)")
 		connGrace     = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
+		writeRate     = flag.Float64("write-rate", 0, "per-owner write-verb rate cap in writes/second on PUT/DELETE (0 = disabled). A token bucket keyed on the Ed25519 owner refuses over-rate writes with statusRateLimited; grant-authorized repair/rebalance writes are exempt. LOCAL defence, never inherited")
+		writeBurst    = flag.Float64("write-burst", 0, "per-owner write burst allowance: max back-to-back writes before -write-rate throttles (0 = default to -write-rate, i.e. a ~1s burst; clamped to >=1). LOCAL defence, never inherited")
 		powDiff       = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). Clients must keygen with a matching -pow-puzzle and difficulty >= this")
 		powPuzzle     = flag.String("pow-puzzle", "argon2id", "proof-of-work puzzle owner identities must satisfy: argon2id (memory-hard) or sha256 (fast). Must match what clients mint with")
 		publicIP      = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
@@ -368,6 +371,21 @@ func run() error {
 	}, log)
 	srv.SetAbuseMonitor(abuse)
 
+	// Write-verb rate limiting (local defence, never inherited): an optional
+	// per-owner token bucket on PUT/DELETE that refuses a fresh owner-initiated
+	// write outpacing the cap with statusRateLimited. It complements the ledger's
+	// per-owner storage *volume* quota with a *flow* cap; grant-authorized
+	// repair/rebalance writes carry no owner token and are exempt. Off by default
+	// (-write-rate 0).
+	if *writeRate > 0 {
+		burst := *writeBurst
+		if burst <= 0 {
+			burst = *writeRate // ~1s worth of writes; NewOwnerRateLimiter clamps to >=1
+		}
+		srv.SetRateLimiter(net.NewOwnerRateLimiter(*writeRate, burst))
+		log.Info("write-rate limiting enabled", "event", "ratelimit.enabled", "rate_per_s", *writeRate, "burst", burst)
+	}
+
 	// Join the DHT (server mode: a node stores routing state + provider records
 	// for others). Wiring the Discovery in as the Server's announcer means every
 	// shard the node accepts is advertised, and a background loop reprovides the
@@ -397,7 +415,7 @@ func run() error {
 		// Repair needs the DHT to find sibling shards and place regenerated ones,
 		// so it only runs when the node participates in the DHT.
 		if effRepairOn {
-			go repairLoop(ctx, h, blobs, disc, led, log, effRepairEvery)
+			go repairLoop(ctx, h, blobs, disc, led, log, effRepairEvery, *repairVerify)
 		}
 		// Rebalancing likewise needs the DHT: it discovers candidate targets and
 		// relies on provider records to keep a moved shard addressable.
@@ -557,7 +575,7 @@ func discoveryLoop(ctx context.Context, disc *net.Discovery, log *slog.Logger) {
 // first (and stores nothing when a sibling already reappeared) makes duplicate work
 // rare and always harmless — content-addressed Put and per-owner AddOwner are
 // idempotent.
-func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
+func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -565,7 +583,7 @@ func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runRepair(ctx, h, blobs, disc, led, log, interval)
+			runRepair(ctx, h, blobs, disc, led, log, interval, verify)
 		}
 	}
 }
@@ -573,7 +591,7 @@ func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.D
 // runRepair performs one repair cycle. Stripe rows that describe the same stripe
 // (a node may hold several of a stripe's shards) are deduplicated so each stripe
 // is checked once.
-func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration) {
+func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool) {
 	rows, err := led.Stripes()
 	if err != nil {
 		log.Warn("repair: list stripes", "err", err)
@@ -597,6 +615,7 @@ func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Di
 		}
 
 		rs := net.NewRepairStore(h, blobs, disc, desc, row.Grant)
+		rs.SetVerifyPossession(verify)
 		man := pipeline.FileManifest{
 			Params: pipeline.Config{Params: erasure.Params{K: row.K, M: row.M}},
 			Chunks: []pipeline.ChunkRef{{Shards: desc.Shards}},
