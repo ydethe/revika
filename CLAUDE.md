@@ -72,7 +72,8 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -mdns -dht -bo
                           #   -advertise -quota -lease-ttl -gc-interval -gc-expired-leases
                           #   -repair -repair-interval -rebalance -rebalance-interval
                           #   -rebalance-threshold -capacity -metrics -blocklist -conn-low
-                          #   -conn-high -conn-grace -pow-difficulty -pow-puzzle -v)
+                          #   -conn-high -conn-grace -pow-difficulty -pow-puzzle
+                          #   -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: keygen | cp | ls | rm | share | node (see -h)
 ```
 

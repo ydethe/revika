@@ -117,5 +117,5 @@ func (srv *Server) handleLoad(s network.Stream) {
 		return
 	}
 	_ = writeBlob(s, body)
-	srv.log.Debug("balance: reported load", "peer", peer, "frac", rep.Frac(), "shards", rep.Shards)
+	srv.log.Debug("balance: reported load", "event", "balance.report", "peer", peer, "frac", rep.Frac(), "shards", rep.Shards)
 }

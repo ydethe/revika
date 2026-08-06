@@ -85,7 +85,9 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 func run() error {
 	var (
 		dataDir     = flag.String("data", ".revika", "root directory for node state (shards, identity)")
-		verbose     = flag.Bool("v", false, "verbose (debug) logging")
+		verbose     = flag.Bool("v", false, "verbose (debug) logging; shorthand for -log-level debug")
+		logFormat   = flag.String("log-format", "auto", "log encoding: auto (text on a terminal, JSON otherwise), text, or json. JSON is structured for Grafana Alloy/Loki (time, level, msg, event fields)")
+		logLevel    = flag.String("log-level", "info", "minimum log level: debug, info, warn, or error")
 		mdnsOn      = flag.Bool("mdns", true, "enable mDNS LAN peer discovery")
 		dhtOn       = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
 		advertiseOn = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
@@ -114,11 +116,14 @@ func run() error {
 	flag.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr with /p2p/<id> (repeatable)")
 	flag.Parse()
 
-	level := slog.LevelInfo
+	logLevelStr := *logLevel
 	if *verbose {
-		level = slog.LevelDebug
+		logLevelStr = "debug"
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	log, err := newLogger(*logFormat, logLevelStr)
+	if err != nil {
+		return err
+	}
 
 	startedAt := time.Now()
 
@@ -148,7 +153,7 @@ func run() error {
 	if rep, err := led.Reconcile(ctx, blobs); err != nil {
 		return fmt.Errorf("reconcile ledger: %w", err)
 	} else if rep.OrphanBlobs > 0 || rep.DroppedRecords > 0 {
-		log.Info("ledger reconciled", "orphan_blobs", rep.OrphanBlobs, "dropped_records", rep.DroppedRecords)
+		log.Info("ledger reconciled", "event", "ledger.reconcile", "orphan_blobs", rep.OrphanBlobs, "dropped_records", rep.DroppedRecords)
 	}
 
 	// Self-defence: resource manager + connection manager + a static blocklist
@@ -182,6 +187,11 @@ func run() error {
 		return err
 	}
 	defer h.Close()
+
+	// Tag every subsequent line with this node's peer ID so a shared Loki stream
+	// can be filtered per node. Lines emitted before the host exists (config,
+	// ledger reconcile) carry only service=revika-node.
+	log = log.With("node", h.ID().String())
 
 	srv := net.NewServer(blobs, log)
 	srv.SetLedger(led)
@@ -306,6 +316,7 @@ func run() error {
 		addrs = append(addrs, fmt.Sprintf("%s/p2p/%s", a, h.ID()))
 	}
 	log.Info("revika-node started",
+		"event", "node.start",
 		"version", version,
 		"buildDate", buildDate,
 		"peer", h.ID().String(),
@@ -332,7 +343,7 @@ func run() error {
 
 	// Block until interrupted, then shut down cleanly.
 	<-ctx.Done()
-	log.Info("shutting down")
+	log.Info("shutting down", "event", "node.stop")
 	return nil
 }
 
@@ -354,7 +365,7 @@ func reprovideLoop(ctx context.Context, disc *net.Discovery, blobs store.Store, 
 		if err != nil {
 			log.Warn("dht: list shards for reprovide", "err", err)
 		} else if len(ids) > 0 {
-			log.Debug("dht: reproviding shards", "count", len(ids))
+			log.Debug("dht: reproviding shards", "event", "dht.reprovide", "count", len(ids))
 			disc.ProvideAll(ctx, ids)
 		}
 		select {
@@ -384,7 +395,7 @@ func discoveryLoop(ctx context.Context, disc *net.Discovery, log *slog.Logger) {
 		if err != nil {
 			log.Debug("discovery: find nodes", "err", err)
 		} else {
-			log.Debug("discovery: scan complete",
+			log.Debug("discovery: scan complete", "event", "discovery.scan",
 				"storage_nodes", len(nodes),
 				"routing_table", disc.RoutingTableSize())
 		}
@@ -471,7 +482,7 @@ func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Di
 			log.Warn("repair: stripe unrecoverable", "present", st.Present, "total", st.Total, "need", row.K)
 			continue
 		}
-		log.Info("repair: degraded stripe", "present", st.Present, "total", st.Total, "missing", len(st.Missing))
+		log.Info("repair: degraded stripe", "event", "repair.degraded", "present", st.Present, "total", st.Total, "missing", len(st.Missing))
 
 		// Jitter before acting so multiple holders of the same degraded stripe are
 		// unlikely to regenerate simultaneously (any that do are harmless).
@@ -483,9 +494,9 @@ func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Di
 			log.Warn("repair: regenerate", "err", err)
 		}
 		if fixed.Healthy() {
-			log.Info("repair: stripe restored", "total", st.Total)
+			log.Info("repair: stripe restored", "event", "repair.restored", "total", st.Total)
 		} else {
-			log.Info("repair: stripe partially repaired", "still_missing", fixed.MissingShards())
+			log.Info("repair: stripe partially repaired", "event", "repair.partial", "still_missing", fixed.MissingShards())
 		}
 	}
 }
@@ -517,7 +528,7 @@ func rebalanceLoop(ctx context.Context, rb *net.Rebalancer, log *slog.Logger, in
 				continue
 			}
 			if moved > 0 {
-				log.Info("rebalance: cycle complete", "moved", moved)
+				log.Info("rebalance: cycle complete", "event", "rebalance.cycle", "moved", moved)
 			}
 		}
 	}
@@ -602,7 +613,7 @@ func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog
 		freed++
 	}
 	if freed > 0 {
-		log.Info("gc: reclaimed shards", "count", freed)
+		log.Info("gc: reclaimed shards", "event", "gc.reclaim", "count", freed)
 	}
 	// Realign disk and ledger: drop records whose blob vanished, recompute quota.
 	var rep ledger.ReconcileReport
@@ -611,7 +622,7 @@ func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog
 	} else {
 		rep = r
 		if rep.DroppedRecords > 0 {
-			log.Info("gc: reconciled", "dropped_records", rep.DroppedRecords, "orphan_blobs", rep.OrphanBlobs)
+			log.Info("gc: reconciled", "event", "gc.reconcile", "dropped_records", rep.DroppedRecords, "orphan_blobs", rep.OrphanBlobs)
 		}
 	}
 	stats.Record(freed, rep.DroppedRecords, rep.OrphanBlobs, time.Now())

@@ -117,11 +117,11 @@ func (rb *Rebalancer) RunOnce(ctx context.Context, now time.Time) (int, error) {
 
 	budget := placement.OffloadBytes(selfLoad, targetLoad, rb.threshold)
 	if budget <= 0 {
-		rb.log.Debug("rebalance: within threshold", "self", selfLoad.Frac(), "peer", targetLoad.Frac())
+		rb.log.Debug("rebalance: within threshold", "event", "rebalance.skip", "self", selfLoad.Frac(), "peer", targetLoad.Frac())
 		return 0, nil
 	}
 	rb.log.Debug("rebalance: shedding to peer",
-		"peer", target, "self", selfLoad.Frac(), "peer_frac", targetLoad.Frac(), "budget", budget)
+		"event", "rebalance.shed", "peer", target, "self", selfLoad.Frac(), "peer_frac", targetLoad.Frac(), "budget", budget)
 
 	rb.pruneCooldown(now)
 
@@ -172,7 +172,7 @@ func (rb *Rebalancer) RunOnce(ctx context.Context, now time.Time) (int, error) {
 		rb.markMoved(row.ShardID, now)
 		budget -= int64(len(data))
 		moved++
-		rb.log.Info("rebalance: moved shard", "id", row.ShardID, "to", target, "bytes", len(data))
+		rb.log.Info("rebalance: moved shard", "event", "rebalance.move", "id", row.ShardID, "to", target, "bytes", len(data))
 	}
 	return moved, nil
 }
