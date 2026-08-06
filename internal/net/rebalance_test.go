@@ -126,6 +126,139 @@ func TestRebalanceMovesShard(t *testing.T) {
 	}
 }
 
+// blackholeStore accepts writes and returns the correct content address but keeps
+// nothing — a stand-in for a node that absorbs shards during diffusion and then
+// (or immediately) drops them. Has/Get behave as if the bytes were never stored,
+// so a possession probe against it always fails.
+type blackholeStore struct{}
+
+func (blackholeStore) Put(_ context.Context, data []byte) (store.ShardID, error) {
+	return store.HashOf(data), nil
+}
+func (blackholeStore) Get(context.Context, store.ShardID) ([]byte, error) {
+	return nil, store.ErrNotFound
+}
+func (blackholeStore) Has(context.Context, store.ShardID) (bool, error) { return false, nil }
+func (blackholeStore) Delete(context.Context, store.ShardID) error      { return store.ErrNotFound }
+
+// blackholeNode is a balanceNode whose blob backend silently discards everything,
+// so it accepts a grant PUT but can never answer a possession probe.
+func blackholeNode(t *testing.T, src LoadSource) host.Host {
+	t.Helper()
+	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
+	if err != nil {
+		t.Fatalf("server host: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+	led, err := ledger.Open(filepath.Join(t.TempDir(), "ledger.db"), ledger.Options{})
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	t.Cleanup(func() { led.Close() })
+	srv := NewServer(blackholeStore{}, nil)
+	srv.SetLedger(led)
+	srv.SetLoadSource(src)
+	srv.Register(h)
+	return h
+}
+
+// TestRebalanceProbeGatedRelease is the anti-grief guarantee: when the receiving
+// peer cannot prove it holds the exact bytes after the make-before-break PUT, the
+// source must NOT release its copy. A malicious node that reports itself empty to
+// attract shards and then drops them gains nothing — durability is never
+// surrendered to a peer that fails the possession proof.
+func TestRebalanceProbeGatedRelease(t *testing.T) {
+	ctx := context.Background()
+
+	// Malicious target: nearly empty (attracts the shard), accepts the PUT, stores
+	// nothing.
+	target := blackholeNode(t, func() (LoadReport, error) {
+		return LoadReport{UsedBytes: 0, CapacityBytes: 1_000_000}, nil
+	})
+
+	selfBacking := store.NewMemStore()
+	selfLed, err := ledger.Open(filepath.Join(t.TempDir(), "self-ledger.db"), ledger.Options{})
+	if err != nil {
+		t.Fatalf("self ledger: %v", err)
+	}
+	t.Cleanup(func() { selfLed.Close() })
+	selfHost := clientHost(t, target)
+
+	data := []byte("a shard a liar will absorb and drop")
+	id, _ := seedShard(t, selfBacking, selfLed, data)
+
+	selfLoad := func() (LoadReport, error) {
+		return LoadReport{UsedBytes: 1000, CapacityBytes: 1000}, nil // frac 1.0
+	}
+	peers := func(context.Context) ([]peer.ID, error) { return []peer.ID{target.ID()}, nil }
+
+	rb := NewRebalancer(selfHost, selfBacking, selfLed, selfLoad, peers, nil)
+	moved, err := rb.RunOnce(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if moved != 0 {
+		t.Fatalf("moved = %d, want 0 (peer failed possession proof)", moved)
+	}
+	// The source must KEEP its only durable copy and its accounting.
+	if ok, _ := selfBacking.Has(ctx, id); !ok {
+		t.Fatal("source released its copy to a peer that cannot prove possession")
+	}
+	if rows, _ := selfLed.Stripes(); len(rows) != 1 {
+		t.Fatalf("source stripe rows = %d, want 1 (kept)", len(rows))
+	}
+}
+
+// TestRebalanceStripeConcentrationCap confirms the diffusion path never moves a
+// shard onto a peer that already holds m shards of the same stripe: doing so
+// would let a single node's loss take out the whole stripe. Here k=1,m=1 and the
+// peer already holds the sibling, so the shard must stay put.
+func TestRebalanceStripeConcentrationCap(t *testing.T) {
+	ctx := context.Background()
+
+	target, targetBacking, _ := balanceNode(t, func() (LoadReport, error) {
+		return LoadReport{UsedBytes: 0, CapacityBytes: 1_000_000}, nil
+	})
+
+	selfBacking := store.NewMemStore()
+	selfLed, err := ledger.Open(filepath.Join(t.TempDir(), "self-ledger.db"), ledger.Options{})
+	if err != nil {
+		t.Fatalf("self ledger: %v", err)
+	}
+	t.Cleanup(func() { selfLed.Close() })
+	selfHost := clientHost(t, target)
+
+	data := []byte("cold shard whose stripe is already on the peer")
+	id, _ := seedShard(t, selfBacking, selfLed, data)
+
+	// The target already holds this stripe's other sibling (descFor uses M=1), so
+	// it is already at the cap: moving id there would give one node 2 of a k=1,m=1
+	// stripe — a single-node loss it could not survive.
+	if _, err := targetBacking.Put(ctx, []byte("sibling-shard")); err != nil {
+		t.Fatalf("seed sibling on target: %v", err)
+	}
+
+	selfLoad := func() (LoadReport, error) {
+		return LoadReport{UsedBytes: 1000, CapacityBytes: 1000}, nil // frac 1.0
+	}
+	peers := func(context.Context) ([]peer.ID, error) { return []peer.ID{target.ID()}, nil }
+
+	rb := NewRebalancer(selfHost, selfBacking, selfLed, selfLoad, peers, nil)
+	moved, err := rb.RunOnce(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if moved != 0 {
+		t.Fatalf("moved = %d, want 0 (stripe concentration cap)", moved)
+	}
+	if ok, _ := selfBacking.Has(ctx, id); !ok {
+		t.Fatal("source moved a shard that would over-concentrate the stripe")
+	}
+	if ok, _ := targetBacking.Has(ctx, id); ok {
+		t.Fatal("target received a shard that breaches the stripe concentration cap")
+	}
+}
+
 // TestRebalanceWithinThreshold confirms the dead-band: when the load gap is
 // within the threshold, no shard is moved (this is what stops thrashing).
 func TestRebalanceWithinThreshold(t *testing.T) {

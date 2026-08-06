@@ -2,6 +2,7 @@ package net
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -150,24 +151,70 @@ func (rb *Rebalancer) RunOnce(ctx context.Context, now time.Time) (int, error) {
 		}
 		desc := stripe.Descriptor{K: row.K, M: row.M, Shards: row.Siblings}
 
+		// Concentration cap (Architecture §3.4): never let one peer come to hold
+		// more than m shards of a single stripe. With k+m shards and any k
+		// reconstructing, a node holding >m shards that later drops them all makes
+		// the stripe unrecoverable from that node alone — exactly the leverage a
+		// shard-absorbing node seeks during diffusion. Count what the target
+		// already holds of this stripe and skip the move if adding this shard would
+		// breach the cap. Best-effort: a lying node can under-report Has to keep
+		// attracting shards, but the proof-gated release below still bars any
+		// durability loss.
+		if row.M > 0 {
+			held, err := rb.peerStripeLoad(ctx, ns, row.Siblings, row.ShardID, row.M)
+			if err != nil {
+				rb.log.Debug("rebalance: count peer stripe shards", "event", "rebalance.spread_check", "id", row.ShardID, "peer", target, "err", err)
+				continue
+			}
+			if held >= row.M {
+				rb.log.Debug("rebalance: skip to preserve stripe spread",
+					"event", "rebalance.spread_cap", "id", row.ShardID, "peer", target, "held", held, "m", row.M)
+				continue
+			}
+			rb.log.Debug("rebalance: stripe spread ok",
+				"event", "rebalance.spread_ok", "id", row.ShardID, "peer", target, "held", held, "m", row.M)
+		}
+
 		// Make-before-break: place the shard on the peer (which records the stripe
 		// and re-announces the CID) BEFORE dropping our copy. The peer's per-owner
 		// quota check may reject it (ErrQuotaExceeded) — treat that as "peer is full
 		// after all" and stop shedding to it this round.
 		if _, err := ns.putGrant(ctx, data, desc, row.Grant); err != nil {
 			if errors.Is(err, ErrQuotaExceeded) {
-				rb.log.Debug("rebalance: peer refused (quota)", "id", row.ShardID, "peer", target)
+				rb.log.Debug("rebalance: peer refused (quota)", "event", "rebalance.place_refused", "reason", "quota", "id", row.ShardID, "peer", target)
 				break
 			}
-			rb.log.Debug("rebalance: place on peer", "id", row.ShardID, "peer", target, "err", err)
+			rb.log.Debug("rebalance: place on peer", "event", "rebalance.place_failed", "id", row.ShardID, "peer", target, "err", err)
 			continue
 		}
+		rb.log.Debug("rebalance: peer accepted shard",
+			"event", "rebalance.placed", "id", row.ShardID, "peer", target, "bytes", len(data))
 
-		// The peer now holds and advertises the shard; release our local copy and
-		// accounting. If the release fails the shard is merely stored twice — safe,
-		// and reclaimed later by GC/reconcile — so we still count the move.
+		// Proof-gated release: before dropping our only other copy, make the peer
+		// prove it actually holds the exact bytes (fresh-nonce challenge-response,
+		// the same Probe repair uses). A node that absorbs shards during diffusion
+		// and then deletes them — or never truly stored them — fails this, so we
+		// KEEP our copy and never surrender durability to a lying receiver
+		// (Architecture §3.4). A proof mismatch (peer answered, wrong digest) is a
+		// strong misbehaviour signal, so we stop shedding to it this round; a probe
+		// transport error is inconclusive, so we merely keep this shard and move on.
+		if ok, err := rb.confirmStored(ctx, ns, row.ShardID, data); err != nil {
+			rb.log.Debug("rebalance: possession probe (keeping local copy)", "event", "rebalance.probe_error", "id", row.ShardID, "peer", target, "err", err)
+			continue
+		} else if !ok {
+			rb.log.Warn("rebalance: peer failed possession proof; keeping local copy",
+				"event", "rebalance.probe_fail", "id", row.ShardID, "peer", target)
+			break
+		}
+		rb.log.Debug("rebalance: peer proved possession",
+			"event", "rebalance.probe_ok", "id", row.ShardID, "peer", target)
+
+		// The peer now holds, advertises AND has proven possession of the shard;
+		// release our local copy and accounting. If the release fails the shard is
+		// merely stored twice — safe, and reclaimed later by GC/reconcile — so we
+		// still count the move.
 		if err := rb.release(ctx, row.ShardID); err != nil {
-			rb.log.Warn("rebalance: release local copy", "id", row.ShardID, "err", err)
+			rb.log.Warn("rebalance: release local copy", "event", "rebalance.release_failed", "id", row.ShardID, "err", err)
 		}
 		rb.markMoved(row.ShardID, now)
 		budget -= int64(len(data))
@@ -214,7 +261,7 @@ func (rb *Rebalancer) pickTarget(ctx context.Context, now time.Time) (peer.ID, p
 		rep, err := QueryLoad(qctx, rb.h, p)
 		cancel()
 		if err != nil {
-			rb.log.Debug("rebalance: query load", "peer", p, "err", err)
+			rb.log.Debug("rebalance: query load", "event", "rebalance.load_query_failed", "peer", p, "err", err)
 			continue
 		}
 		l := rep.Load()
@@ -233,6 +280,46 @@ func (rb *Rebalancer) release(ctx context.Context, id store.ShardID) error {
 		return err
 	}
 	return rb.led.DropRecord(id)
+}
+
+// confirmStored challenges the peer (reached via ns) to prove it holds id's exact
+// bytes, using a fresh CSPRNG nonce so a stale answer cannot be replayed. It
+// returns (true, nil) only on a verified proof; want is our own copy of the bytes
+// the proof is checked against.
+func (rb *Rebalancer) confirmStored(ctx context.Context, ns *NetStore, id store.ShardID, want []byte) (bool, error) {
+	nonce := make([]byte, NonceSize)
+	if _, err := rand.Read(nonce); err != nil {
+		return false, err
+	}
+	pctx, cancel := context.WithTimeout(ctx, balanceQueryTimeout)
+	defer cancel()
+	return ns.Probe(pctx, id, want, nonce)
+}
+
+// peerStripeLoad counts how many of a stripe's siblings the target (reached via
+// ns) already holds, excluding the shard about to be moved. It stops as soon as
+// it reaches limit siblings, since that is all the concentration check needs to
+// know. A Has error is returned so the caller can skip the move rather than risk
+// over-concentrating on an unverifiable peer.
+func (rb *Rebalancer) peerStripeLoad(ctx context.Context, ns *NetStore, siblings []store.ShardID, exclude store.ShardID, limit int) (int, error) {
+	held := 0
+	for _, sib := range siblings {
+		if sib == exclude {
+			continue
+		}
+		hctx, cancel := context.WithTimeout(ctx, balanceQueryTimeout)
+		ok, err := ns.Has(hctx, sib)
+		cancel()
+		if err != nil {
+			return held, err
+		}
+		if ok {
+			if held++; held >= limit {
+				return held, nil
+			}
+		}
+	}
+	return held, nil
 }
 
 func (rb *Rebalancer) inCooldown(id store.ShardID, now time.Time) bool {

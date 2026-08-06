@@ -252,6 +252,22 @@ holds the same **fraction of its own capacity** — not the same shard count
   shedding to it. Moves are authorized by the stripe's stored repair grant, so no
   User signing key is needed — the same trust path as repair.
 
+  Two guards make the diffusion path safe against a shard-absorbing node (one that
+  advertises itself empty to attract shards, then drops them — Architecture §3.4):
+  - **Stripe concentration cap** (`peerStripeLoad`): before shedding a shard, count
+    (via `Has`) how many of its stripe's siblings the target already holds and skip
+    the move if adding this one would give a single node more than `m` shards of the
+    stripe — the point past which that node's loss alone makes the stripe
+    unrecoverable (any `k` of `k+m` reconstruct). Best-effort: a node may under-report
+    `Has`, but the release gate below still bars durability loss.
+  - **Proof-gated release** (`confirmStored`): after the `putGrant` succeeds, the
+    source `Probe`s the peer with a fresh CSPRNG nonce and only calls `release` once
+    the peer proves it holds the exact bytes. A peer that can't prove possession keeps
+    us from dropping our copy — a proof *mismatch* also stops shedding to it this
+    round; a probe transport error just keeps this shard. This wires the `Probe`
+    primitive into the write path, so the source never surrenders its only durable
+    copy to a lying receiver.
+
 ## Metrics / status (`metrics.go`, `gcstats.go`)
 
 `MetricsServer` exposes a node's operational state over plain HTTP (meant to sit

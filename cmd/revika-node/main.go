@@ -513,7 +513,7 @@ func rebalanceLoop(ctx context.Context, rb *net.Rebalancer, log *slog.Logger, in
 			}
 			moved, err := rb.RunOnce(ctx, time.Now())
 			if err != nil {
-				log.Warn("rebalance: cycle", "err", err)
+				log.Warn("rebalance: cycle", "event", "rebalance.cycle_failed", "err", err)
 				continue
 			}
 			if moved > 0 {

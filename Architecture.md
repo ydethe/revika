@@ -152,9 +152,10 @@ Two implementations pass a shared conformance suite:
   `ErrCorrupt` if the bytes no longer match the ID, so the store is self-verifying.
 
 Node responsibilities still **[planned]**: **leases/expiry** (renewable holds so
-abandoned shards are GC'd), **quotas** (per-node capacity, per-user accounting), and the
-**proof-of-possession** probe endpoint (§3.4) — these arrive with the network layer,
-since only a networked node needs them. `.revika/shards/` is the intended on-disk root.
+abandoned shards are GC'd) and **quotas** (per-node capacity, per-user accounting) — these
+arrive with the network layer, since only a networked node needs them. The
+**proof-of-possession** probe endpoint (§3.4) is now **[implemented]** (`/revika/probe`).
+`.revika/shards/` is the intended on-disk root.
 
 ### 3.3 Encoding pipeline (User) — **[implemented]** (`internal/pipeline`, `chunk`, `crypto`, `erasure`)
 
@@ -221,10 +222,13 @@ Two properties make repair clean, and both are exploited by the implementation:
   code asserts `Put` returns the expected ID as a guard against accidental
   non-determinism.
 
-Still **[planned]**: the network-side **proof-of-possession** probe (so a remote node
-proves possession without shipping the shard), placing regenerated shards on *fresh*
-nodes rather than back into the same store, and the repair *cadence*/threshold policy
-(who runs it, how often, what margin triggers it).
+The network-side **proof-of-possession** probe (a remote node proves it holds a shard
+without shipping it — `/revika/probe`, `NetStore.Probe`/`handleProbe`) is **[implemented]**
+and now gates the rebalancer's make-before-break release (§3.4). Still **[planned]** for
+*repair* specifically: adopting that probe in the repair loop's availability check (which
+still uses `Has`), placing regenerated shards on *fresh* nodes rather than back into the same
+store, and the repair *cadence*/threshold policy (who runs it, how often, what margin triggers
+it).
 
 **Rebalancing — [implemented]** (`internal/placement.OffloadBytes` + `internal/store.DiskUsage`
 + `internal/net/{balance,rebalance}.go`, protocol `/revika/balance/1.0.0`, driven by
@@ -272,9 +276,16 @@ same **fraction of its own capacity** — not the same absolute shard count.
   `statusQuotaExceeded` if the shard would push it over, which the mover treats as "peer full"
   and stops shedding to it) so rebalancing never violates the per-owner storage cap (§3.2).
   Which shards move: coldest-first — `ledger.ColdShards` returns the least-recently-stored
-  shards first — to minimize disruption. (Enforcing that a move never co-locates two shards of
-  one stripe in a failure **domain** — the `Spread` invariant — is deferred with the
-  `Node.Domain` wiring above.)
+  shards first — to minimize disruption.
+- **Concentration cap — one node holds at most `m` shards of a stripe.** Before shedding a
+  shard, the mover counts (over `/revika/shard` `Has`) how many of that stripe's siblings the
+  target already holds and **skips the move** if it would push a single node past `m` shards of
+  the stripe (`Rebalancer.peerStripeLoad`). Past `m`, that one node's loss alone drops the
+  stripe below `k` and makes it unrecoverable — exactly the leverage a shard-absorbing node
+  seeks during diffusion. This bounds *node-level* correlated loss; the stricter failure-**domain**
+  `Spread` invariant (no two shards of a stripe in one domain) is still deferred with the
+  `Node.Domain` wiring above. Best-effort against a lying `Has`, but the release gate below is
+  the hard backstop.
 - **Addressing — make-before-break re-provide.** Moving a shard must not lose it. revika is
   spared the usual pain because **location is a DHT provider record, not a hash-into-a-ring**:
   a shard is found because its holder *announces* the CID (`Discovery.Announce`/`FindProviders`,
@@ -288,20 +299,30 @@ same **fraction of its own capacity** — not the same absolute shard count.
      A — then records ownership/lease/stripe in **its** ledger (charged to the shard's original
      owner, whose Ed25519 key travels in the repair grant) and calls `Discovery.Announce` for
      the new provider record.
-  3. Only *after* B accepts does A release its copy: `Rebalancer.release` drops A's owner claim
-     (`ledger.DropRecord`, crediting the quota back) and deletes the local blob —
-     *make-before-break*. A's ~12 h reprovide / ~24 h record TTL means A's stale provider record
-     lingers harmlessly during DHT propagation, so the shard is announced by both for a window
-     (never neither).
+  3. Only after B **proves possession** does A release its copy. A `PUT`-ack means B echoed the
+     content hash *once*, not that it kept the bytes — so A then issues a fresh-nonce
+     proof-of-possession `Probe` over `/revika/probe` (`Rebalancer.confirmStored`) and calls
+     `Rebalancer.release` — drop A's owner claim (`ledger.DropRecord`, crediting the quota back)
+     and delete the local blob — *only when B passes*. A peer that absorbs the shard and drops it
+     fails the probe, so A keeps its only durable copy (a proof *mismatch* also halts shedding to
+     that peer for the round; a probe transport error just retains the shard). This wires the
+     `/revika/probe` primitive — previously repair-only — into the write path. Once released,
+     A's ~12 h reprovide / ~24 h record TTL means A's stale provider record lingers harmlessly
+     during DHT propagation, so the shard is announced by both for a window (never neither).
 
   Even a transient stale record is covered by erasure coding, since `DHTStore.Get` already maps
   a provider miss to one lost shard, reconstructible from any `k`. This is the
   repair-onto-fresh-node primitive plus the *source-side drop* that turns a *copy* into a
   *move* — so rebalancing lands as an extension of repair, not a new subsystem.
 - **Trust.** Gossiped load is a *declared* value: a node can lie about `L` to attract or shed
-  shards. Content is safe regardless (shards stay self-verifying ciphertext), but a liar can
-  distort placement — so binding declared load to reputation/anti-Sybil is deferred with the
-  rest of the economic layer (§5, §10).
+  shards. Content is safe regardless (shards stay self-verifying ciphertext), and durability is
+  now protected against the classic grief — a node that declares itself empty, absorbs shards,
+  then deletes them — by two mechanism-level guards that do **not** depend on identity (so they
+  hold even against Sybils): the concentration cap bounds how much of one stripe any single node
+  can attract, and the proof-gated release means the mover never drops its copy for a peer that
+  can't prove possession. A liar can still distort *placement* (waste move rounds, skew load),
+  so binding declared load to reputation/anti-Sybil — which would let a node also be *penalised*
+  for repeated probe failures — is deferred with the rest of the economic layer (§5, §10).
 
 ### 3.5 Capability & crypto layer — **[partial]** (`internal/crypto`, `internal/cap`)
 

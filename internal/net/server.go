@@ -340,6 +340,7 @@ func (srv *Server) handleHas(ctx context.Context, s network.Stream, peer any) {
 	}
 	ok, err := srv.store.Has(ctx, id)
 	if err != nil {
+		srv.log.Debug("shard has: store", "event", "shard.has", "peer", peer, "id", id, "err", err)
 		srv.replyErr(s, err)
 		return
 	}
@@ -439,7 +440,11 @@ func (srv *Server) handleProbe(s network.Stream) {
 	}
 	data, err := srv.store.Get(context.Background(), id)
 	if err != nil {
-		srv.log.Debug("probe: miss", "peer", peer, "id", id, "err", err)
+		// The node cannot answer the challenge for a shard it does not hold — the
+		// RX-side signal of a failed possession proof (a mover's proof-gated release
+		// keys off exactly this, Architecture §3.4). Structured so it is filterable
+		// alongside the successful `probe` event.
+		srv.log.Debug("probe: miss", "event", "probe.miss", "peer", peer, "id", id, "err", err)
 		srv.replyErr(s, err)
 		return
 	}

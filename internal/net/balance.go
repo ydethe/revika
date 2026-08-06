@@ -104,7 +104,7 @@ func (srv *Server) handleLoad(s network.Stream) {
 	}
 	rep, err := srv.loadSource()
 	if err != nil {
-		srv.log.Debug("balance: load source", "peer", peer, "err", err)
+		srv.log.Debug("balance: load source", "event", "balance.report", "peer", peer, "err", err)
 		srv.replyErr(s, err)
 		return
 	}
