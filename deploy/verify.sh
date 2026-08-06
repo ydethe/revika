@@ -56,7 +56,7 @@ SIGNKEY="$WORK/user.sign.key"
 # namespace command reaches the network via -root (bootstrap is no longer a
 # per-command flag). The seed is the sole bootstrap; the rest are found via the DHT.
 echo ">> creating a workspace bootstrapped through the seed"
-revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" >/dev/null
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 

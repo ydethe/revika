@@ -7,6 +7,11 @@
 //	/revika/shard/1.1.0 — PUT / GET / HAS / DELETE a shard by content address.
 //	/revika/probe/1.0.0 — proof-of-possession challenge/response for repair.
 //
+// Two further read-only query protocols live in their own files: /revika/balance
+// (balance.go, storage-load reports for rebalancing) and /revika/params
+// (params.go, the node's admission policy so a client can mint an acceptable
+// owner identity up front).
+//
 // The design keeps nodes dumb and untrusted: every byte on the wire is an
 // already-encrypted, erasure-coded shard addressed by hash, so a Node never
 // learns anything about the content it holds.

@@ -112,6 +112,11 @@ proof costs ~`2^(D/2)` quantum evaluations) and memory-hardness blunts even that
 - `Difficulty` — target as leading zero bits; `0` disables the check.
 - `Puzzle` — `Name()` + `Sum(pubkey) []byte`; a deterministic digest of the key.
 - `SHA256Puzzle`, `Argon2idPuzzle`, `DefaultArgon2id()`.
+- `PuzzleByName(name) (Puzzle, error)` / `PuzzleName(puzzle) string` — the
+  bidirectional mapping between a policy's short flag/wire spelling (`"argon2id"`,
+  `"sha256"`) and a `Puzzle`. `PuzzleName` is the canonical name a node advertises
+  over `/revika/params` (not `Puzzle.Name()`, which carries unparseable parameters)
+  so a client can re-derive the exact same puzzle with `PuzzleByName`.
 - `MeetsPoW(puzzle, pubkey, d) bool` — the verifier a node runs on a recovered
   owner pubkey; O(1) in the minter's attempt count.
 - `MintSigningKey(puzzle, d, onProgress) (SignKey, SignPubKey, error)` — grind a
@@ -124,9 +129,10 @@ ssh-keygen-style progress line (`-pow-puzzle`, `-pow-difficulty`). A node enforc
 the other side: `net.Server.SetPoW` (wired by `revika-node -pow-difficulty`) runs
 `MeetsPoW` on the owner pubkey recovered from a PUT's auth token and refuses the
 write if it falls short. Since difficulty is per-node policy, a client must mint at
-the highest difficulty among the nodes it uses under a matching puzzle; a
-**difficulty advertisement** so `put` learns each node's requirement up front and
-fails fast (instead of a late `ErrUnauthorized`) is planned — see
+the highest difficulty among the nodes it uses under a matching puzzle; the
+**policy advertisement** (`/revika/params`, `net.QueryParams`) lets `revika-ctl
+connect` learn each node's requirement up front and mint a satisfying identity
+with no PoW flags — instead of a late `ErrUnauthorized` — see
 `internal/net/README.md` and Architecture.md §5.
 
 ## How it fits into revika

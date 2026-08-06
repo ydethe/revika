@@ -120,8 +120,10 @@ Ed25519 owner key must, on its own, hash under a difficulty target, so it costs
 seconds-to-minutes of CPU to mint but one hash to verify — a banned owner cannot re-mint in
 milliseconds (`internal/cap/pow.go`; minted by `revika-ctl keygen` and enforced on PUT by a
 node via `Server.SetPoW` / `revika-node -pow-difficulty`, **[implemented]**; a client-side
-**difficulty advertisement** so `put` learns a node's requirement up front and fails fast is
-**[planned]**). The puzzle is swappable behind a `Puzzle` interface — `SHA256Puzzle`
+**policy advertisement** so the client learns a node's requirement up front and fails fast —
+the `/revika/params` query (`net.QueryParams`), which `revika-ctl connect` reads to mint a
+satisfying identity with no PoW flags — is also **[implemented]**). The puzzle is swappable
+behind a `Puzzle` interface — `SHA256Puzzle`
 (hashcash) or a memory-hard `Argon2idPuzzle` that collapses the GPU/ASIC advantage over an
 honest CPU. Difficulty and puzzle are *local* operator policy, checked statelessly with no
 authority or consensus. This is a re-mint speed bump keyed to the ban loop, not a
@@ -643,10 +645,11 @@ index/accounting of the user's own data and where it lives, *not* a global share
   `Server.SetPoW`; `internal/cap/pow.go`, **[implemented]**). Repair and DELETE are exempt
   (repair regenerates already-admitted data and is mandatory; DELETE is owner-scoped). Since
   difficulty is per-node policy, a client storing across nodes must mint at the max
-  difficulty among them; a planned **difficulty advertisement** (a `/revika/params` query or
-  a field on the storage advertisement) will let the client learn each node's `(puzzle, min
-  difficulty)` up front and fail fast with a "re-keygen at difficulty ≥ N" message instead of
-  a late authorization error (**[planned]**). Hardened nodes may also run an **owner
+  difficulty among them; the **policy advertisement** (`/revika/params`, `net.QueryParams`)
+  lets a client learn each node's `(puzzle, min difficulty)` up front — `revika-ctl connect`
+  queries every bootstrap peer, takes the strictest, and mints a satisfying identity with no
+  PoW flags, instead of hitting a late authorization error (**[implemented]**). Hardened nodes
+  may also run an **owner
   allowlist** (admission) instead of, or alongside, a blocklist.
 - **Out of scope for the PoC (note as future work):** economic incentives/payments,
   Byzantine-fault-tolerant reputation, defenses against storage nodes that lie about

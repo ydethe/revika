@@ -121,11 +121,13 @@ func (srv *Server) enforcePoW(owner []byte) error {
 }
 
 // Register installs the Server's stream handlers on h. After this the host will
-// serve /revika/shard and /revika/probe to any peer that dials them.
+// serve /revika/shard, /revika/probe, /revika/balance and /revika/params to any
+// peer that dials them.
 func (srv *Server) Register(h host.Host) {
 	h.SetStreamHandler(ShardProtocol, srv.handleShard)
 	h.SetStreamHandler(ProbeProtocol, srv.handleProbe)
 	h.SetStreamHandler(BalanceProtocol, srv.handleLoad)
+	h.SetStreamHandler(ParamsProtocol, srv.handleParams)
 }
 
 // handleShard serves one shard-protocol request on s. The wire contract is one

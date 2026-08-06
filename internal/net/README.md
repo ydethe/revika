@@ -197,14 +197,19 @@ response code. Transport-level blocking already lives in the host's `ConnectionG
 (see **Self-defence** above); together with the quota they form a node's acceptable-use
 enforcement. See Architecture.md §3.1/§5.
 
-**Planned — proof-of-work difficulty advertisement.** Difficulty is per-node local policy
-(`SetPoW`), so a client storing across nodes must mint at the *max* difficulty among them
-under a matching puzzle. Today `put` does not learn a node's requirement in advance, so a
-mismatch surfaces late as an `ErrUnauthorized` on the failed `PUT`. Planned: the node
-advertises its `(puzzle, min difficulty)` — e.g. a `/revika/params` query or a field on the
-DHT provider/storage advertisement — so the client checks it up front and fails fast with an
-actionable "re-run keygen at difficulty ≥ N with puzzle X" message instead of a bare
-authorization error. See Architecture.md §5.
+**Proof-of-work policy advertisement (`params.go`, `/revika/params/1.0.0`).** Difficulty is
+per-node local policy (`SetPoW`), so a client must mint an owner identity satisfying the node
+it stores through — a mismatch would otherwise surface late as an `ErrUnauthorized` on the
+failed `PUT`. The node answers a read-only, unauthenticated `/revika/params` query (registered
+by `Register`, same one-request/response framing as balance) with a `NodeParams` envelope whose
+`PoW` field carries the node's `PoWInfo` — the canonical short puzzle name (`cap.PuzzleName`,
+which `PuzzleByName` re-derives) and the minimum difficulty, or a zeroed policy when admission
+is off. `QueryParams(ctx, h, peer)` is the client half. `revika-ctl connect` calls it against
+each bootstrap peer, takes the strictest (max difficulty, consistent puzzle), saves it to the
+workspace config, and grinds the identity to match — so the operator supplies no PoW flags. It
+reveals only the node's own local policy, never shard content, so it needs no owner token. The
+`NodeParams` envelope leaves room to advertise more (e.g. suggested erasure `k`/`m`) without a
+protocol bump. See Architecture.md §5.
 
 ## DHT-backed stores (`placement.go`, `repair.go`)
 

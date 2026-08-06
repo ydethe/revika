@@ -42,7 +42,7 @@ case "${1:-}" in
     head -c 1048576 /dev/urandom >"$SRC"
     # Storing is an authenticated write: sign it with a freshly generated owner key.
     revika-ctl keygen -key /tmp/resilience-user -pow-difficulty 0 >/dev/null
-    revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 -force >/dev/null
+    revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -force >/dev/null
     retry "store" revika-ctl cp -root "$WS" -signkey /tmp/resilience-user.sign.key "$SRC" rvk:resilience.bin \
       || { echo "FAIL: store never succeeded"; exit 1; }
     [ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }

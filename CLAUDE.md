@@ -21,6 +21,7 @@ User side — a node is trusted for *availability*, never *confidentiality*.
 
 ## Design constraints (settled — treat as fixed unless the maintainer changes them)
 
+- **Always test** All functions shall be unit-tested, and end-to-end test via docker-compose shall always be up to date. Developers shal have a way to easily generate a test coverage report
 - **Never mention Tahoe-LAFS nor make design choices inspired by it** Always use Specifications and Architecture documents, and state-of-the-art concepts for cryptography and P2P sharing
 - **Keep all READMEs in subpackages up to date**
 - **All crypto must be PQC-class.** Cap wrapping = ML-KEM-768 (FIPS 203) via stdlib
@@ -89,15 +90,22 @@ The client is **workspace-centric** on top of a namespace. `connect` creates a
 *workspace* folder (default `.revika`, `cmd/revika-ctl/config.go`) holding a
 `config.json` — the bootstrap peer(s), erasure `k`/`m` (default 4/2), and the
 node's proof-of-work admission policy — alongside where `root.json` and the
-User's keys (`keys/user.*`) live. Every namespace command selects a workspace with
-`-root <folder>`; the saved config supplies the bootstrap peers, erasure `k`/`m`,
-and PoW policy so they need not be repeated. Bootstrap peers come *only* from the
+User's keys (`keys/user.*`) live. `connect` takes no PoW flags: it dials the
+bootstrap node(s) over libp2p (`/revika/params`, `net.QueryParams`) to read the
+policy they enforce (strictest wins — max difficulty, consistent puzzle), saves
+it, and mints the identity in place, grinding the signing key to that difficulty
+— so the operator never re-types the policy and the workspace is write-ready. It
+fails if no bootstrap node answers (a guessed policy would only surface as a late
+write rejection). Every namespace command selects a workspace with `-root
+<folder>`; the saved config supplies the bootstrap peers, erasure `k`/`m`, and PoW
+policy so they need not be repeated. Bootstrap peers come *only* from the
 workspace config (set by `connect`) — namespace commands no longer take a
-`-bootstrap` flag; an explicit `-node` still overrides the backend. The
-identity is minted lazily on the first write (`cp`/`rm`/`share`)
-after a confirmation prompt. `-root` is overloaded: a directory is a workspace; a
-regular file is a bare root pointer (own root, or a sealed shared root opened with
-`-key`) with no config — the historical behaviour.
+`-bootstrap` flag; an explicit `-node` still overrides the backend. (If the keys
+are ever absent at write time — e.g. a pre-existing workspace — the identity is
+still minted lazily on the first write after a confirmation prompt.) `-root` is
+overloaded: a directory is a workspace; a regular file is a bare root pointer (own
+root, or a sealed shared root opened with `-key`) with no config — the historical
+behaviour.
 
 A User's files live under one mutable root directory addressed by `rvk:` paths
 (e.g. `rvk:docs/report.pdf`), anchored by a signed `manifest.RootPointer`

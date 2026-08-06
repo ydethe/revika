@@ -117,6 +117,25 @@ func PuzzleByName(name string) (Puzzle, error) {
 	}
 }
 
+// PuzzleName is the inverse of PuzzleByName: it returns the short policy name
+// ("argon2id"/"sha256") that PuzzleByName maps back to p's kind — the canonical
+// flag/wire spelling a node advertises so a client can re-derive the exact same
+// puzzle. This differs from Puzzle.Name(), which renders human-readable
+// parameters (e.g. "argon2id(t=2,m=…)") that PuzzleByName does not accept. A nil
+// puzzle yields "" (no policy); any unrecognized puzzle falls back to Name().
+func PuzzleName(p Puzzle) string {
+	switch p.(type) {
+	case nil:
+		return ""
+	case SHA256Puzzle:
+		return "sha256"
+	case Argon2idPuzzle:
+		return "argon2id"
+	default:
+		return p.Name()
+	}
+}
+
 // leadingZeroBits counts the leading zero bits of b (0 for empty input).
 func leadingZeroBits(b []byte) int {
 	n := 0

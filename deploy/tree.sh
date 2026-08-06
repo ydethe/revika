@@ -66,7 +66,7 @@ SIGNKEY="$WORK/user.sign.key"
 # namespace command reaches the network via -root (bootstrap is no longer a
 # per-command flag). The seed is the sole bootstrap; the rest are found via the DHT.
 echo ">> creating a workspace bootstrapped through the seed"
-revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" >/dev/null
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
@@ -189,7 +189,7 @@ RCPT_KEY="$WORK/recipient.key"
 # reconstruct k=4 shards spread 2-per-node across 3 nodes). Drop the sealed root
 # in as the workspace's root.json; its config.json supplies the bootstrap peer.
 RCPT_WS="$WORK/recipient-ws"
-revika-ctl connect -root "$RCPT_WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+revika-ctl connect -root "$RCPT_WS" -bootstrap "$SEED_ADDR" >/dev/null
 
 SHARE_REL="docs/a.txt"
 FILE_SEALED="$RCPT_WS/root.json"

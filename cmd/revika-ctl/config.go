@@ -19,6 +19,7 @@ package main
 //     set by `connect`; -node can still override the backend).
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -26,8 +27,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"revika/internal/cap"
 	"revika/internal/erasure"
+	"revika/internal/net"
 	"revika/internal/pipeline"
 )
 
@@ -64,6 +68,24 @@ type ErasureConfig struct {
 type PoWConfig struct {
 	Difficulty uint   `json:"difficulty"`
 	Puzzle     string `json:"puzzle"`
+}
+
+// resolve turns a stored policy into the cap types used to mint an identity: an
+// empty puzzle name (the node reported PoW disabled) defaults to argon2id, which
+// costs nothing to satisfy at difficulty 0.
+func (p PoWConfig) resolve() (cap.Puzzle, cap.Difficulty, error) {
+	name := p.Puzzle
+	if name == "" {
+		name = "argon2id"
+	}
+	if p.Difficulty > 255 {
+		return nil, 0, fmt.Errorf("pow difficulty %d out of range (0-255)", p.Difficulty)
+	}
+	puzzle, err := cap.PuzzleByName(name)
+	if err != nil {
+		return nil, 0, err
+	}
+	return puzzle, cap.Difficulty(p.Difficulty), nil
 }
 
 // Workspace is the resolved -root: where the root pointer lives and, in
@@ -194,12 +216,75 @@ func saveConfig(path string, c Config) error {
 	return nil
 }
 
+// fetchNodeParams dials each bootstrap peer directly — their multiaddrs already
+// carry /p2p/<id>, so no DHT warm-up is needed — and reads its admission policy,
+// so `connect` learns the node's proof-of-work requirement instead of the
+// operator re-typing it. It reconciles across reachable nodes: the client must
+// satisfy the strictest, so it takes the max difficulty, and — since one
+// self-certifying identity only verifies against a single puzzle — it rejects a
+// set whose PoW-enforcing nodes disagree on the puzzle. It fails when no
+// bootstrap node answers: the saved policy must match a live node, so there is
+// no offline guess.
+func fetchNodeParams(ctx context.Context, bootstrap []string) (PoWConfig, error) {
+	h, err := net.NewHost(net.HostConfig{Log: ctlLog})
+	if err != nil {
+		return PoWConfig{}, err
+	}
+	defer h.Close()
+
+	var (
+		out     PoWConfig
+		puzzle  string
+		reached int
+		lastErr error
+	)
+	for _, addr := range bootstrap {
+		info, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			return PoWConfig{}, fmt.Errorf("invalid bootstrap address %q: %w", addr, err)
+		}
+		cctx, cancel := context.WithTimeout(ctx, dialTimeout)
+		if err := net.Connect(cctx, h, *info); err != nil {
+			cancel()
+			lastErr = err
+			continue
+		}
+		np, err := net.QueryParams(cctx, h, info.ID)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		reached++
+		if !np.PoW.Enabled {
+			continue // node enforces no PoW; leaves difficulty 0
+		}
+		if puzzle == "" {
+			puzzle = np.PoW.Puzzle
+		} else if np.PoW.Puzzle != puzzle {
+			return PoWConfig{}, fmt.Errorf("bootstrap nodes disagree on proof-of-work puzzle (%q vs %q); one identity cannot satisfy both — connect to a consistent node set", puzzle, np.PoW.Puzzle)
+		}
+		if np.PoW.Difficulty > out.Difficulty {
+			out.Difficulty = np.PoW.Difficulty
+		}
+	}
+	if reached == 0 {
+		if lastErr != nil {
+			return PoWConfig{}, fmt.Errorf("could not reach any bootstrap node (%s): %w", strings.Join(bootstrap, ", "), lastErr)
+		}
+		return PoWConfig{}, fmt.Errorf("could not reach any bootstrap node (%s)", strings.Join(bootstrap, ", "))
+	}
+	out.Puzzle = puzzle
+	return out, nil
+}
+
 // cmdConnect creates a workspace: a folder holding config.json (the connection
 // profile — bootstrap peers, erasure k/m, the node's proof-of-work policy, and a
-// label) alongside where root.json and the User's keys will live. It writes no
-// keys itself; the identity is minted on the first write into the workspace
-// (cp/rm/share), after a confirmation prompt, so `connect` stays a fast,
-// network-free setup step.
+// label) alongside root.json and the User's keys. It dials the bootstrap node(s)
+// to read the proof-of-work policy they enforce (so the operator never re-types
+// it), then mints the identity in place, grinding the signing key to that
+// difficulty — leaving a ready-to-use workspace. It fails if no bootstrap node
+// answers, since a guessed policy would only surface as a late write rejection.
 func cmdConnect(args []string) error {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
 	var bootstrap multiFlag
@@ -208,8 +293,6 @@ func cmdConnect(args []string) error {
 	label := fs.String("label", "", "human-friendly label for this connection")
 	k := fs.Int("k", 4, "erasure data shards (any k of k+m reconstruct a chunk)")
 	m := fs.Int("m", 2, "erasure parity shards")
-	powDifficulty := fs.Uint("pow-difficulty", 0, "node's proof-of-work admission difficulty in leading zero bits; identities minted here will satisfy it (0 = node enforces none)")
-	powPuzzle := fs.String("pow-puzzle", "argon2id", "node's proof-of-work puzzle: argon2id (memory-hard) or sha256")
 	force := fs.Bool("force", false, "overwrite an existing config.json")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -227,12 +310,6 @@ func cmdConnect(args []string) error {
 	if (erasure.Params{K: *k, M: *m}).N() > 256 {
 		return fmt.Errorf("k+m=%d exceeds 256", *k+*m)
 	}
-	if *powDifficulty > 255 {
-		return fmt.Errorf("pow-difficulty %d out of range (0-255)", *powDifficulty)
-	}
-	if _, err := cap.PuzzleByName(*powPuzzle); err != nil {
-		return err
-	}
 
 	if err := os.MkdirAll(*dir, 0o700); err != nil {
 		return fmt.Errorf("create workspace %s: %w", *dir, err)
@@ -244,11 +321,18 @@ func cmdConnect(args []string) error {
 		return err
 	}
 
+	// Learn the node's admission policy up front so the identity we mint below
+	// satisfies it — a mismatch would otherwise surface only as a rejected write.
+	pow, err := fetchNodeParams(context.Background(), boots)
+	if err != nil {
+		return err
+	}
+
 	cfg := Config{
 		Label:     *label,
 		Bootstrap: boots,
 		Erasure:   ErasureConfig{K: *k, M: *m},
-		PoW:       PoWConfig{Difficulty: *powDifficulty, Puzzle: *powPuzzle},
+		PoW:       pow,
 	}
 	if err := saveConfig(configPath, cfg); err != nil {
 		return err
@@ -260,13 +344,36 @@ func cmdConnect(args []string) error {
 	}
 	fmt.Printf("  bootstrap: %s\n", strings.Join(boots, ", "))
 	fmt.Printf("  erasure:   %d data + %d parity (any %d of %d reconstruct)\n", *k, *m, *k, *k+*m)
-	if *powDifficulty > 0 {
-		fmt.Printf("  pow:       %s, %d bits\n", *powPuzzle, *powDifficulty)
+	if pow.Difficulty > 0 {
+		fmt.Printf("  pow:       %s, %d bits (from node)\n", pow.Puzzle, pow.Difficulty)
 	} else {
-		fmt.Printf("  pow:       none\n")
+		fmt.Printf("  pow:       none (node enforces none)\n")
 	}
-	fmt.Printf("\nEvery command targets it via -root %s (its default). Try:\n", *dir)
+
+	// Mint the identity now, grinding to the policy we just learned, so the first
+	// write is fast. Existing keys are kept — connect never overwrites an identity.
+	prefix := filepath.Join(*dir, keysSubdir, keyBasename)
+	if _, err := os.Stat(prefix + ".sign.key"); err == nil {
+		fmt.Printf("  identity:  %s.* (kept — already present)\n", prefix)
+	} else if !os.IsNotExist(err) {
+		return err
+	} else {
+		puzzle, d, err := pow.resolve()
+		if err != nil {
+			return err
+		}
+		if d > 0 {
+			fmt.Printf("\nMinting identity (grinding %s proof-of-work at %d bits — may take a while)…\n", puzzle.Name(), d)
+		}
+		pub, err := mintAndWriteIdentity(prefix, puzzle, d, false)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("  identity:  %s.*\n", prefix)
+		fmt.Printf("\nShare this public key so others can send you files:\n%s\n", pub.String())
+	}
+
+	fmt.Printf("\nEvery command targets this workspace via -root %s (its default). Try:\n", *dir)
 	fmt.Printf("  revika-ctl cp -root %s ./file rvk:docs/\n", *dir)
-	fmt.Println("Your identity is created on the first write (you will be asked to confirm).")
 	return nil
 }

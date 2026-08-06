@@ -62,8 +62,8 @@ revika-ctl keygen -key "$WORK/owner"   -pow-difficulty 0 >/dev/null
 revika-ctl keygen -key "$WORK/mallory" -pow-difficulty 0 >/dev/null
 
 # A workspace per user, each bootstrapped through the seed.
-revika-ctl connect -root "$OWNER_WS"   -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
-revika-ctl connect -root "$MALLORY_WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+revika-ctl connect -root "$OWNER_WS"   -bootstrap "$SEED_ADDR" >/dev/null
+revika-ctl connect -root "$MALLORY_WS" -bootstrap "$SEED_ADDR" >/dev/null
 
 echo ">> owner stores a 1 MiB file across the nodes"
 head -c 1048576 /dev/urandom >"$SRC"
