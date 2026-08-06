@@ -4,7 +4,7 @@
 //
 // It defines two versioned stream protocols from the architecture doc:
 //
-//	/revika/shard/1.1.0 — PUT / GET / HAS / DELETE a shard by content address.
+//	/revika/shard/1.2.0 — PUT / GET / HAS / DELETE a shard by content address.
 //	/revika/probe/1.0.0 — proof-of-possession challenge/response for repair.
 //
 // Two further read-only query protocols live in their own files: /revika/balance
@@ -42,14 +42,40 @@ import (
 // Protocol IDs. Semantic-versioned so upgrades are negotiable via libp2p's
 // multistream muxer.
 const (
-	// ShardProtocol is at 1.1.0: the PUT request frame gained two trailing blobs
-	// (stripe descriptor + repair grant) after the auth token, so a Node can
-	// record the erasure context of a shard and later regenerate it. Every
-	// NetStore PUT writes all four blobs (empty ones as a zero-length blob), so
-	// the framing is uniform; a 1.0.0 peer negotiates a clean multistream
-	// failure rather than deadlocking on a missing blob.
-	ShardProtocol protocol.ID = "/revika/shard/1.1.0"
-	ProbeProtocol protocol.ID = "/revika/probe/1.0.0"
+	// ShardProtocol is at 1.2.0: the PUT request frame gained a single trailing
+	// MoveReason byte after the four blobs (data, token, stripe descriptor, grant),
+	// so a Node can tell a client write from a repair regeneration from a rebalance
+	// move — the receive-side abuse detector polices only rebalance moves against
+	// the cluster schedule, and must not mistake a repair burst for abuse. GET / HAS
+	// / DELETE carry no reason byte; it is PUT-specific.
+	//
+	// 1.1.0 (ShardProtocolV1) is still served for back-compat: its PUT frame omits
+	// the reason byte, so a 1.1.0 peer's write is treated as ReasonRepair
+	// (schedule-exempt) — a legacy client cannot be schedule-policed, and exempting
+	// it is the safe default. libp2p's multistream muxer negotiates the newest
+	// version both peers share.
+	ShardProtocol   protocol.ID = "/revika/shard/1.2.0"
+	ShardProtocolV1 protocol.ID = "/revika/shard/1.1.0"
+	ProbeProtocol   protocol.ID = "/revika/probe/1.0.0"
+)
+
+// MoveReason is the trailing byte on a 1.2.0 PUT frame: it declares why a shard
+// is being stored, so the receive-side abuse detector can police rebalance
+// cadence without penalising client writes or repair regeneration. It is a
+// *declared* signal from the sender, trusted only to classify traffic for
+// flow-control — never for authorization (that stays the auth token / repair
+// grant). An unknown value is treated as ReasonRepair (schedule-exempt).
+type MoveReason byte
+
+const (
+	// ReasonClient is a fresh owner-initiated write (carries an auth token).
+	ReasonClient MoveReason = 0
+	// ReasonRepair is a regenerated shard placed by the repair engine (grant-gated,
+	// on its own schedule). Schedule-exempt: repair may burst after a node loss.
+	ReasonRepair MoveReason = 1
+	// ReasonRebalance is a shard shed by the diffusion rebalancer (grant-gated).
+	// This is the only reason the off-schedule detector polices.
+	ReasonRebalance MoveReason = 2
 )
 
 // op is the request verb on the shard protocol (first byte of a request).

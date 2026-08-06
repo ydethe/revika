@@ -56,6 +56,21 @@ type Server struct {
 	// shards via rebalancing.
 	loadSource LoadSource
 
+	// repairPolicy and rebalancePolicy are the maintenance policy this node runs,
+	// advertised over the params protocol so a joining node inherits the schedule
+	// rather than re-typing it (the same inheritance path as PoW). They are set
+	// once via SetMaintenancePolicy before Register and not mutated afterwards; the
+	// zero value advertises "not running".
+	repairPolicy    RepairInfo
+	rebalancePolicy RebalanceInfo
+
+	// abuse, when set, is the receive-side maintenance-abuse detector: it is fed
+	// each accepted rebalance-move PUT (reason ReasonRebalance) keyed on the sending
+	// peer, so it can locally blacklist a peer that rebalances against this node
+	// faster than the cluster schedule allows (Architecture §3.4/§5). Left nil, no
+	// schedule policing happens.
+	abuse *AbuseMonitor
+
 	// rootResolver, when set, answers RootProtocol queries (a client resolving a
 	// User's current signed RootPointer). Left nil, the node does not register the
 	// root handler — it offers no root-resolution service.
@@ -112,6 +127,22 @@ func (srv *Server) SetPoW(puzzle cap.Puzzle, d cap.Difficulty) {
 	srv.powPuzzle, srv.powMin = puzzle, d
 }
 
+// SetMaintenancePolicy records the repair and rebalancing schedule this node
+// runs so the params protocol advertises it to joining peers, which inherit it
+// the same way they inherit the PoW admission bar. Pass the effective policy
+// (the values the node's own loops use, whether locally configured on a seed or
+// itself inherited), so what a node advertises matches what it does. Call before
+// Register; the zero value advertises "not running".
+func (srv *Server) SetMaintenancePolicy(repair RepairInfo, rebalance RebalanceInfo) {
+	srv.repairPolicy, srv.rebalancePolicy = repair, rebalance
+}
+
+// SetAbuseMonitor attaches the receive-side maintenance-abuse detector, fed each
+// accepted rebalance-move PUT so a peer that rebalances faster than the cluster
+// schedule allows is locally blacklisted. Call before Register; safe to leave
+// unset (no schedule policing).
+func (srv *Server) SetAbuseMonitor(a *AbuseMonitor) { srv.abuse = a }
+
 // enforcePoW reports whether owner satisfies the node's proof-of-work admission
 // policy, returning ErrUnauthorized if not. A zero minimum difficulty accepts
 // any owner (the check is disabled).
@@ -130,6 +161,9 @@ func (srv *Server) enforcePoW(owner []byte) error {
 // peer that dials them.
 func (srv *Server) Register(h host.Host) {
 	h.SetStreamHandler(ShardProtocol, srv.handleShard)
+	// Also serve the 1.1.0 predecessor (no MoveReason byte) so a not-yet-upgraded
+	// client keeps working; handleShard branches on s.Protocol() for the PUT frame.
+	h.SetStreamHandler(ShardProtocolV1, srv.handleShard)
 	h.SetStreamHandler(ProbeProtocol, srv.handleProbe)
 	h.SetStreamHandler(BalanceProtocol, srv.handleLoad)
 	h.SetStreamHandler(ParamsProtocol, srv.handleParams)
@@ -200,6 +234,19 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 		_ = s.Reset()
 		return
 	}
+	// The MoveReason byte trails the grant only on 1.2.0. A 1.1.0 frame ends at the
+	// grant, so a legacy write defaults to ReasonRepair — schedule-exempt, since a
+	// legacy client cannot be policed and exempting it is the safe default.
+	reason := ReasonRepair
+	if s.Protocol() == ShardProtocol {
+		rb, rerr := readByte(s)
+		if rerr != nil {
+			srv.log.Debug("shard put: read reason", "peer", peer, "err", rerr)
+			_ = s.Reset()
+			return
+		}
+		reason = MoveReason(rb)
+	}
 	id := store.HashOf(data)
 
 	// Parse and validate any accompanying stripe descriptor + grant once. desc is
@@ -253,6 +300,16 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 			srv.log.Debug("shard put: unauthorized (no token or valid grant)", "event", "shard.put.rejected", "reason", "no_credential", "peer", peer, "id", id)
 			srv.replyErr(s, ErrUnauthorized)
 			return
+		}
+
+		// Receive-side rebalance-cadence policing (§3.4/§5): this is a genuine,
+		// grant-authorized rebalance move (no owner token, valid grant, reason
+		// declared rebalance). Feed the abuse detector keyed on the sending peer so
+		// it can locally blacklist a peer that sheds to us faster than the cluster
+		// schedule permits. Repair moves (ReasonRepair) are exempt — they may burst
+		// after a node loss — and client writes carry a token, not this branch.
+		if srv.abuse != nil && reason == ReasonRebalance && len(token) == 0 && stripeOK {
+			srv.abuse.RecordRebalanceMove(s.Conn().RemotePeer(), now)
 		}
 	}
 

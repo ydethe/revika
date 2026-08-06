@@ -40,6 +40,13 @@ const paramsQueryTimeout = 15 * time.Second
 // PUT against its real policy in enforcePoW), never touch another's data.
 type NodeParams struct {
 	PoW PoWInfo `json:"pow"` // proof-of-work admission policy this node enforces on writes
+	// Repair and Rebalance are the maintenance schedule the node runs; a joining
+	// node inherits them (§3.4) the same way it inherits PoW, so a fresh node need
+	// only know a bootstrap peer to adopt the cluster's repair/rebalance cadence.
+	// Added after PoW; older nodes omit them and a joiner reads the zero value
+	// (not running) — the JSON envelope stays forward-compatible without a bump.
+	Repair    RepairInfo    `json:"repair"`
+	Rebalance RebalanceInfo `json:"rebalance"`
 }
 
 // QueryParams opens a params stream to p and reads its self-declared NodeParams.
@@ -70,30 +77,42 @@ func QueryParams(ctx context.Context, h host.Host, p peer.ID) (NodeParams, error
 	return np, nil
 }
 
-// FetchPoWPolicy dials each bootstrap peer directly — their multiaddrs already
+// FetchNodePolicy dials each bootstrap peer directly — their multiaddrs already
 // carry /p2p/<id>, so no DHT warm-up is needed — reads each node's self-declared
-// admission policy over ParamsProtocol, and reconciles them into the single
-// strictest requirement a new participant must satisfy. Because one participant
-// faces the whole reachable set, it takes the max difficulty and — since one
-// self-certifying identity only verifies against a single puzzle — rejects a set
-// whose PoW-enforcing nodes disagree on the puzzle. It fails when no bootstrap
-// node answers, so an adopted policy always matches a live node rather than an
-// offline guess. The caller supplies the host so its connection pool is reused;
-// dialTimeout bounds each peer's connect+query. It returns an empty puzzle and
-// zero difficulty when every reachable node enforces no PoW.
+// NodeParams over ParamsProtocol, and reconciles them into the single policy a
+// new participant should adopt. Because one participant faces the whole reachable
+// set it reconciles conservatively:
 //
-// Both `revika-ctl connect` (to mint an admissible identity) and a joining
-// revika-node (to inherit its bootstrap peers' admission bar) drive it, so the
-// two learn the network's policy through one code path.
-func FetchPoWPolicy(ctx context.Context, h host.Host, bootstrap []string, dialTimeout time.Duration) (puzzle string, difficulty uint, err error) {
+//   - PoW: strictest wins. Max difficulty; and since one self-certifying identity
+//     verifies against a single puzzle, a set whose PoW-enforcing nodes disagree
+//     on the puzzle is rejected.
+//   - Repair / Rebalance: any-enabled and most-aggressive. If any reachable node
+//     runs the loop the joiner runs it too, at the shortest advertised interval
+//     (and, for rebalance, the smallest threshold) — so a joiner never dilutes the
+//     cluster's maintenance cadence below what an existing node already keeps.
+//
+// It fails when no bootstrap node answers, so an adopted policy always matches a
+// live node rather than an offline guess. The caller supplies the host so its
+// connection pool is reused; dialTimeout bounds each peer's connect+query. A
+// reachable set that enforces no PoW and runs no maintenance yields the zero
+// NodeParams.
+//
+// Both `revika-ctl connect` (which needs only .PoW, to mint an admissible
+// identity) and a joining revika-node (which adopts the whole policy — admission
+// bar plus maintenance schedule) drive it, so the two learn the network's policy
+// through one code path.
+func FetchNodePolicy(ctx context.Context, h host.Host, bootstrap []string, dialTimeout time.Duration) (NodeParams, error) {
 	var (
-		reached int
-		lastErr error
+		out        NodeParams
+		puzzle     string
+		haveThresh bool
+		reached    int
+		lastErr    error
 	)
 	for _, addr := range bootstrap {
 		info, aerr := peer.AddrInfoFromString(addr)
 		if aerr != nil {
-			return "", 0, fmt.Errorf("invalid bootstrap address %q: %w", addr, aerr)
+			return NodeParams{}, fmt.Errorf("invalid bootstrap address %q: %w", addr, aerr)
 		}
 		cctx, cancel := context.WithTimeout(ctx, dialTimeout)
 		if cerr := Connect(cctx, h, *info); cerr != nil {
@@ -108,25 +127,50 @@ func FetchPoWPolicy(ctx context.Context, h host.Host, bootstrap []string, dialTi
 			continue
 		}
 		reached++
-		if !np.PoW.Enabled {
-			continue // node enforces no PoW; leaves difficulty 0
+
+		// PoW: strictest wins (max difficulty; single consistent puzzle).
+		if np.PoW.Enabled {
+			if puzzle == "" {
+				puzzle = np.PoW.Puzzle
+			} else if np.PoW.Puzzle != puzzle {
+				return NodeParams{}, fmt.Errorf("bootstrap nodes disagree on proof-of-work puzzle (%q vs %q); one identity cannot satisfy both — connect to a consistent node set", puzzle, np.PoW.Puzzle)
+			}
+			if np.PoW.Difficulty > out.PoW.Difficulty {
+				out.PoW.Difficulty = np.PoW.Difficulty
+			}
 		}
-		if puzzle == "" {
-			puzzle = np.PoW.Puzzle
-		} else if np.PoW.Puzzle != puzzle {
-			return "", 0, fmt.Errorf("bootstrap nodes disagree on proof-of-work puzzle (%q vs %q); one identity cannot satisfy both — connect to a consistent node set", puzzle, np.PoW.Puzzle)
+
+		// Repair: any-enabled + shortest interval.
+		if np.Repair.Enabled {
+			out.Repair.Enabled = true
+			if np.Repair.Interval > 0 && (out.Repair.Interval == 0 || np.Repair.Interval < out.Repair.Interval) {
+				out.Repair.Interval = np.Repair.Interval
+			}
 		}
-		if np.PoW.Difficulty > difficulty {
-			difficulty = np.PoW.Difficulty
+
+		// Rebalance: any-enabled + shortest interval + smallest threshold (0 is a
+		// valid "no dead-band" policy, so track it with haveThresh rather than a
+		// zero sentinel).
+		if np.Rebalance.Enabled {
+			out.Rebalance.Enabled = true
+			if np.Rebalance.Interval > 0 && (out.Rebalance.Interval == 0 || np.Rebalance.Interval < out.Rebalance.Interval) {
+				out.Rebalance.Interval = np.Rebalance.Interval
+			}
+			if !haveThresh || np.Rebalance.Threshold < out.Rebalance.Threshold {
+				out.Rebalance.Threshold = np.Rebalance.Threshold
+				haveThresh = true
+			}
 		}
 	}
 	if reached == 0 {
 		if lastErr != nil {
-			return "", 0, fmt.Errorf("could not reach any bootstrap node (%s): %w", strings.Join(bootstrap, ", "), lastErr)
+			return NodeParams{}, fmt.Errorf("could not reach any bootstrap node (%s): %w", strings.Join(bootstrap, ", "), lastErr)
 		}
-		return "", 0, fmt.Errorf("could not reach any bootstrap node (%s)", strings.Join(bootstrap, ", "))
+		return NodeParams{}, fmt.Errorf("could not reach any bootstrap node (%s)", strings.Join(bootstrap, ", "))
 	}
-	return puzzle, difficulty, nil
+	out.PoW.Enabled = out.PoW.Difficulty > 0
+	out.PoW.Puzzle = puzzle
+	return out, nil
 }
 
 // powInfo projects the server's proof-of-work admission policy onto the wire
@@ -144,13 +188,18 @@ func (srv *Server) powInfo() PoWInfo {
 // handleParams answers one params-protocol query: it reads no request body and
 // replies with the node's NodeParams as JSON (status byte first, matching the
 // shard protocol's framing). The policy is read directly from the Server; it is
-// set once via SetPoW before Register and not mutated afterwards.
+// set once (SetPoW + SetMaintenancePolicy) before Register and not mutated
+// afterwards.
 func (srv *Server) handleParams(s network.Stream) {
 	defer s.Close()
 	_ = s.SetDeadline(time.Now().Add(serverStreamTimeout))
 	peer := s.Conn().RemotePeer()
 
-	body, err := json.Marshal(NodeParams{PoW: srv.powInfo()})
+	body, err := json.Marshal(NodeParams{
+		PoW:       srv.powInfo(),
+		Repair:    srv.repairPolicy,
+		Rebalance: srv.rebalancePolicy,
+	})
 	if err != nil {
 		srv.replyErr(s, err)
 		return
@@ -159,5 +208,6 @@ func (srv *Server) handleParams(s network.Stream) {
 		return
 	}
 	_ = writeBlob(s, body)
-	srv.log.Debug("params: reported policy", "event", "params.report", "peer", peer, "pow", srv.powMin)
+	srv.log.Debug("params: reported policy", "event", "params.report", "peer", peer,
+		"pow", srv.powMin, "repair", srv.repairPolicy.Enabled, "rebalance", srv.rebalancePolicy.Enabled)
 }

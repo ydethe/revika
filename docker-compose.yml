@@ -4,6 +4,15 @@
 #     ▲                                          │
 #     └──────────── client (put/get + verify) ───┘
 #
+# Only the **seed** states the cluster policy (admission PoW + maintenance cadence:
+# -repair-interval / -rebalance-interval / -rebalance-threshold). Joining nodes pass
+# only -bootstrap and inherit that policy over /revika/params (net.FetchNodePolicy),
+# so this file sets -repair-interval on the seed alone — the joiners demonstrate
+# inheritance by not carrying it. The maintenance-abuse detector (off-schedule
+# rebalancing / possession lies → local persistent blocklist) is a *local* per-node
+# defence, not inherited; it is covered by unit tests (deterministic injected clock)
+# rather than a timing-dependent e2e scenario.
+#
 # A node's Peer ID is derived from its libp2p identity key, so bootstrapping
 # normally needs a two-step "start seed, copy its Peer ID" dance. We skip that
 # here by giving the seed a *fixed, committed dev-only identity* (deploy/seed.key,
@@ -81,7 +90,8 @@ services:
       - -data=/data
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
-      # Repair cadence; shortened by deploy/repair.sh via REPAIR_INTERVAL, else 1h.
+      # Seed states the cluster maintenance cadence; joiners inherit it. Repair
+      # interval is shortened by deploy/repair.sh via REPAIR_INTERVAL, else 1h.
       - -repair-interval=${REPAIR_INTERVAL:-1h}
     healthcheck: *node_healthcheck
     volumes:
@@ -103,7 +113,7 @@ services:
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -bootstrap
       - *seed_addr
-      - -repair-interval=${REPAIR_INTERVAL:-1h}
+      # No policy flags: joiners inherit the seed's maintenance cadence over /revika/params.
     healthcheck: *node_healthcheck
     volumes:
       - node2-data:/data
@@ -120,7 +130,7 @@ services:
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -bootstrap
       - *seed_addr
-      - -repair-interval=${REPAIR_INTERVAL:-1h}
+      # No policy flags: joiners inherit the seed's maintenance cadence over /revika/params.
     healthcheck: *node_healthcheck
     volumes:
       - node3-data:/data
@@ -142,7 +152,7 @@ services:
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -bootstrap
       - *seed_addr
-      - -repair-interval=${REPAIR_INTERVAL:-1h}
+      # No policy flags: joiners inherit the seed's maintenance cadence over /revika/params.
     healthcheck: *node_healthcheck
     volumes:
       - node4-data:/data
@@ -160,7 +170,7 @@ services:
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
       - -bootstrap
       - *seed_addr
-      - -repair-interval=${REPAIR_INTERVAL:-1h}
+      # No policy flags: joiners inherit the seed's maintenance cadence over /revika/params.
     healthcheck: *node_healthcheck
     volumes:
       - node5-data:/data

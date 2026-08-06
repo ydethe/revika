@@ -121,7 +121,7 @@ func TestRepairStorePlacesOnFreshNode(t *testing.T) {
 
 	// Seed the shard onto the holder (grant-authorized) and wait for its provider
 	// record to propagate so the repairer can see who already holds it.
-	if _, err := NewNetStore(repairer.h, holder.h.ID()).putGrant(ctx, data, desc, grant); err != nil {
+	if _, err := NewNetStore(repairer.h, holder.h.ID()).putGrant(ctx, data, desc, grant, ReasonRepair); err != nil {
 		t.Fatalf("seed holder: %v", err)
 	}
 	waitProviders(t, repairer, id)

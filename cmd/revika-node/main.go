@@ -24,9 +24,11 @@ import (
 	"fmt"
 	"log/slog"
 	mrand "math/rand/v2"
+	gonet "net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -89,48 +91,65 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func run() error {
 	var (
-		dataDir     = flag.String("data", ".revika", "root directory for node state (shards, identity)")
-		verbose     = flag.Bool("v", false, "verbose (debug) logging; shorthand for -log-level debug")
-		logFormat   = flag.String("log-format", "auto", "log encoding: auto (text on a terminal, JSON otherwise), text, or json. JSON is structured for Grafana Alloy/Loki (time, level, msg, event fields)")
-		logLevel    = flag.String("log-level", "info", "minimum log level: debug, info, warn, or error")
-		dhtOn       = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
-		advertiseOn = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
-		quota       = flag.Int64("quota", 0, "per-owner storage quota in bytes (0 = unlimited)")
-		leaseTTL    = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
-		gcInterval  = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
-		gcExpired   = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
-		repairOn    = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
-		repairEvery = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
-		rebalanceOn = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
-		rebalEvery  = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
-		rebalThresh = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
-		capacity    = flag.Int64("capacity", 0, "usable storage budget in bytes for load balancing (0 = use the shard filesystem's total capacity)")
-		metricsAddr = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics over plain HTTP — put TLS on a reverse proxy")
-		blocklist   = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
-		connLow     = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
-		connHigh    = flag.Int("conn-high", 0, "connection-manager high watermark, above which idle connections are trimmed (0 = built-in default; <0 disables)")
-		connGrace   = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
-		powDiff     = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). Clients must keygen with a matching -pow-puzzle and difficulty >= this")
-		powPuzzle   = flag.String("pow-puzzle", "argon2id", "proof-of-work puzzle owner identities must satisfy: argon2id (memory-hard) or sha256 (fast). Must match what clients mint with")
-		publicIP    = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
-		listen      multiFlag
-		bootstrap   multiFlag
+		dataDir       = flag.String("data", ".revika", "root directory for node state (shards, identity)")
+		verbose       = flag.Bool("v", false, "verbose (debug) logging; shorthand for -log-level debug")
+		logFormat     = flag.String("log-format", "auto", "log encoding: auto (text on a terminal, JSON otherwise), text, or json. JSON is structured for Grafana Alloy/Loki (time, level, msg, event fields)")
+		logLevel      = flag.String("log-level", "info", "minimum log level: debug, info, warn, or error")
+		dhtOn         = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
+		advertiseOn   = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
+		quota         = flag.Int64("quota", 0, "per-owner storage quota in bytes (0 = unlimited)")
+		leaseTTL      = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
+		gcInterval    = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
+		gcExpired     = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
+		repairOn      = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
+		repairEvery   = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
+		rebalanceOn   = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
+		rebalEvery    = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
+		rebalThresh   = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
+		capacity      = flag.Int64("capacity", 0, "usable storage budget in bytes for load balancing (0 = use the shard filesystem's total capacity)")
+		metricsAddr   = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics over plain HTTP — put TLS on a reverse proxy")
+		blocklist     = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
+		blocklistAuto = flag.String("blocklist-auto", "", "path to the persistent auto-blocklist the abuse detector appends banned peers to and reloads on restart (empty = derive as <data>/blocklist.auto; set to 'off' to disable persistence)")
+		abuseTol      = flag.Duration("rebalance-abuse-tolerance", 0, "fast-side slack on the rebalance schedule before a peer is judged off-schedule; absorbs jitter (0 = built-in default 10m). LOCAL defence, never inherited")
+		abuseCoalesce = flag.Duration("rebalance-abuse-coalesce", 0, "rebalance-move PUTs from a peer within this window count as one sweep (0 = built-in default min(interval/4, 5m)). LOCAL defence, never inherited")
+		abuseStrikes  = flag.Int("rebalance-abuse-strikes", 0, "possession lies from a peer before it is locally banned (0 = built-in default 3). LOCAL defence, never inherited")
+		abuseDecay    = flag.Duration("rebalance-abuse-decay", 0, "window over which a peer's possession-lie strikes expire (0 = built-in default 24h). LOCAL defence, never inherited")
+		connLow       = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
+		connHigh      = flag.Int("conn-high", 0, "connection-manager high watermark, above which idle connections are trimmed (0 = built-in default; <0 disables)")
+		connGrace     = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
+		powDiff       = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). Clients must keygen with a matching -pow-puzzle and difficulty >= this")
+		powPuzzle     = flag.String("pow-puzzle", "argon2id", "proof-of-work puzzle owner identities must satisfy: argon2id (memory-hard) or sha256 (fast). Must match what clients mint with")
+		publicIP      = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
+		listen        multiFlag
+		bootstrap     multiFlag
 	)
 	flag.Var(&listen, "listen", "multiaddr to listen on (repeatable; default all interfaces, random TCP+QUIC ports)")
 	flag.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr with /p2p/<id> (repeatable)")
 	flag.Parse()
 
-	// A seed node declares its own admission policy with -pow-difficulty; a node
-	// that merely joins an existing network omits it and inherits the policy its
-	// bootstrap peers enforce (below). Tell the two apart by whether the operator
-	// set the flag at all — an explicit -pow-difficulty 0 means "enforce none",
-	// distinct from "unset, adopt from bootstrap".
-	powDiffSet := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "pow-difficulty" {
-			powDiffSet = true
+	// Role is decided purely by whether the operator named a bootstrap peer. A
+	// *seed* node (no -bootstrap) is the network's first node and is authoritative:
+	// it declares the whole cluster policy — proof-of-work admission, repair, and
+	// rebalancing — from its own flags. A *joining* node (-bootstrap given) instead
+	// inherits that policy from its bootstrap peers over /revika/params (below), so
+	// a fresh node needs only a bootstrap string; any policy flags it also carries
+	// are ignored (with a warning), because the cluster's policy — not this node's
+	// — governs. Collect the ones set here; warn once the logger exists.
+	joining := len(bootstrap) > 0
+	var ignoredPolicyFlags []string
+	if joining {
+		policyFlags := map[string]struct{}{
+			"pow-difficulty": {}, "pow-puzzle": {},
+			"repair": {}, "repair-interval": {},
+			"rebalance": {}, "rebalance-interval": {}, "rebalance-threshold": {},
 		}
-	})
+		flag.Visit(func(f *flag.Flag) {
+			if _, ok := policyFlags[f.Name]; ok {
+				ignoredPolicyFlags = append(ignoredPolicyFlags, f.Name)
+			}
+		})
+		sort.Strings(ignoredPolicyFlags)
+	}
 
 	logLevelStr := *logLevel
 	if *verbose {
@@ -172,23 +191,39 @@ func run() error {
 		log.Info("ledger reconciled", "event", "ledger.reconcile", "orphan_blobs", rep.OrphanBlobs, "dropped_records", rep.DroppedRecords)
 	}
 
-	// Self-defence: resource manager + connection manager + a static blocklist
-	// gater. Always on for a node (they act on connection/identity metadata only,
-	// never shard content); the blocklist is empty unless -blocklist is given.
-	defense := &net.DefenseConfig{
-		ConnLow:   *connLow,
-		ConnHigh:  *connHigh,
-		ConnGrace: *connGrace,
-		Log:       log,
-	}
+	// Self-defence: resource manager + connection manager + a mutable, persistent
+	// blocklist gater. Always on for a node (they act on connection/identity
+	// metadata only, never shard content). The Blocklister seeds from the operator's
+	// static -blocklist (if any) unioned with the persisted auto-blocklist a prior
+	// run's abuse detector wrote, and the abuse detector extends it at runtime.
+	var operatorPeers []peer.ID
+	var operatorSubnets []*gonet.IPNet
 	if *blocklist != "" {
-		peers, subnets, err := net.LoadBlocklistFile(*blocklist)
+		var err error
+		operatorPeers, operatorSubnets, err = net.LoadBlocklistFile(*blocklist)
 		if err != nil {
 			return err
 		}
-		defense.BlockPeers = peers
-		defense.BlockSubnets = subnets
-		log.Info("blocklist loaded", "path", *blocklist, "peers", len(peers), "subnets", len(subnets))
+		log.Info("blocklist loaded", "path", *blocklist, "peers", len(operatorPeers), "subnets", len(operatorSubnets))
+	}
+	// Auto-blocklist path: default under the data dir; "off" disables persistence.
+	autoPath := *blocklistAuto
+	switch autoPath {
+	case "":
+		autoPath = filepath.Join(*dataDir, "blocklist.auto")
+	case "off":
+		autoPath = ""
+	}
+	blocklister, err := net.NewBlocklister(operatorPeers, operatorSubnets, autoPath, log)
+	if err != nil {
+		return err
+	}
+	defense := &net.DefenseConfig{
+		ConnLow:     *connLow,
+		ConnHigh:    *connHigh,
+		ConnGrace:   *connGrace,
+		Blocklister: blocklister,
+		Log:         log,
 	}
 
 	h, err := net.NewHost(net.HostConfig{
@@ -202,6 +237,10 @@ func run() error {
 		return err
 	}
 	defer h.Close()
+
+	// Hand the live host to the Blocklister so a runtime ban can drop the peer's
+	// open connection, not merely refuse its next dial.
+	blocklister.SetHost(h)
 
 	// Tag every subsequent line with this node's peer ID so a shared Loki stream
 	// can be filtered per node. Lines emitted before the host exists (config,
@@ -252,22 +291,44 @@ func run() error {
 	// uses. So a node joining an existing network inherits the admission bar
 	// without the operator re-typing it; only the network's first (seed) node must
 	// state the policy.
+	// Effective cluster policy: admission (PoW) + maintenance (repair, rebalance).
+	// A seed uses its own flags; a joiner inherits all of it from bootstrap peers
+	// over /revika/params, so the maintenance cadence and admission bar propagate
+	// without the operator re-typing them and a fresh node stays in step with the
+	// cluster. Intervals are guarded > 0 before adoption so a malformed/old peer
+	// advertisement can never hand us a zero-period ticker (which would panic).
 	effPuzzle, effDiff := *powPuzzle, *powDiff
-	if !powDiffSet && len(bootstrap) > 0 {
+	effRepairOn, effRepairEvery := *repairOn, *repairEvery
+	effRebalOn, effRebalEvery, effRebalThresh := *rebalanceOn, *rebalEvery, *rebalThresh
+	if joining {
 		fctx, cancel := context.WithTimeout(ctx, time.Duration(len(bootstrap))*bootstrapDialTimeout)
-		puzzle, diff, perr := net.FetchPoWPolicy(fctx, h, bootstrap, bootstrapDialTimeout)
+		np, perr := net.FetchNodePolicy(fctx, h, bootstrap, bootstrapDialTimeout)
 		cancel()
 		if perr != nil {
-			return fmt.Errorf("learn proof-of-work policy from bootstrap: %w", perr)
+			return fmt.Errorf("learn policy from bootstrap: %w", perr)
 		}
-		if puzzle != "" {
-			effPuzzle = puzzle
+		if np.PoW.Puzzle != "" {
+			effPuzzle = np.PoW.Puzzle
 		}
-		effDiff = diff
-		if diff > 0 {
-			log.Info("proof-of-work policy adopted from bootstrap", "event", "pow.adopt", "puzzle", effPuzzle, "min_bits", diff)
-		} else {
-			log.Info("proof-of-work policy adopted from bootstrap: none enforced", "event", "pow.adopt")
+		effDiff = np.PoW.Difficulty
+		effRepairOn = np.Repair.Enabled
+		if np.Repair.Interval > 0 {
+			effRepairEvery = np.Repair.Interval
+		}
+		effRebalOn = np.Rebalance.Enabled
+		if np.Rebalance.Interval > 0 {
+			effRebalEvery = np.Rebalance.Interval
+		}
+		if np.Rebalance.Enabled {
+			effRebalThresh = np.Rebalance.Threshold
+		}
+		log.Info("policy inherited from bootstrap", "event", "policy.inherit",
+			"pow_bits", effDiff, "pow_puzzle", effPuzzle,
+			"repair", effRepairOn, "repair_interval", effRepairEvery,
+			"rebalance", effRebalOn, "rebalance_interval", effRebalEvery, "rebalance_threshold", effRebalThresh)
+		if len(ignoredPolicyFlags) > 0 {
+			log.Warn("ignoring local policy flags on a joining node; the cluster policy inherited from bootstrap peers governs",
+				"event", "policy.inherit", "flags", ignoredPolicyFlags)
 		}
 	}
 	if effDiff > 0 {
@@ -281,6 +342,31 @@ func run() error {
 		srv.SetPoW(puzzle, cap.Difficulty(effDiff))
 		log.Info("proof-of-work admission enabled", "puzzle", puzzle.Name(), "min_bits", effDiff)
 	}
+
+	// Advertise the effective maintenance policy so a node that later joins through
+	// *this* one inherits the same schedule (transitive propagation). Enabled
+	// reflects what the node actually runs: repair and rebalance only run with the
+	// DHT on, so a DHT-off node advertises them disabled regardless of the flags.
+	repairPolicy := net.RepairInfo{Enabled: *dhtOn && effRepairOn, Interval: effRepairEvery}
+	rebalancePolicy := net.RebalanceInfo{Enabled: *dhtOn && effRebalOn, Interval: effRebalEvery, Threshold: effRebalThresh}
+	srv.SetMaintenancePolicy(repairPolicy, rebalancePolicy)
+
+	// Maintenance-abuse detector (local defence, never inherited): it watches the
+	// grant-authorized maintenance flows a peer drives against this node — rebalance
+	// moves and possession probes — and locally blacklists a peer that abuses them,
+	// acting only on connection/identity metadata. Its yardstick for "off-schedule"
+	// is the *effective* rebalance interval — whether declared locally or inherited —
+	// so a joiner polices peers against the same cadence the cluster runs. The abuse
+	// tuning flags are always honored (they configure a local defence, not cluster
+	// policy), so they are not among the flags a joining node ignores.
+	abuse := net.NewAbuseMonitor(blocklister, net.AbuseConfig{
+		RebalanceInterval: effRebalEvery,
+		Tolerance:         *abuseTol,
+		Coalesce:          *abuseCoalesce,
+		Strikes:           *abuseStrikes,
+		Decay:             *abuseDecay,
+	}, log)
+	srv.SetAbuseMonitor(abuse)
 
 	// Join the DHT (server mode: a node stores routing state + provider records
 	// for others). Wiring the Discovery in as the Server's announcer means every
@@ -310,12 +396,12 @@ func run() error {
 		go discoveryLoop(ctx, disc, log)
 		// Repair needs the DHT to find sibling shards and place regenerated ones,
 		// so it only runs when the node participates in the DHT.
-		if *repairOn {
-			go repairLoop(ctx, h, blobs, disc, led, log, *repairEvery)
+		if effRepairOn {
+			go repairLoop(ctx, h, blobs, disc, led, log, effRepairEvery)
 		}
 		// Rebalancing likewise needs the DHT: it discovers candidate targets and
 		// relies on provider records to keep a moved shard addressable.
-		if *rebalanceOn {
+		if effRebalOn {
 			peersFn := func(ctx context.Context) ([]peer.ID, error) {
 				infos, err := disc.FindNodes(ctx, 0)
 				if err != nil {
@@ -328,9 +414,10 @@ func run() error {
 				return ids, nil
 			}
 			rb := net.NewRebalancer(h, blobs, led, net.LoadSource(loadSource), peersFn, log)
-			rb.SetThreshold(*rebalThresh)
-			rb.SetCooldown(2 * *rebalEvery)
-			go rebalanceLoop(ctx, rb, log, *rebalEvery)
+			rb.SetThreshold(effRebalThresh)
+			rb.SetCooldown(2 * effRebalEvery)
+			rb.SetAbuseMonitor(abuse)
+			go rebalanceLoop(ctx, rb, log, effRebalEvery)
 		}
 	}
 
@@ -348,6 +435,7 @@ func run() error {
 		ms := net.NewMetricsServer(h, led, disc, version, buildDate, startedAt, log)
 		ms.SetGCStats(gcStats)
 		ms.SetPoW(effPuzzle, effDiff)
+		ms.SetMaintenance(repairPolicy, rebalancePolicy)
 		ms.SetLoadSource(net.LoadSource(loadSource))
 		go func() {
 			if err := ms.Serve(ctx, *metricsAddr); err != nil {
@@ -370,7 +458,9 @@ func run() error {
 		"dht", *dhtOn,
 		"advertise", *dhtOn && *advertiseOn,
 		"bootstrap", len(bootstrap),
-		"repair", *dhtOn && *repairOn,
+		"role", nodeRole(joining),
+		"repair", *dhtOn && effRepairOn,
+		"rebalance", *dhtOn && effRebalOn,
 		"metrics", *metricsAddr,
 	)
 
@@ -378,6 +468,16 @@ func run() error {
 	<-ctx.Done()
 	log.Info("shutting down", "event", "node.stop")
 	return nil
+}
+
+// nodeRole names a node's policy role for the startup banner: a node with no
+// bootstrap peer is the network's authoritative "seed"; one that joins through a
+// bootstrap peer inherits the cluster policy and is a "joining" node.
+func nodeRole(joining bool) string {
+	if joining {
+		return "joining"
+	}
+	return "seed"
 }
 
 // reprovideLoop announces every shard the node holds to the DHT on startup and

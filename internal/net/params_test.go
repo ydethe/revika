@@ -93,12 +93,12 @@ func TestFetchPoWPolicyStrictestWins(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	puzzle, diff, err := FetchPoWPolicy(ctx, client, []string{bootstrapAddr(t, easy), bootstrapAddr(t, hard)}, 10*time.Second)
+	np, err := FetchNodePolicy(ctx, client, []string{bootstrapAddr(t, easy), bootstrapAddr(t, hard)}, 10*time.Second)
 	if err != nil {
-		t.Fatalf("FetchPoWPolicy: %v", err)
+		t.Fatalf("FetchNodePolicy: %v", err)
 	}
-	if puzzle != "argon2id" || diff != 14 {
-		t.Fatalf("FetchPoWPolicy = (%q, %d), want (argon2id, 14)", puzzle, diff)
+	if np.PoW.Puzzle != "argon2id" || np.PoW.Difficulty != 14 {
+		t.Fatalf("FetchNodePolicy PoW = (%q, %d), want (argon2id, 14)", np.PoW.Puzzle, np.PoW.Difficulty)
 	}
 }
 
@@ -112,8 +112,8 @@ func TestFetchPoWPolicyPuzzleDisagreement(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, _, err := FetchPoWPolicy(ctx, client, []string{bootstrapAddr(t, argon), bootstrapAddr(t, sha)}, 10*time.Second); err == nil {
-		t.Fatal("FetchPoWPolicy: want error on puzzle disagreement, got nil")
+	if _, err := FetchNodePolicy(ctx, client, []string{bootstrapAddr(t, argon), bootstrapAddr(t, sha)}, 10*time.Second); err == nil {
+		t.Fatal("FetchNodePolicy: want error on puzzle disagreement, got nil")
 	}
 }
 
@@ -127,12 +127,12 @@ func TestFetchPoWPolicyAllDisabled(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	puzzle, diff, err := FetchPoWPolicy(ctx, client, []string{bootstrapAddr(t, a), bootstrapAddr(t, b)}, 10*time.Second)
+	np, err := FetchNodePolicy(ctx, client, []string{bootstrapAddr(t, a), bootstrapAddr(t, b)}, 10*time.Second)
 	if err != nil {
-		t.Fatalf("FetchPoWPolicy: %v", err)
+		t.Fatalf("FetchNodePolicy: %v", err)
 	}
-	if puzzle != "" || diff != 0 {
-		t.Fatalf("FetchPoWPolicy = (%q, %d), want (\"\", 0)", puzzle, diff)
+	if np.PoW != (PoWInfo{}) {
+		t.Fatalf("FetchNodePolicy PoW = %+v, want disabled (zero)", np.PoW)
 	}
 }
 
@@ -145,7 +145,74 @@ func TestFetchPoWPolicyNoneReachable(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, _, err := FetchPoWPolicy(ctx, client, []string{unreachable}, 2*time.Second); err == nil {
-		t.Fatal("FetchPoWPolicy: want error when no bootstrap node is reachable, got nil")
+	if _, err := FetchNodePolicy(ctx, client, []string{unreachable}, 2*time.Second); err == nil {
+		t.Fatal("FetchNodePolicy: want error when no bootstrap node is reachable, got nil")
+	}
+}
+
+// maintNode builds a server host advertising a maintenance policy (repair +
+// rebalance) over the params protocol, with PoW disabled. Returns the host to dial.
+func maintNode(t *testing.T, repair RepairInfo, rebalance RebalanceInfo) host.Host {
+	t.Helper()
+	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
+	if err != nil {
+		t.Fatalf("server host: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+	srv := NewServer(store.NewMemStore(), nil)
+	srv.SetMaintenancePolicy(repair, rebalance)
+	srv.Register(h)
+	return h
+}
+
+// TestFetchNodePolicyMaintenanceReconcile confirms the maintenance half of the
+// policy reconciles any-enabled + most-aggressive: a joiner facing one node that
+// repairs/rebalances rarely and one that does so often adopts the shortest
+// interval and smallest rebalance threshold, so it never dilutes the cluster's
+// cadence below what an existing node already keeps.
+func TestFetchNodePolicyMaintenanceReconcile(t *testing.T) {
+	slow := maintNode(t,
+		RepairInfo{Enabled: true, Interval: 30 * time.Minute},
+		RebalanceInfo{Enabled: true, Interval: time.Hour, Threshold: 0.20})
+	fast := maintNode(t,
+		RepairInfo{Enabled: true, Interval: 10 * time.Minute},
+		RebalanceInfo{Enabled: true, Interval: 15 * time.Minute, Threshold: 0.05})
+	client := freshHost(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	np, err := FetchNodePolicy(ctx, client, []string{bootstrapAddr(t, slow), bootstrapAddr(t, fast)}, 10*time.Second)
+	if err != nil {
+		t.Fatalf("FetchNodePolicy: %v", err)
+	}
+	if !np.Repair.Enabled || np.Repair.Interval != 10*time.Minute {
+		t.Fatalf("Repair = %+v, want enabled at 10m", np.Repair)
+	}
+	if !np.Rebalance.Enabled || np.Rebalance.Interval != 15*time.Minute || np.Rebalance.Threshold != 0.05 {
+		t.Fatalf("Rebalance = %+v, want enabled at 15m / 0.05", np.Rebalance)
+	}
+}
+
+// TestFetchNodePolicyMaintenanceAnyEnabled confirms any-enabled semantics: even
+// one node running a loop makes the joiner run it, and a zero threshold (a valid
+// "no dead-band" policy) is adopted rather than mistaken for "unset".
+func TestFetchNodePolicyMaintenanceAnyEnabled(t *testing.T) {
+	off := maintNode(t, RepairInfo{}, RebalanceInfo{})
+	on := maintNode(t,
+		RepairInfo{Enabled: true, Interval: 20 * time.Minute},
+		RebalanceInfo{Enabled: true, Interval: 20 * time.Minute, Threshold: 0})
+	client := freshHost(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	np, err := FetchNodePolicy(ctx, client, []string{bootstrapAddr(t, off), bootstrapAddr(t, on)}, 10*time.Second)
+	if err != nil {
+		t.Fatalf("FetchNodePolicy: %v", err)
+	}
+	if !np.Repair.Enabled || np.Repair.Interval != 20*time.Minute {
+		t.Fatalf("Repair = %+v, want enabled at 20m", np.Repair)
+	}
+	if !np.Rebalance.Enabled || np.Rebalance.Threshold != 0 {
+		t.Fatalf("Rebalance = %+v, want enabled at threshold 0", np.Rebalance)
 	}
 }

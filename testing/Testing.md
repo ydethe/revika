@@ -1,12 +1,24 @@
-Run the seed node — the only node that states the PoW policy :
+Run the seed node — the only node that states the cluster policy. A node's role is
+decided purely by whether -bootstrap is given: the seed (no -bootstrap) declares
+admission (PoW) *and* maintenance cadence (repair / rebalance) from its own flags :
 
-     go run ./cmd/revika-node -data=./.revika -listen=/ip4/127.0.0.1/tcp/4002 -pow-difficulty 2 -pow-puzzle argon2id
+     go run ./cmd/revika-node -data=./.revika -listen=/ip4/127.0.0.1/tcp/4002 -pow-difficulty 2 -pow-puzzle argon2id -repair-interval 30s -rebalance-interval 30s
 
-Add a second node that only *joins* : it passes -bootstrap and no -pow flags, so
-it reads the seed's PoW policy over /revika/params and enforces the same bar (a
-joining node inherits admission; only the seed configures it) :
+Add a second node that only *joins* : it passes -bootstrap and no policy flags, so
+it reads the seed's whole policy over /revika/params (net.FetchNodePolicy) and
+enforces the same bar — admission *and* the repair/rebalance schedule (a joining
+node inherits the cluster policy; only the seed configures it) :
 
      go run ./cmd/revika-node -data=./.revika-n2 -listen=/ip4/127.0.0.1/tcp/4003 -bootstrap /ip4/127.0.0.1/tcp/4002/p2p/xxxxxx
+
+Any policy flags a joining node also passes are ignored with a warning (the cluster
+policy governs). The one exception is the *local* maintenance-abuse defence, always
+honored per node: -rebalance-abuse-tolerance/-coalesce/-strikes/-decay tune when a
+peer that rebalances against this node off-schedule, or repeatedly fails a
+possession probe, is added to this node's persistent blocklist (-blocklist-auto,
+default <data>/blocklist.auto). Watch for a `defense.blacklist` log line :
+
+     go run ./cmd/revika-node -data=./.revika-n3 -listen=/ip4/127.0.0.1/tcp/4004 -bootstrap /ip4/127.0.0.1/tcp/4002/p2p/xxxxxx -rebalance-abuse-strikes 2
 
 Connect to it — create a workspace folder holding config.json (bootstrap peer,
 erasure k/m, PoW policy), where root.json and your keys will also live. `connect`

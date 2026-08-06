@@ -14,9 +14,18 @@ run over the network unchanged because a remote node looks identical to a local
 Two versioned libp2p stream protocols, semantic-versioned so upgrades negotiate
 through libp2p's multistream muxer:
 
-- `ShardProtocol` = `/revika/shard/1.1.0` — PUT / GET / HAS / DELETE a shard by
+- `ShardProtocol` = `/revika/shard/1.2.0` — PUT / GET / HAS / DELETE a shard by
   content address. The `1.1.0` bump added two trailing blobs (stripe descriptor +
-  repair grant) after the auth token on PUT.
+  repair grant) after the auth token on PUT; the `1.2.0` bump appends one trailing
+  **`MoveReason`** byte after those blobs, declaring *why* a shard is being written:
+  `ReasonClient` (0, owner-initiated write, carries a token), `ReasonRepair` (1,
+  grant-gated regeneration — schedule-exempt, may burst after node loss), or
+  `ReasonRebalance` (2, grant-gated diffusion move — policed by the abuse detector).
+  The reason carries only the reason, no load fraction. `ShardProtocolV1` =
+  `/revika/shard/1.1.0` is still served for back-compat (`Register` installs both →
+  the same handler): a 1.1.0 PUT omits the byte and is read as `ReasonRepair`. A
+  client's `openStream` offers both IDs and libp2p's multistream muxer picks the
+  newest shared.
 - `ProbeProtocol` = `/revika/probe/1.0.0` — proof-of-possession challenge/response
   used by repair.
 - `BalanceProtocol` = `/revika/balance/1.0.0` — read-only load report used by
@@ -76,21 +85,71 @@ bytes, so the untrusted-blob-store model holds. Nil (tests) leaves libp2p's defa
   = 64/192) with a grace period (`defaultConnGrace` = 30s); once connections exceed the high
   mark the least-useful ones (past grace) are trimmed toward the low mark. `ConnHigh <= 0`
   disables it.
-- **`ConnectionGater`** (`blocklistGater`) — a static, operator-supplied **peer-ID / subnet
-  blocklist**. Installed only when non-empty. It denies a blocked peer whether we dial it
-  (`InterceptPeerDial`/`InterceptAddrDial`) or it dials us (`InterceptAccept` on IP before
-  the handshake, `InterceptSecured` on peer ID after), so an abusive peer is refused at the
-  transport layer before any protocol handler runs.
+- **`ConnectionGater`** (`blocklistGater`) — a **peer-ID / subnet blocklist**. It denies a
+  blocked peer whether we dial it (`InterceptPeerDial`/`InterceptAddrDial`) or it dials us
+  (`InterceptAccept` on IP before the handshake, `InterceptSecured` on peer ID after), so an
+  abusive peer is refused at the transport layer before any protocol handler runs. The subnet
+  list is fixed at construction (operator policy); the peer-ID set is **mutable and
+  mutex-guarded** so the runtime abuse detector can extend it (`addPeer`) while the gater is live.
 
 `ParseBlocklist`/`LoadBlocklistFile` parse a blocklist file: one entry per line, each a
 libp2p peer ID, a CIDR (`203.0.113.0/24`), or a bare IP (kept as a /32 or /128 host route);
 `#` starts a whole-line or inline comment. `revika-node -blocklist <file>` wires it in;
 `-conn-low`/`-conn-high`/`-conn-grace` tune the connection manager.
 
+**Runtime, persistent blocklist (`Blocklister`).** The gater alone is static and forgets its
+bans on restart. `Blocklister` wraps it into a *mutable, persistent* blocklist: it seeds from
+the operator's `-blocklist` (peers + subnets) **unioned** with a flat auto-blocklist file the
+detector appended to on prior runs, so a peer banned in one run stays banned across restarts.
+`Block(p, reason)` bans at runtime — it extends the live gater (refusing the peer's *future*
+dials), appends the peer ID to the auto file as one `ParseBlocklist`-compatible line (single
+`O_APPEND` write; reason kept as a trailing comment), and closes any live connection to the
+peer via `host.Network().ClosePeer` (the gater alone would leave an established connection
+open). It is idempotent (an already-blocked peer is a no-op). `SetHost` hands it the live host
+after `NewHost`; construction happens before the host exists, so the gater is built first and
+the host adopts it via `DefenseConfig.Blocklister`. `revika-node -blocklist-auto <file>` sets
+the path (default `<data>/blocklist.auto`, `off` disables persistence). `Block` only ever
+appends peer IDs — identity is the unit the detector acts on; subnet rules stay operator policy.
+
 These are *connection/flow* caps that complement the ledger's *storage* cap (per-owner
 quota). **Still planned:** per-peer/per-owner rate limiting on the write verbs (a token
 bucket keyed on the Ed25519 owner) with a `statusRateLimited` response. See
 Architecture.md §3.1/§5.
+
+## Maintenance-abuse detection (`abuse.go`)
+
+`AbuseMonitor` is a node's local defence against a peer that abuses the two
+grant-authorized *maintenance* flows it drives against this node — rebalance moves and
+possession probes. It acts only on connection/identity metadata (which peer, how often),
+never decrypting or interpreting a shard, and bans through a `peerBlocker` (`*Blocklister`).
+Two independent triggers:
+
+- **Off-schedule rebalancing (fast-side only).** A well-behaved peer initiates a rebalance
+  sweep about once per cluster interval. The server tags each grant-gated PUT it receives with
+  its `MoveReason`; on a `ReasonRebalance` move `RecordRebalanceMove(peer, now)` fires. One
+  sweep is a burst of back-to-back PUTs, so moves within a **coalesce** window fold into a
+  single event; the *first* event only sets a baseline. A new sweep whose gap since the prior
+  sweep is `< interval − tolerance` is **too fast** → the peer is banned on that first
+  violation. Too-slow is fine (a lightly loaded peer may never shed). The **tolerance** (a
+  required duration, default 10m) absorbs jitter — a strict comparison would false-positive
+  constantly. The yardstick is the *effective* rebalance interval, whether declared locally or
+  inherited from bootstrap, so a joiner polices against the same cadence it runs. Interval 0
+  disables the check (nothing to measure against).
+- **Possession lies (strike budget).** A peer that claims to hold a shard but fails a
+  fresh-nonce possession proof (the make-before-break check in `rebalance.go`) is lying about
+  durability. A single failure can be a race, so `RecordPossessionLie(peer, now)` accrues
+  **decaying** strikes (default window 24h) and bans at a threshold (default 3).
+
+Tuning is via `AbuseConfig` (zero fields take built-in defaults through `withDefaults`;
+coalesce defaults to `min(interval/4, 5m)`) wired from `revika-node`'s
+`-rebalance-abuse-tolerance/-coalesce/-strikes/-decay`. These configure a **local** defence,
+so — unlike PoW/repair/rebalance policy — they are *never* inherited by or ignored on a joining
+node; every node tunes its own. The detector is safe for concurrent use (the shard server feeds
+it from many stream handlers, the rebalancer from its loop). Banning by identity is weak while
+identities are free to mint (global anti-Sybil is deferred — Architecture §5), but with
+proof-of-work identities it is not free to evade. Repair-engine probe strikes
+(`internal/repair`) are a deferred follow-up (they would require threading the monitor into
+another package); today only the in-package rebalance possession check feeds strikes.
 
 ## DHT discovery (`dht.go`)
 
@@ -215,6 +274,14 @@ interprets, or trusts payloads.
   and difficulty ≥ the node's — a self-certifying key only verifies against the exact
   puzzle it was minted for. Zero (the default) disables the check. See
   `internal/cap/pow.go` and `revika-node -pow-difficulty/-pow-puzzle`.
+- `SetMaintenancePolicy(repair, rebalance)` — records the effective repair/rebalance
+  cadence the node runs so `/revika/params` can advertise it for policy inheritance (it
+  does not itself schedule anything; the loops live in `cmd/revika-node`).
+- `SetAbuseMonitor(*AbuseMonitor)` — wires the maintenance-abuse detector. On a
+  grant-authorized PUT tagged `ReasonRebalance` (no owner token, stripe descriptor + grant
+  present) `handlePut` calls `RecordRebalanceMove` so the detector can police a peer that
+  rebalances against this node too fast. The reason byte is read only on `ShardProtocol`
+  (1.2.0); a 1.1.0 PUT defaults to `ReasonRepair` and is never counted as a rebalance move.
 
 Ordering is crash-safe: bytes are stored before ownership is recorded, and on
 DELETE the ledger row is removed before the blob — a crash in between leaves an
@@ -229,24 +296,32 @@ response code. Transport-level blocking already lives in the host's `ConnectionG
 (see **Self-defence** above); together with the quota they form a node's acceptable-use
 enforcement. See Architecture.md §3.1/§5.
 
-**Proof-of-work policy advertisement (`params.go`, `/revika/params/1.0.0`).** Difficulty is
-per-node local policy (`SetPoW`), so a client must mint an owner identity satisfying the node
-it stores through — a mismatch would otherwise surface late as an `ErrUnauthorized` on the
-failed `PUT`. The node answers a read-only, unauthenticated `/revika/params` query (registered
-by `Register`, same one-request/response framing as balance) with a `NodeParams` envelope whose
-`PoW` field carries the node's `PoWInfo` — the canonical short puzzle name (`cap.PuzzleName`,
-which `PuzzleByName` re-derives) and the minimum difficulty, or a zeroed policy when admission
-is off. `QueryParams(ctx, h, peer)` is the client half; `FetchPoWPolicy(ctx, h, bootstrap,
-dialTimeout)` reconciles it across a bootstrap set into the single strictest requirement a new
-participant must satisfy — max difficulty, one consistent puzzle (a disagreement among
-PoW-enforcing nodes is a hard error), failing closed when no node answers. Two callers drive it
-through the same code path: `revika-ctl connect` (to grind an admissible identity, saved to the
-workspace config) and a joining `revika-node` that knows only `-bootstrap` and left
-`-pow-difficulty` unset (to inherit its bootstrap peers' admission bar instead of the operator
-re-typing it — only the network's seed node states the policy). It reveals only the node's own
-local policy, never shard content, so it needs no owner token. The `NodeParams` envelope leaves
-room to advertise more (e.g. suggested erasure `k`/`m`) without a protocol bump. See
-Architecture.md §5.
+**Node policy advertisement (`params.go`, `/revika/params/1.0.0`).** A node answers a
+read-only, unauthenticated `/revika/params` query (registered by `Register`, same
+one-request/response framing as balance) with a `NodeParams` envelope carrying the whole
+cluster-facing policy so a new participant inherits it instead of the operator re-typing it:
+
+- **`PoW`** (`PoWInfo`) — admission: the canonical short puzzle name (`cap.PuzzleName`, which
+  `PuzzleByName` re-derives) and minimum difficulty, or a zeroed policy when admission is off.
+  Difficulty is per-node local policy (`SetPoW`); a client must mint an owner identity
+  satisfying the node it stores through, or the mismatch surfaces late as an `ErrUnauthorized`
+  on the failed `PUT`.
+- **`Repair`** (`RepairInfo`) / **`Rebalance`** (`RebalanceInfo`) — the maintenance cadence
+  (`Enabled` + `Interval`, plus the rebalance `Threshold`) this node actually runs. A node with
+  the DHT off advertises them disabled regardless of its flags (repair/rebalance need the DHT).
+
+`QueryParams(ctx, h, peer)` is the client half; `FetchNodePolicy(ctx, h, bootstrap,
+dialTimeout)` (which replaced the PoW-only `FetchPoWPolicy`) reconciles the envelope across a
+bootstrap set into the single policy a new participant adopts: PoW **strictest wins** (max
+difficulty, one consistent puzzle — a disagreement among PoW-enforcing nodes is a hard error),
+repair **any-enabled + shortest interval**, rebalance **any-enabled + shortest interval +
+smallest threshold**; it fails closed when no node answers. Two callers drive it through the
+same code path: `revika-ctl connect` (uses only the `PoW` field, to grind an admissible
+identity saved to the workspace config) and a joining `revika-node` that knows only `-bootstrap`
+(to inherit the full admission + maintenance policy — only the network's seed node states it).
+It reveals only the node's own local policy, never shard content, so it needs no owner token.
+The `NodeParams` envelope leaves room to advertise more (e.g. suggested erasure `k`/`m`) without
+a protocol bump. See Architecture.md §5.
 
 ## DHT-backed stores (`placement.go`, `repair.go`)
 
@@ -307,16 +382,24 @@ holds the same **fraction of its own capacity** — not the same shard count
     us from dropping our copy — a proof *mismatch* also stops shedding to it this
     round; a probe transport error just keeps this shard. This wires the `Probe`
     primitive into the write path, so the source never surrenders its only durable
-    copy to a lying receiver.
+    copy to a lying receiver. A proven possession *lie* (the probe returns `!ok` with
+    no transport error) also feeds `AbuseMonitor.RecordPossessionLie` via the optional
+    `SetAbuseMonitor`, accruing a strike against the receiver.
+
+  A rebalancer's own PUTs carry `ReasonRebalance`, so the *receiving* node's
+  `AbuseMonitor` can measure how often this node rebalances against it (see
+  **Maintenance-abuse detection** above) — the source-side guards above protect *this*
+  node's durability; the reason tag lets a peer protect *itself* from an over-eager mover.
 
 ## Metrics / status (`metrics.go`, `gcstats.go`)
 
 `MetricsServer` exposes a node's operational state over plain HTTP (meant to sit
 behind a TLS-terminating reverse proxy). `NewMetricsServer(h, ledger, disc, version,
 buildDate, started, log)`; `disc`, the GC stats (`SetGCStats`), the proof-of-work
-policy (`SetPoW`), and the storage-load reporter (`SetLoadSource`, feeding the
-capacity/free/load fields) are optional. `Serve(ctx, addr)` runs it with graceful
-shutdown; `Handler()` exposes the mux for tests. Endpoints:
+policy (`SetPoW`), the maintenance policy (`SetMaintenance`, the effective
+repair/rebalance cadence this node runs and advertises), and the storage-load reporter
+(`SetLoadSource`, feeding the capacity/free/load fields) are optional. `Serve(ctx, addr)`
+runs it with graceful shutdown; `Handler()` exposes the mux for tests. Endpoints:
 
 - `GET /healthz` — liveness.
 - `GET /readyz` — readiness (DHT routing table non-empty when the DHT is on; always
@@ -325,13 +408,17 @@ shutdown; `Handler()` exposes the mux for tests. Endpoints:
   `bootstrap` strings, and the `PoWInfo` admission policy — enabled, puzzle name,
   difficulty bits), `StorageInfo` (shards, bytes, quota, the rebalancing signal
   `capacity_bytes`/`free_bytes`/`load` when a load source is set, and a per-`OwnerInfo`
-  breakdown from the ledger), `NetworkInfo` (connected peers, routing-table size,
-  per-`PeerInfo` cartography), and `GCSnapshot`. `bootstrap` mirrors `listen_addrs` with
-  the node's `/p2p/<peer-id>` appended — each entry is ready to paste into `revika-ctl -bootstrap`.
+  breakdown from the ledger), the `RepairInfo`/`RebalanceInfo` maintenance policy, `NetworkInfo`
+  (connected peers, routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
+  `bootstrap` mirrors `listen_addrs` with the node's `/p2p/<peer-id>` appended — each entry is
+  ready to paste into `revika-ctl -bootstrap`.
 - `GET /metrics` — Prometheus text exposition of the same snapshot, including
   `revika_build_info{version,build_date}`, `revika_bootstrap_info{addr}`,
-  `revika_pow_enabled{puzzle}`, `revika_pow_difficulty_bits`, and the load gauges
-  `revika_capacity_bytes` / `revika_free_bytes` / `revika_load_ratio`.
+  `revika_pow_enabled{puzzle}`, `revika_pow_difficulty_bits`, the load gauges
+  `revika_capacity_bytes` / `revika_free_bytes` / `revika_load_ratio`, and the maintenance
+  gauges `revika_repair_enabled` / `revika_repair_interval_seconds` /
+  `revika_rebalance_enabled` / `revika_rebalance_interval_seconds` /
+  `revika_rebalance_threshold`.
 
 `GCStats` (`gcstats.go`) is a thread-safe counter shared between a node's GC loop
 (`Record`) and the MetricsServer (`Snapshot` → `GCSnapshot`), reporting cycles run,

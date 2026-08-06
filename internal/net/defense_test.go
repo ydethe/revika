@@ -2,11 +2,14 @@ package net
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -151,6 +154,123 @@ func TestBlocklistGaterEndToEnd(t *testing.T) {
 	defer cancel()
 	if err := client.Connect(ctx, peer.AddrInfo{ID: server.ID(), Addrs: server.Addrs()}); err == nil {
 		t.Fatal("dial to blocked peer succeeded; gater did not reject it")
+	}
+}
+
+// TestBlocklisterBlockPersistReload bans a peer, confirms it is refused, then
+// reloads a fresh Blocklister from the same auto file and confirms the ban
+// survives the restart.
+func TestBlocklisterBlockPersistReload(t *testing.T) {
+	dir := t.TempDir()
+	auto := filepath.Join(dir, "blocklist.auto")
+
+	bl, err := NewBlocklister(nil, nil, auto, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := testPeerID(t)
+	if bl.Blocked(p) {
+		t.Fatal("peer blocked before any Block call")
+	}
+	bl.Block(p, "rebalance off-schedule (too fast)")
+	if !bl.Blocked(p) {
+		t.Fatal("peer not blocked after Block")
+	}
+
+	// The auto file must now contain the peer as a single well-formed line.
+	data, err := os.ReadFile(auto)
+	if err != nil {
+		t.Fatalf("read auto file: %v", err)
+	}
+	if !strings.Contains(string(data), p.String()) {
+		t.Fatalf("auto file missing peer ID:\n%s", data)
+	}
+
+	// A restart: a fresh Blocklister loading the same file re-bans the peer.
+	bl2, err := NewBlocklister(nil, nil, auto, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bl2.Blocked(p) {
+		t.Fatal("ban did not survive reload from the auto file")
+	}
+}
+
+// TestBlocklisterBlockIdempotent confirms a repeated Block does not duplicate the
+// persisted entry.
+func TestBlocklisterBlockIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	auto := filepath.Join(dir, "blocklist.auto")
+	bl, err := NewBlocklister(nil, nil, auto, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := testPeerID(t)
+	bl.Block(p, "first")
+	bl.Block(p, "second") // no-op: already blocked
+
+	data, err := os.ReadFile(auto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), p.String()); n != 1 {
+		t.Fatalf("peer written %d times, want 1:\n%s", n, data)
+	}
+}
+
+// TestBlocklisterSeedsOperatorEntries confirms the operator's static blocklist is
+// unioned into the Blocklister at construction.
+func TestBlocklisterSeedsOperatorEntries(t *testing.T) {
+	p := testPeerID(t)
+	bl, err := NewBlocklister([]peer.ID{p}, nil, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bl.Blocked(p) {
+		t.Fatal("operator-supplied peer not blocked")
+	}
+}
+
+// TestBlocklisterBlockClosesConnection stands up two hosts, connects them, then
+// bans the client from the server side and confirms the live connection is
+// dropped (the gater alone only refuses future dials).
+func TestBlocklisterBlockClosesConnection(t *testing.T) {
+	dir := t.TempDir()
+	bl, err := NewBlocklister(nil, nil, filepath.Join(dir, "blocklist.auto"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewHost(HostConfig{
+		ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"},
+		Defense:     &DefenseConfig{Blocklister: bl},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	bl.SetHost(server)
+
+	client, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx, peer.AddrInfo{ID: server.ID(), Addrs: server.Addrs()}); err != nil {
+		t.Fatalf("initial connect failed: %v", err)
+	}
+
+	bl.Block(client.ID(), "test ban")
+
+	// The server must have torn down its side of the connection to the client.
+	deadline := time.Now().Add(3 * time.Second)
+	for server.Network().Connectedness(client.ID()) == network.Connected {
+		if time.Now().After(deadline) {
+			t.Fatal("connection to banned peer still open after Block")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

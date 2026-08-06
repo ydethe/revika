@@ -72,9 +72,12 @@ func (n *NetStore) authToken(o op, id store.ShardID) []byte {
 	return buildToken(*n.signer, o, id, n.peer, time.Now().Unix())
 }
 
-// openStream dials a fresh stream for one request and applies a deadline.
+// openStream dials a fresh stream for one request and applies a deadline. It
+// offers the current shard protocol and the 1.1.0 predecessor, so libp2p's
+// multistream muxer negotiates the newest version the node also speaks — a
+// 1.2.0-aware client keeps working against a not-yet-upgraded 1.1.0 node.
 func (n *NetStore) openStream(ctx context.Context) (network.Stream, error) {
-	s, err := n.h.NewStream(ctx, n.peer, ShardProtocol)
+	s, err := n.h.NewStream(ctx, n.peer, ShardProtocol, ShardProtocolV1)
 	if err != nil {
 		return nil, fmt.Errorf("revika/net: open stream to %s: %w", n.peer, err)
 	}
@@ -104,7 +107,7 @@ func readResp(s network.Stream) error {
 }
 
 func (n *NetStore) Put(ctx context.Context, data []byte) (store.ShardID, error) {
-	return n.putRaw(ctx, data, n.authToken(opPut, store.HashOf(data)), nil, nil)
+	return n.putRaw(ctx, data, n.authToken(opPut, store.HashOf(data)), nil, nil, ReasonClient)
 }
 
 // PutStripe stores data and, alongside it, the stripe Descriptor and a freshly
@@ -128,26 +131,31 @@ func (n *NetStore) PutStripe(ctx context.Context, data []byte, d stripe.Descript
 	if err != nil {
 		return store.ShardID{}, err
 	}
-	return n.putRaw(ctx, data, n.authToken(opPut, store.HashOf(data)), stripeBytes, grant)
+	return n.putRaw(ctx, data, n.authToken(opPut, store.HashOf(data)), stripeBytes, grant, ReasonClient)
 }
 
-// putGrant stores a regenerated shard authorized by a repair grant rather than an
-// owner token (the repairing node does not hold the User's signing key). The
-// descriptor and grant are replayed exactly as distributed at store time; the
-// receiving node verifies the grant names this shard before accepting it under
-// the granting User's ownership. Used by RepairStore.
-func (n *NetStore) putGrant(ctx context.Context, data []byte, d stripe.Descriptor, grant []byte) (store.ShardID, error) {
+// putGrant stores a regenerated or rebalanced shard authorized by a repair grant
+// rather than an owner token (the storing node does not hold the User's signing
+// key). The descriptor and grant are replayed exactly as distributed at store
+// time; the receiving node verifies the grant names this shard before accepting
+// it under the granting User's ownership. reason tells the receiver whether this
+// is a repair regeneration or a rebalance move, so its abuse detector polices only
+// rebalance cadence. Used by RepairStore (ReasonRepair) and the Rebalancer
+// (ReasonRebalance).
+func (n *NetStore) putGrant(ctx context.Context, data []byte, d stripe.Descriptor, grant []byte, reason MoveReason) (store.ShardID, error) {
 	stripeBytes, err := d.MarshalBinary()
 	if err != nil {
 		return store.ShardID{}, err
 	}
-	return n.putRaw(ctx, data, nil, stripeBytes, grant)
+	return n.putRaw(ctx, data, nil, stripeBytes, grant, reason)
 }
 
-// putRaw sends one PUT with the full 1.1.0 frame: data, then the three trailing
-// blobs (token, stripe descriptor, grant), any of which may be empty. It verifies
-// the node echoed the shard's true content address.
-func (n *NetStore) putRaw(ctx context.Context, data, token, stripeBytes, grant []byte) (store.ShardID, error) {
+// putRaw sends one PUT: data, then the three trailing blobs (token, stripe
+// descriptor, grant), any of which may be empty, and — when the negotiated
+// protocol is 1.2.0 — a final MoveReason byte. It verifies the node echoed the
+// shard's true content address. Against a 1.1.0 node the reason byte is omitted
+// (that node's frame ends at the grant blob), so the write stays wire-compatible.
+func (n *NetStore) putRaw(ctx context.Context, data, token, stripeBytes, grant []byte, reason MoveReason) (store.ShardID, error) {
 	s, err := n.openStream(ctx)
 	if err != nil {
 		return store.ShardID{}, err
@@ -160,6 +168,14 @@ func (n *NetStore) putRaw(ctx context.Context, data, token, stripeBytes, grant [
 	}
 	for _, blob := range [][]byte{data, token, stripeBytes, grant} {
 		if err := writeBlob(s, blob); err != nil {
+			_ = s.Reset()
+			return store.ShardID{}, err
+		}
+	}
+	// The reason byte exists only in 1.2.0; a 1.1.0 node's handler would treat it
+	// as the next request's op byte, so gate it on the negotiated protocol.
+	if s.Protocol() == ShardProtocol {
+		if err := writeByte(s, byte(reason)); err != nil {
 			_ = s.Reset()
 			return store.ShardID{}, err
 		}

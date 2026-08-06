@@ -51,6 +51,12 @@ type Rebalancer struct {
 	sample    int           // peers sampled per round (power-of-k-choices)
 	cooldown  time.Duration // per-shard move lockout
 
+	// abuse, when set, is fed a possession-lie strike whenever a target peer
+	// accepts a shard but then fails to prove it holds it (a proven lie, not a
+	// transport error) — the make-before-break check below. Left nil, no strike is
+	// recorded (the move is still kept safely local).
+	abuse *AbuseMonitor
+
 	mu    sync.Mutex
 	moved map[store.ShardID]time.Time // shard -> last moved-away time
 }
@@ -91,6 +97,11 @@ func (rb *Rebalancer) SetSample(n int) {
 
 // SetCooldown sets how long a moved shard is locked out from moving again.
 func (rb *Rebalancer) SetCooldown(d time.Duration) { rb.cooldown = d }
+
+// SetAbuseMonitor attaches the maintenance-abuse detector so a target peer that
+// fails a possession proof after accepting a shard accrues a strike toward a
+// local ban. Optional; call before RunOnce.
+func (rb *Rebalancer) SetAbuseMonitor(a *AbuseMonitor) { rb.abuse = a }
 
 // RunOnce performs one rebalance round and returns the number of shards moved.
 // now is the reference time for cooldown bookkeeping (pass time.Now()). It is a
@@ -179,7 +190,7 @@ func (rb *Rebalancer) RunOnce(ctx context.Context, now time.Time) (int, error) {
 		// and re-announces the CID) BEFORE dropping our copy. The peer's per-owner
 		// quota check may reject it (ErrQuotaExceeded) — treat that as "peer is full
 		// after all" and stop shedding to it this round.
-		if _, err := ns.putGrant(ctx, data, desc, row.Grant); err != nil {
+		if _, err := ns.putGrant(ctx, data, desc, row.Grant, ReasonRebalance); err != nil {
 			if errors.Is(err, ErrQuotaExceeded) {
 				rb.log.Debug("rebalance: peer refused (quota)", "event", "rebalance.place_refused", "reason", "quota", "id", row.ShardID, "peer", target)
 				break
@@ -204,6 +215,11 @@ func (rb *Rebalancer) RunOnce(ctx context.Context, now time.Time) (int, error) {
 		} else if !ok {
 			rb.log.Warn("rebalance: peer failed possession proof; keeping local copy",
 				"event", "rebalance.probe_fail", "id", row.ShardID, "peer", target)
+			// A proven lie (peer answered, wrong digest): strike it toward a local
+			// ban. A transport error above is inconclusive and never strikes.
+			if rb.abuse != nil {
+				rb.abuse.RecordPossessionLie(target, now)
+			}
 			break
 		}
 		rb.log.Debug("rebalance: peer proved possession",

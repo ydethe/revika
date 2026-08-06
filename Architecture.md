@@ -104,10 +104,26 @@ model in §2 is untouched. The first three are **[implemented]** in `internal/ne
 - **`ConnManager` — [implemented]** — low/high connection watermarks (defaults 64/192) with
   a grace period (30 s), trimming the least-useful connections once the count exceeds the
   high mark. `-conn-low`/`-conn-high`/`-conn-grace` tune it; `-conn-high 0` disables it.
-- **`ConnectionGater` — [implemented]** — a static, operator-supplied **peer-ID / subnet
-  blocklist** (`blocklistGater`) consulted on inbound *and* outbound dials, so a known-abusive
-  peer is refused at the transport layer before any protocol handler runs. Loaded from
-  `revika-node -blocklist <file>` (one peer ID, CIDR, or bare IP per line; `#` comments).
+- **`ConnectionGater` — [implemented]** — a **peer-ID / subnet blocklist** (`blocklistGater`)
+  consulted on inbound *and* outbound dials, so a known-abusive peer is refused at the transport
+  layer before any protocol handler runs. Seeded from `revika-node -blocklist <file>` (one peer
+  ID, CIDR, or bare IP per line; `#` comments). The peer set is **runtime-mutable and
+  persistent** (`net.Blocklister`): the operator's static entries are unioned with an on-disk
+  `blocklist.auto` (`-blocklist-auto`, default `<data>/blocklist.auto`) that the
+  maintenance-abuse detector below appends bans to and reloads on restart, so a ban outlives the
+  process. A runtime ban also drops the peer's live connection (`Network().ClosePeer`), not just
+  its next dial.
+- **Maintenance-abuse detection — [implemented]** (`internal/net/abuse.go`, `AbuseMonitor`) — a
+  node locally blacklists a peer that abuses the two grant-authorized *maintenance* flows it
+  drives against this node (§3.4), acting only on connection/identity metadata. Two triggers:
+  (a) **off-schedule rebalancing** — a rebalance move carries a `MoveReason` byte
+  (`/revika/shard/1.2.0`), and a peer whose sweeps arrive *too fast* (gap `< interval −
+  tolerance`; coalescing a sweep's PUT burst into one event, first event baseline-only) is
+  banned on the first violation — too-slow is fine; (b) **possession lies** — a peer that fails
+  a fresh-nonce possession proof for a shard it should hold accrues decaying strikes and is
+  banned at a threshold (default 3). Its tuning
+  (`-rebalance-abuse-tolerance/-coalesce/-strikes/-decay`) is a *local* defence, never inherited
+  from bootstrap.
 - **Rate limiting — [planned]** — a per-peer and per-owner token bucket on the write verbs
   (`PUT`/`DELETE`), keyed on the Ed25519 owner pubkey the auth token already carries
   (§3.2, `internal/net/auth.go`); anonymous reads (`GET`/`HAS`/`PROBE`) limited per-peer/IP
@@ -123,10 +139,13 @@ node via `Server.SetPoW` / `revika-node -pow-difficulty`, **[implemented]**; a c
 **policy advertisement** so the client learns a node's requirement up front and fails fast —
 the `/revika/params` query (`net.QueryParams`), which `revika-ctl connect` reads to mint a
 satisfying identity with no PoW flags — is also **[implemented]**). The same advertisement lets
-a node **inherit** policy: only the network's seed node states `-pow-difficulty`; a joining node
-passes only `-bootstrap` and (with `-pow-difficulty` unset) learns and enforces its bootstrap
-peers' requirement via `net.FetchPoWPolicy`, so admission propagates without the operator
-re-typing it (**[implemented]**). The puzzle is swappable
+a node **inherit** policy: a node's role is decided purely by whether `-bootstrap` is given.
+Only the network's seed node states the cluster policy — admission (`-pow-difficulty`) *and*
+maintenance cadence (repair, rebalance; §3.4); a joining node passes only `-bootstrap` and
+learns *and* enforces its bootstrap peers' policy via `net.FetchNodePolicy` (which superseded
+the PoW-only `FetchPoWPolicy`: PoW strictest-wins, repair/rebalance any-enabled + shortest
+interval), so both admission and the maintenance schedule propagate without the operator
+re-typing them (**[implemented]**). The puzzle is swappable
 behind a `Puzzle` interface — `SHA256Puzzle`
 (hashcash) or a memory-hard `Argon2idPuzzle` that collapses the GPU/ASIC advantage over an
 honest CPU. Difficulty and puzzle are *local* operator policy, checked statelessly with no
@@ -326,9 +345,14 @@ same **fraction of its own capacity** — not the same absolute shard count.
   then deletes them — by two mechanism-level guards that do **not** depend on identity (so they
   hold even against Sybils): the concentration cap bounds how much of one stripe any single node
   can attract, and the proof-gated release means the mover never drops its copy for a peer that
-  can't prove possession. A liar can still distort *placement* (waste move rounds, skew load),
-  so binding declared load to reputation/anti-Sybil — which would let a node also be *penalised*
-  for repeated probe failures — is deferred with the rest of the economic layer (§5, §10).
+  can't prove possession. A liar can still distort *placement* (waste move rounds, skew load).
+  Locally, a node now also *penalises* the two abuse signals it can observe first-hand (§3.1,
+  `AbuseMonitor`): a peer that racks up possession-lie strikes (repeated fresh-nonce probe
+  failures) or rebalances against this node *off-schedule* (`ReasonRebalance` PUTs arriving
+  faster than the cluster interval allows) is added to this node's persistent blocklist. That is
+  a per-node reflex on connection/identity metadata, not consensus; binding declared load to a
+  *network-wide* reputation/anti-Sybil layer — so a proven liar is penalised everywhere, not
+  just where it was caught — is deferred with the rest of the economic layer (§5, §10).
 
 ### 3.5 Capability & crypto layer — **[partial]** (`internal/crypto`, `internal/cap`)
 
@@ -658,7 +682,10 @@ index/accounting of the user's own data and where it lives, *not* a global share
   are chosen for target durability. A node also protects *its own* availability with local
   anti-DoS/DDoS defences — `ResourceManager`/`ConnManager` limits and a `ConnectionGater`
   blocklist (§3.1) — that act on connection/identity metadata only, never on shard content.
-  *(Implemented in `internal/net/defense.go`; per-peer/per-owner rate limiting still planned.)*
+  The blocklist is runtime-mutable and persistent, and a `net.AbuseMonitor` extends it
+  automatically when a peer abuses a maintenance flow (off-schedule rebalancing or repeated
+  possession lies — §3.1/§3.4). *(Implemented in `internal/net/defense.go` + `abuse.go`;
+  per-peer/per-owner rate limiting still planned.)*
 - **Authentication:** libp2p secure channels authenticate peers; root pointers are signed
   by the User's key. *(Planned — arrives with the network layer.)*
 - **Acceptable use / abuse control:** enforced *locally per node*, since nodes are
@@ -677,10 +704,14 @@ index/accounting of the user's own data and where it lives, *not* a global share
   lets a client learn each node's `(puzzle, min difficulty)` up front — `revika-ctl connect`
   queries every bootstrap peer, takes the strictest, and mints a satisfying identity with no
   PoW flags, instead of hitting a late authorization error (**[implemented]**). A joining node
-  reuses the same reconciliation (`net.FetchPoWPolicy`): with `-pow-difficulty` unset it adopts
-  and enforces its bootstrap peers' strictest policy, so only the seed node configures PoW and
-  the bar propagates to every node that joins (**[implemented]**). Hardened nodes
-  may also run an **owner
+  reuses the same handshake (`net.FetchNodePolicy`, which superseded the PoW-only
+  `FetchPoWPolicy`): with no `-bootstrap`-free seed flags it adopts and enforces its bootstrap
+  peers' policy — the strictest PoW bar *and* the maintenance cadence (repair/rebalance, §3.4) —
+  so only the seed node configures the cluster and both admission and maintenance propagate to
+  every node that joins (**[implemented]**). Beyond admission, a node also defends its
+  maintenance flows: `net.AbuseMonitor` locally blacklists a peer that rebalances off-schedule
+  or lies about possession (§3.1/§3.4), its tuning a purely local knob never inherited from
+  bootstrap. Hardened nodes may also run an **owner
   allowlist** (admission) instead of, or alongside, a blocklist.
 - **Out of scope for the PoC (note as future work):** economic incentives/payments,
   Byzantine-fault-tolerant reputation, defenses against storage nodes that lie about
@@ -692,11 +723,20 @@ index/accounting of the user's own data and where it lives, *not* a global share
 
 Versioned stream protocols (semantic-versioned IDs so upgrades are negotiable):
 
-- `/revika/shard/1.0.0` — `PUT` / `GET` / `HAS` / `DELETE` a shard by ID (with lease
-  parameters on PUT).
-- `/revika/probe/1.0.0` — proof-of-possession challenge/response for the repair loop.
+- `/revika/shard/1.2.0` — `PUT` / `GET` / `HAS` / `DELETE` a shard by ID. PUT carries the
+  auth token, the stripe descriptor, the repair grant, and (since 1.2.0) a trailing
+  `MoveReason` byte — `client` / `repair` / `rebalance` — so the receiver can distinguish a
+  policed rebalance move from schedule-exempt repair regeneration (§3.1/§3.4). `1.1.0` (no
+  reason byte, read as `repair`) is still served for back-compat; a client offers both IDs and
+  libp2p's muxer picks the newest shared.
+- `/revika/probe/1.0.0` — proof-of-possession challenge/response for the repair loop and the
+  rebalancer's proof-gated release.
 - `/revika/root/1.0.0` — optional direct fetch/publish of a User's signed root pointer
   (complements DHT publication).
+- `/revika/params/1.0.0` — **[implemented]:** read-only node-policy advertisement. A node
+  returns a `NodeParams` envelope (PoW admission + repair/rebalance maintenance cadence); a
+  client (`connect`) or a joining node (`net.FetchNodePolicy`) reconciles it across bootstrap
+  peers to inherit the cluster policy (§3.1/§5).
 - `/revika/balance/1.0.0` — **[implemented]:** load report — a node answers a `QueryLoad`
   with its self-declared `LoadReport` (`used`/`capacity`/`shards`), letting a sampling peer
   compare normalized load `L = used/capacity` before deciding to shed to it (diffusion

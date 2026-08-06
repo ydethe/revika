@@ -74,7 +74,7 @@ func TestGrantPutAccepted(t *testing.T) {
 
 	// The repairing node holds no User key — it replays the distributed grant.
 	repairer := NewNetStore(clientHost(t, server), server.ID())
-	got, err := repairer.putGrant(ctx, data, desc, grant)
+	got, err := repairer.putGrant(ctx, data, desc, grant, ReasonRepair)
 	if err != nil {
 		t.Fatalf("putGrant: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestGrantPutRejected(t *testing.T) {
 		server, _ := newLedgerNode(t, backing, ledger.Options{})
 		repairer := NewNetStore(clientHost(t, server), server.ID())
 		foreign := []byte("bytes not named by the grant's stripe")
-		if _, err := repairer.putGrant(ctx, foreign, desc, grant); !errors.Is(err, ErrUnauthorized) {
+		if _, err := repairer.putGrant(ctx, foreign, desc, grant, ReasonRepair); !errors.Is(err, ErrUnauthorized) {
 			t.Fatalf("foreign-shard grant PUT = %v, want ErrUnauthorized", err)
 		}
 		if ok, _ := backing.Has(ctx, store.HashOf(foreign)); ok {
@@ -123,7 +123,7 @@ func TestGrantPutRejected(t *testing.T) {
 		repairer := NewNetStore(clientHost(t, server), server.ID())
 		bad := append([]byte(nil), grant...)
 		bad[len(bad)-1] ^= 0xff
-		if _, err := repairer.putGrant(ctx, dataIn, desc, bad); !errors.Is(err, ErrUnauthorized) {
+		if _, err := repairer.putGrant(ctx, dataIn, desc, bad, ReasonRepair); !errors.Is(err, ErrUnauthorized) {
 			t.Fatalf("tampered grant PUT = %v, want ErrUnauthorized", err)
 		}
 	})
@@ -132,7 +132,7 @@ func TestGrantPutRejected(t *testing.T) {
 		backing := store.NewMemStore()
 		server, _ := newLedgerNode(t, backing, ledger.Options{})
 		repairer := NewNetStore(clientHost(t, server), server.ID())
-		if _, err := repairer.putRaw(ctx, dataIn, nil, nil, nil); !errors.Is(err, ErrUnauthorized) {
+		if _, err := repairer.putRaw(ctx, dataIn, nil, nil, nil, ReasonClient); !errors.Is(err, ErrUnauthorized) {
 			t.Fatalf("unauthenticated PUT = %v, want ErrUnauthorized", err)
 		}
 	})

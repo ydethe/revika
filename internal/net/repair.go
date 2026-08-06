@@ -126,7 +126,7 @@ func (r *RepairStore) Put(ctx context.Context, data []byte) (store.ShardID, erro
 			lastErr = err
 			continue
 		}
-		got, err := NewNetStore(r.h, pi.ID).putGrant(ctx, data, r.desc, r.grant)
+		got, err := NewNetStore(r.h, pi.ID).putGrant(ctx, data, r.desc, r.grant, ReasonRepair)
 		if err != nil {
 			lastErr = err
 			continue

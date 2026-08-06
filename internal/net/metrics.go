@@ -49,8 +49,10 @@ type MetricsServer struct {
 	version   string
 	buildDate string
 	started   time.Time
-	pow       PoWInfo    // proof-of-work admission policy this node enforces on writes
-	loadSrc   LoadSource // optional: reports storage capacity/load for rebalancing (§3.4)
+	pow       PoWInfo       // proof-of-work admission policy this node enforces on writes
+	repair    RepairInfo    // repair maintenance policy this node runs (and advertises)
+	rebalance RebalanceInfo // rebalance maintenance policy this node runs (and advertises)
+	loadSrc   LoadSource    // optional: reports storage capacity/load for rebalancing (§3.4)
 	log       *slog.Logger
 }
 
@@ -84,6 +86,15 @@ func (m *MetricsServer) SetPoW(puzzle string, minBits uint) {
 		return
 	}
 	m.pow = PoWInfo{Enabled: true, Puzzle: puzzle, Difficulty: minBits}
+}
+
+// SetMaintenance records the repair and rebalancing policy this node runs so it
+// is reported on /status and (via the params protocol) advertised to joining
+// peers. A joining node that inherited its policy passes the same effective
+// values here, so the surface reflects what the node actually does. Optional;
+// call before Serve.
+func (m *MetricsServer) SetMaintenance(repair RepairInfo, rebalance RebalanceInfo) {
+	m.repair, m.rebalance = repair, rebalance
 }
 
 // Handler returns the HTTP mux serving the metrics endpoints. Exposed so it can
@@ -132,11 +143,13 @@ type Status struct {
 	// Bootstrap holds this node's dialable addresses each terminated with
 	// /p2p/<peer-id>: ready to paste into `revika-ctl -bootstrap <addr>` to join
 	// the network through this node. Mirrors ListenAddrs with the peer ID attached.
-	Bootstrap []string    `json:"bootstrap"`
-	PoW       PoWInfo     `json:"pow"`
-	Storage   StorageInfo `json:"storage"`
-	Network   NetworkInfo `json:"network"`
-	GC        GCSnapshot  `json:"gc"`
+	Bootstrap []string      `json:"bootstrap"`
+	PoW       PoWInfo       `json:"pow"`
+	Repair    RepairInfo    `json:"repair"`
+	Rebalance RebalanceInfo `json:"rebalance"`
+	Storage   StorageInfo   `json:"storage"`
+	Network   NetworkInfo   `json:"network"`
+	GC        GCSnapshot    `json:"gc"`
 }
 
 // PoWInfo is the proof-of-work admission policy this node enforces on writes:
@@ -147,6 +160,29 @@ type PoWInfo struct {
 	Enabled    bool   `json:"enabled"`
 	Puzzle     string `json:"puzzle"`     // puzzle name, e.g. "argon2id" (empty when disabled)
 	Difficulty uint   `json:"difficulty"` // required leading zero bits (0 = disabled)
+}
+
+// RepairInfo is the availability-repair maintenance policy a node runs and
+// advertises over the params protocol, so a joining node inherits whether repair
+// runs and how often instead of re-typing it. Enabled is false (Interval 0) when
+// the node runs no repair loop. Interval marshals as nanoseconds on the wire and
+// round-trips between revika nodes.
+type RepairInfo struct {
+	Enabled  bool          `json:"enabled"`
+	Interval time.Duration `json:"interval"` // period between repair sweeps (0 = disabled)
+}
+
+// RebalanceInfo is the storage-rebalancing maintenance policy (Architecture §3.4)
+// a node runs and advertises over the params protocol, so a joining node inherits
+// the cluster's diffusion schedule. Enabled is false when the node runs no
+// rebalance loop. Interval is the period between sweeps and Threshold the load-gap
+// dead-band below which no shard is moved. The schedule (Interval) also bounds how
+// often a well-behaved peer may initiate rebalancing, which the receive-side abuse
+// detector polices.
+type RebalanceInfo struct {
+	Enabled   bool          `json:"enabled"`
+	Interval  time.Duration `json:"interval"`  // period between rebalance sweeps (0 = disabled)
+	Threshold float64       `json:"threshold"` // load-gap dead-band in [0,1]
 }
 
 // StorageInfo is the accounting side of /status: what this node holds and for whom.
@@ -195,6 +231,8 @@ func (m *MetricsServer) snapshot() (Status, error) {
 		BuildDate:     m.buildDate,
 		UptimeSeconds: time.Since(m.started).Seconds(),
 		PoW:           m.pow,
+		Repair:        m.repair,
+		Rebalance:     m.rebalance,
 	}
 	id := m.h.ID().String()
 	for _, a := range m.h.Addrs() {
@@ -341,6 +379,13 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintln(w, "# TYPE revika_pow_enabled gauge")
 	fmt.Fprintf(w, "revika_pow_enabled{puzzle=%q} %d\n", st.PoW.Puzzle, b2i(st.PoW.Enabled))
 	metric("revika_pow_difficulty_bits", "Required proof-of-work difficulty in leading zero bits (0 = disabled).", "gauge", float64(st.PoW.Difficulty))
+
+	// Maintenance policy this node runs (and advertises to joining peers).
+	metric("revika_repair_enabled", "Whether this node runs the availability-repair loop (1 = on).", "gauge", float64(b2i(st.Repair.Enabled)))
+	metric("revika_repair_interval_seconds", "Period between repair sweeps in seconds (0 = disabled).", "gauge", st.Repair.Interval.Seconds())
+	metric("revika_rebalance_enabled", "Whether this node runs the storage-rebalancing loop (1 = on).", "gauge", float64(b2i(st.Rebalance.Enabled)))
+	metric("revika_rebalance_interval_seconds", "Period between rebalance sweeps in seconds (0 = disabled).", "gauge", st.Rebalance.Interval.Seconds())
+	metric("revika_rebalance_threshold", "Load-gap dead-band below which the rebalancer moves no shard.", "gauge", st.Rebalance.Threshold)
 
 	// Dialable bootstrap addresses (multiaddr + /p2p/<id>) for `revika-ctl
 	// -bootstrap`, one info-style line (constant 1) per address, addr in a label.

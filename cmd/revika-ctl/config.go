@@ -230,11 +230,14 @@ func fetchNodeParams(ctx context.Context, bootstrap []string) (PoWConfig, error)
 	}
 	defer h.Close()
 
-	puzzle, diff, err := net.FetchPoWPolicy(ctx, h, bootstrap, dialTimeout)
+	// connect needs only the admission bar (.PoW): a client mints an identity but
+	// runs no repair/rebalance loop, so the maintenance half of the policy is not
+	// its concern.
+	np, err := net.FetchNodePolicy(ctx, h, bootstrap, dialTimeout)
 	if err != nil {
 		return PoWConfig{}, err
 	}
-	return PoWConfig{Difficulty: diff, Puzzle: puzzle}, nil
+	return PoWConfig{Difficulty: np.PoW.Difficulty, Puzzle: np.PoW.Puzzle}, nil
 }
 
 // cmdConnect creates a workspace: a folder holding config.json (the connection

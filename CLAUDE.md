@@ -42,12 +42,24 @@ User side — a node is trusted for *availability*, never *confidentiality*.
 - **Nodes may defend their own availability.** "Dumb" means dumb about *content*, not defenceless:
   an operator-run node is allowed local, operator-controlled anti-DoS/anti-DDoS defences that never
   decrypt or interpret a shard — they act only on connection/identity/volume metadata. Sanctioned
-  levers: libp2p `ResourceManager` + `ConnManager` limits, a `ConnectionGater` with a static
+  levers: libp2p `ResourceManager` + `ConnManager` limits, a `ConnectionGater` with a
   peer/subnet blocklist (and optional allowlist), and per-peer / per-owner rate limiting keyed on
   the Ed25519 owner pubkey. Existing per-owner quota + leases stay the *storage* cap; these add a
-  *flow/connection* cap. The rcmgr/connmgr/gater + static blocklist live in
-  `internal/net/defense.go` (wired via `HostConfig.Defense`); write-verb rate limiting is still
-  TODO. Note ban-by-identity is weak while identities are free to mint — global anti-Sybil,
+  *flow/connection* cap. The rcmgr/connmgr/gater live in `internal/net/defense.go` (wired via
+  `HostConfig.Defense`). The gater's peer set is now *runtime-mutable and persistent*
+  (`net.Blocklister`): it unions the operator's static `-blocklist` with an on-disk
+  `blocklist.auto` (path `-blocklist-auto`, default `<data>/blocklist.auto`) that a node's
+  **maintenance-abuse detector** (`internal/net/abuse.go`, `net.AbuseMonitor`) appends bans to
+  and reloads on restart. That detector locally blacklists a peer that abuses the two
+  grant-authorized maintenance flows — a *too-fast* rebalancer (`ReasonRebalance` PUTs arriving
+  faster than `interval − tolerance`; one violation bans) or one that racks up possession-lie
+  strikes (fresh-nonce probe failures; default 3 within a decay window). Rebalance moves carry a
+  trailing `MoveReason` byte on `/revika/shard/1.2.0` so the receiver distinguishes a policed
+  rebalance move from schedule-exempt repair regeneration. Abuse-detector tuning
+  (`-rebalance-abuse-tolerance/-coalesce/-strikes/-decay`) is a **local** defence — never
+  inherited from bootstrap and never ignored on a joining node, unlike admission/maintenance
+  policy. Write-verb *rate* limiting is still TODO. Note ban-by-identity is weak while identities
+  are free to mint — proof-of-work identities raise the re-mint cost, but global anti-Sybil,
   reputation, and economic layers remain deferred (see Architecture.md §5).
 
 ## Toolchain & conventions
@@ -80,9 +92,11 @@ go vet ./...
 go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstrap
                           #   -advertise -quota -lease-ttl -gc-interval -gc-expired-leases
                           #   -repair -repair-interval -rebalance -rebalance-interval
-                          #   -rebalance-threshold -capacity -metrics -blocklist -conn-low
-                          #   -conn-high -conn-grace -pow-difficulty -pow-puzzle
-                          #   -log-format -log-level -v)
+                          #   -rebalance-threshold -capacity -metrics -blocklist
+                          #   -blocklist-auto -rebalance-abuse-tolerance
+                          #   -rebalance-abuse-coalesce -rebalance-abuse-strikes
+                          #   -rebalance-abuse-decay -conn-low -conn-high -conn-grace
+                          #   -pow-difficulty -pow-puzzle -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | ls | rm | share | revoke | node
                           #   (see -h). `ls -owner <pubkey-file>` resolves a namespace's DHT-published
                           #   root (verify-only); `revoke rvk:PATH` re-keys a shared subtree.
@@ -136,13 +150,21 @@ read the base64 key from the named file (no `@file` prefix, no inline key).
 argon2id@12) until its pubkey hashes under the target, so re-minting a banned identity costs
 CPU, not milliseconds (`internal/cap/pow.go`). Nodes admit writes only from owners meeting
 their own `-pow-difficulty` (default 0 = off), so client and node must use a matching puzzle
-and the client's difficulty must be ≥ the node's. Only the network's **seed** node states the
-policy with `-pow-difficulty`/`-pow-puzzle`; a node that merely joins passes only `-bootstrap`
-and, when `-pow-difficulty` is left unset, learns the policy from its bootstrap peers over
-`/revika/params` (`net.FetchPoWPolicy`, strictest wins — the same handshake `revika-ctl connect`
-uses) and enforces that, so admission propagates without the operator re-typing it. Passing
-`-pow-difficulty` (even `0`) opts out and pins the local policy. `cp` (store)/`rm`/`share` sign
-with `-signkey` (default `.revika/keys/user.sign.key`).
+and the client's difficulty must be ≥ the node's.
+
+A node's role is decided purely by whether `-bootstrap` is given. Only the network's **seed**
+node (no `-bootstrap`) states the cluster policy — admission (`-pow-difficulty`/`-pow-puzzle`)
+*and* maintenance (`-repair`/`-repair-interval`, `-rebalance`/`-rebalance-interval`/
+`-rebalance-threshold`) — from its own flags. A **joining** node (`-bootstrap` given) inherits
+that whole policy from its bootstrap peers over `/revika/params` (`net.FetchNodePolicy`, which
+replaced the PoW-only `FetchPoWPolicy`: PoW strictest-wins, repair/rebalance any-enabled +
+shortest interval — the same handshake `revika-ctl connect` uses for the PoW field) and runs
+it, so admission *and* the maintenance cadence propagate without the operator re-typing them;
+any policy flags a joining node also passes are ignored with a warning. (The one exception:
+the *local* abuse-detector tuning flags are always honored — see the self-defence constraint
+above.) A seed's admission opt-out is explicit: passing `-pow-difficulty` (even `0`) pins the
+local policy. `cp` (store)/`rm`/`share` sign with `-signkey` (default
+`.revika/keys/user.sign.key`).
 
 Runtime state lives under `.revika/` (git-ignored): node shares, SQLite ledger, keys, mock store.
 
