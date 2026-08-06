@@ -296,9 +296,13 @@ echo
 OWNER_PUB="$WORK/user.sign.pub"
 
 # Parse the "seq:" line out of `ls -owner` (empty if the root isn't resolvable yet).
+# The trailing `|| true` keeps a not-yet-resolvable lookup (revika-ctl exits
+# non-zero, and `pipefail` propagates that) from tripping `set -e` on the
+# `seq_before=$(published_seq)` assignment — that would abort the surrounding
+# retry loop on the very first attempt instead of letting it back off and retry.
 published_seq() {
   revika-ctl ls -root "$RCPT_WS" -owner "$OWNER_PUB" 2>/dev/null \
-    | sed -n 's/^[[:space:]]*seq:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1
+    | sed -n 's/^[[:space:]]*seq:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1 || true
 }
 
 echo ">> a second client resolves the OWNER's published root over the DHT (verify-only)"
