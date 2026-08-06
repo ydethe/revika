@@ -37,7 +37,8 @@ NODE_MOUNTS=(/nodes/seed /nodes/node2 /nodes/node3)
 WORK=/tmp/revika-tree
 SRC="$WORK/src"
 OUT="$WORK/out"                 # restored whole tree (must NOT pre-exist)
-ROOTFILE="$WORK/root.json"      # the User's signed namespace anchor
+WS="$WORK/ws"                   # the User's workspace (config.json + root.json)
+ROOTFILE="$WS/root.json"        # the User's signed namespace anchor
 rm -rf "$WORK"
 mkdir -p "$SRC"
 
@@ -61,6 +62,12 @@ echo ">> generating the client's signing identity"
 revika-ctl keygen -key "$WORK/user" -pow-difficulty 0 >/dev/null
 SIGNKEY="$WORK/user.sign.key"
 
+# Create a workspace whose saved config.json carries the bootstrap peer, so every
+# namespace command reaches the network via -root (bootstrap is no longer a
+# per-command flag). The seed is the sole bootstrap; the rest are found via the DHT.
+echo ">> creating a workspace bootstrapped through the seed"
+revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
 # Discover every storage node over the DHT (see verify.sh for the rationale).
@@ -68,7 +75,7 @@ EXPECTED_NODES=${#NODE_MOUNTS[@]}
 echo ">> discovering storage nodes via bootstrap $SEED_ADDR (expect all $EXPECTED_NODES)"
 reachable=0
 for attempt in 1 2 3 4 5 6; do
-  nodes_out=$(revika-ctl node -bootstrap "$SEED_ADDR" || true)
+  nodes_out=$(revika-ctl node -root "$WS" || true)
   printf '%s\n' "$nodes_out" | sed 's/^/     /'
   reachable=$(printf '%s\n' "$nodes_out" | sed -n 's/.*(\([0-9]*\) reachable).*/\1/p')
   reachable=${reachable:-0}
@@ -95,7 +102,7 @@ done
 echo ">> cp \$SRC rvk:tree via bootstrap $SEED_ADDR (store the whole tree)"
 put_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl cp -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -root "$ROOTFILE" "$SRC" rvk:tree; then
+  if revika-ctl cp -root "$WS" -signkey "$SIGNKEY" "$SRC" rvk:tree; then
     put_ok=1
     break
   fi
@@ -125,7 +132,7 @@ echo "OK: all ${#NODE_MOUNTS[@]} nodes received shards ($total_new total)"
 echo ">> cp rvk:tree \$OUT via bootstrap $SEED_ADDR (restore the whole tree)"
 get_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$ROOTFILE" rvk:tree "$OUT"; then
+  if revika-ctl cp -root "$WS" rvk:tree "$OUT"; then
     get_ok=1
     break
   fi
@@ -177,13 +184,20 @@ revika-ctl keygen -key "$WORK/recipient" -pow-difficulty 0 >/dev/null
 RCPT_PUB="$WORK/recipient.pub"
 RCPT_KEY="$WORK/recipient.key"
 
+# The recipient opens a sealed shared root — a bare file with no config — so it
+# needs a workspace to reach the network over the DHT (a single -node cannot
+# reconstruct k=4 shards spread 2-per-node across 3 nodes). Drop the sealed root
+# in as the workspace's root.json; its config.json supplies the bootstrap peer.
+RCPT_WS="$WORK/recipient-ws"
+revika-ctl connect -root "$RCPT_WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+
 SHARE_REL="docs/a.txt"
-FILE_SEALED="$WORK/a.root.json"
+FILE_SEALED="$RCPT_WS/root.json"
 FILE_OUT="$WORK/a.out"          # explicit output path (a file-anchored root)
 echo ">> share rvk:tree/$SHARE_REL (seal one file to the recipient)"
 share_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl share -bootstrap "$SEED_ADDR" -root "$ROOTFILE" -signkey "$SIGNKEY" \
+  if revika-ctl share -root "$WS" -signkey "$SIGNKEY" \
       -to "@$RCPT_PUB" -o "$FILE_SEALED" "rvk:tree/$SHARE_REL"; then
     share_ok=1
     break
@@ -197,7 +211,7 @@ done
 echo ">> recipient opens the sealed root with -key and reconstructs the file"
 get_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$FILE_SEALED" -key "$RCPT_KEY" rvk: "$FILE_OUT"; then
+  if revika-ctl cp -root "$RCPT_WS" -key "$RCPT_KEY" rvk: "$FILE_OUT"; then
     get_ok=1
     break
   fi
@@ -214,7 +228,7 @@ echo "OK: a single file was shared from the tree and reconstructed byte-identica
 # A wrong key must NOT open the sealed shared root.
 echo ">> a stranger's key must not open the sealed shared root"
 revika-ctl keygen -key "$WORK/stranger" -pow-difficulty 0 >/dev/null
-if revika-ctl ls -bootstrap "$SEED_ADDR" -root "$FILE_SEALED" -key "$WORK/stranger.key" >/dev/null 2>&1; then
+if revika-ctl ls -root "$RCPT_WS" -key "$WORK/stranger.key" >/dev/null 2>&1; then
   echo "FAIL: a sealed shared root opened with the wrong key"
   exit 1
 fi
@@ -222,12 +236,12 @@ echo "OK: the sealed shared root refuses the wrong key"
 
 # --- share a SUBTREE out of the stored tree ----------------------------------
 SHARE_DIR="docs"
-DIR_SEALED="$WORK/docs.root.json"
+DIR_SEALED="$RCPT_WS/root.json"  # reuse the recipient workspace (supersedes the file root)
 DIR_OUT="$WORK/docs.out"        # must NOT pre-exist (a dir-anchored root)
 echo ">> share rvk:tree/$SHARE_DIR (seal a subtree to the recipient)"
 share_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl share -bootstrap "$SEED_ADDR" -root "$ROOTFILE" -signkey "$SIGNKEY" \
+  if revika-ctl share -root "$WS" -signkey "$SIGNKEY" \
       -to "@$RCPT_PUB" -o "$DIR_SEALED" "rvk:tree/$SHARE_DIR"; then
     share_ok=1
     break
@@ -240,7 +254,7 @@ done
 echo ">> recipient restores only the shared subtree"
 get_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$DIR_SEALED" -key "$RCPT_KEY" rvk: "$DIR_OUT"; then
+  if revika-ctl cp -root "$RCPT_WS" -key "$RCPT_KEY" rvk: "$DIR_OUT"; then
     get_ok=1
     break
   fi

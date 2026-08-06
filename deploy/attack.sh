@@ -49,7 +49,7 @@ echo "== unauthorized-access checks (every attempt MUST be denied) =="
 #    work from, so the client cannot even mount a retrieval — network access alone
 #    buys nothing. (The attacker has no root.json, so cp finds none.)
 echo ">> attempt 1: cp (retrieve) with no root pointer"
-if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$WORK/none.json" rvk:testfile.bin "$OUT" 2>/dev/null; then
+if revika-ctl cp -root "$WORK/none.json" rvk:testfile.bin "$OUT" 2>/dev/null; then
   echo "   FAIL: retrieved data with no read-capability whatsoever"
   fail=1
 else
@@ -61,7 +61,7 @@ fi
 #    fail — this is the sharing/authorization boundary.
 echo ">> attempt 2: open a root sealed for another user, using our own key"
 if [ -f /handoff/secret.root.json ]; then
-  if revika-ctl cp -bootstrap "$SEED_ADDR" -root /handoff/secret.root.json \
+  if revika-ctl cp -root /handoff/secret.root.json \
        -key "$WORK/attacker.key" rvk: "$OUT" 2>/dev/null; then
     echo "   FAIL: opened a shared root that was not sealed to us"
     fail=1

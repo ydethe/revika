@@ -25,7 +25,11 @@ set -euo pipefail
 : "${SEED_ADDR:?SEED_ADDR must point at the seed node /p2p multiaddr}"
 
 SRC=/handoff/repair-src.bin
-ROOTFILE=/handoff/repair-root.json
+# The workspace lives on the shared /handoff volume so the post-failure `get`
+# container reuses the same config.json (bootstrap) + root.json the `store`
+# container wrote. Bootstrap is no longer a per-command flag; it comes from here.
+WS=/handoff/repair-ws
+ROOTFILE=/handoff/repair-ws/root.json
 SIGNKEY=/handoff/repair-user.sign.key
 
 # The node data volumes are mounted read-only here; the DOWN node is passed so
@@ -55,7 +59,8 @@ case "${1:-}" in
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
     revika-ctl keygen -key /handoff/repair-user -pow-difficulty 0 >/dev/null
-    retry "store" revika-ctl cp -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -root "$ROOTFILE" "$SRC" rvk:repair.bin \
+    revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 -force >/dev/null
+    retry "store" revika-ctl cp -root "$WS" -signkey "$SIGNKEY" "$SRC" rvk:repair.bin \
       || { echo "FAIL: store never succeeded"; exit 1; }
     [ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }
     echo "OK: stored; root pointer + source saved under /handoff"
@@ -105,7 +110,7 @@ case "${1:-}" in
     echo ">> [get] retrieving the file after repair"
     [ -s "$ROOTFILE" ] || { echo "FAIL: /handoff root pointer missing (did 'store' run?)"; exit 1; }
     OUT=/tmp/repair-out.bin
-    retry "get" revika-ctl cp -bootstrap "$SEED_ADDR" -root "$ROOTFILE" rvk:repair.bin "$OUT" \
+    retry "get" revika-ctl cp -root "$WS" rvk:repair.bin "$OUT" \
       || { echo "FAIL: get never succeeded"; exit 1; }
     if cmp -s "$SRC" "$OUT"; then
       echo "PASS: file retrieved byte-identical after repair"

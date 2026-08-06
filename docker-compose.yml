@@ -81,7 +81,6 @@ services:
       - -data=/data
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
-      - -mdns=false
       # Repair cadence; shortened by deploy/repair.sh via REPAIR_INTERVAL, else 1h.
       - -repair-interval=${REPAIR_INTERVAL:-1h}
     healthcheck: *node_healthcheck
@@ -102,7 +101,6 @@ services:
       - -data=/data
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
-      - -mdns=false
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
@@ -120,7 +118,6 @@ services:
       - -data=/data
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
-      - -mdns=false
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
@@ -143,7 +140,6 @@ services:
       - -data=/data
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
-      - -mdns=false
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}
@@ -162,7 +158,6 @@ services:
       - -data=/data
       - -listen=/ip4/0.0.0.0/tcp/4001
       - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
-      - -mdns=false
       - -bootstrap
       - *seed_addr
       - -repair-interval=${REPAIR_INTERVAL:-1h}

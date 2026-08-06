@@ -30,7 +30,8 @@ WORK=/tmp/revika-verify
 mkdir -p "$WORK"
 SRC="$WORK/testfile.bin"
 OUT="$WORK/roundtrip.bin"
-ROOTFILE="$WORK/root.json"       # the User's signed namespace anchor
+WS="$WORK/ws"                    # the User's workspace (config.json + root.json + keys)
+ROOTFILE="$WS/root.json"         # the User's signed namespace anchor
 
 # A distinctive plaintext canary we embed at the start of the payload. The
 # unauthorized-access client (deploy/attack.sh) later hunts for it in the raw
@@ -51,6 +52,12 @@ echo ">> generating the client's signing identity"
 revika-ctl keygen -key "$WORK/user" -pow-difficulty 0 >/dev/null
 SIGNKEY="$WORK/user.sign.key"
 
+# Create a workspace whose saved config.json carries the bootstrap peer, so every
+# namespace command reaches the network via -root (bootstrap is no longer a
+# per-command flag). The seed is the sole bootstrap; the rest are found via the DHT.
+echo ">> creating a workspace bootstrapped through the seed"
+revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
 # The client bootstraps ONLY through the seed (SEED_ADDR), yet it must discover
@@ -65,7 +72,7 @@ EXPECTED_NODES=${#NODE_MOUNTS[@]}   # seed + node2 + node3
 echo ">> discovering storage nodes via bootstrap $SEED_ADDR (expect all $EXPECTED_NODES)"
 reachable=0
 for attempt in 1 2 3 4 5 6; do
-  nodes_out=$(revika-ctl node -bootstrap "$SEED_ADDR" || true)
+  nodes_out=$(revika-ctl node -root "$WS" || true)
   printf '%s\n' "$nodes_out" | sed 's/^/     /'
   # Parse "Discovered N storage node(s) via the DHT (M reachable):"
   discovered=$(printf '%s\n' "$nodes_out" | sed -n 's/^Discovered \([0-9]*\) storage node.*/\1/p')
@@ -97,7 +104,7 @@ done
 echo ">> cp \$SRC rvk:testfile.bin via bootstrap $SEED_ADDR"
 put_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl cp -bootstrap "$SEED_ADDR" -signkey "$SIGNKEY" -root "$ROOTFILE" "$SRC" rvk:testfile.bin; then
+  if revika-ctl cp -root "$WS" -signkey "$SIGNKEY" "$SRC" rvk:testfile.bin; then
     put_ok=1
     break
   fi
@@ -127,7 +134,7 @@ echo "OK: all ${#NODE_MOUNTS[@]} nodes received shards ($total_new total)"
 echo ">> cp rvk:testfile.bin \$OUT via bootstrap $SEED_ADDR"
 get_ok=""
 for attempt in 1 2 3 4 5; do
-  if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$ROOTFILE" rvk:testfile.bin "$OUT"; then
+  if revika-ctl cp -root "$WS" rvk:testfile.bin "$OUT"; then
     get_ok=1
     break
   fi
@@ -156,7 +163,7 @@ fi
 if [ -d /handoff ]; then
   echo ">> preparing handoff for the unauthorized-access client"
   revika-ctl keygen -key "$WORK/thirdparty" -pow-difficulty 0 >/dev/null
-  revika-ctl share -bootstrap "$SEED_ADDR" -root "$ROOTFILE" -signkey "$SIGNKEY" \
+  revika-ctl share -root "$WS" -signkey "$SIGNKEY" \
     -to "@$WORK/thirdparty.pub" -o /handoff/secret.root.json rvk:testfile.bin >/dev/null
   printf '%s' "$MARKER" >/handoff/marker.txt
   echo "   wrote /handoff/secret.root.json (sealed for a third party) and /handoff/marker.txt"

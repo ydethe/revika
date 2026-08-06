@@ -33,8 +33,12 @@ WORK=/tmp/revika-delete
 mkdir -p "$WORK"
 SRC="$WORK/secret.bin"
 OUT="$WORK/roundtrip.bin"
-OWNER_ROOT="$WORK/owner-root.json"     # the owner's signed namespace anchor
-MALLORY_ROOT="$WORK/mallory-root.json" # a copy mallory obtained (the read-cap)
+# Each user drives its own workspace whose config.json carries the bootstrap peer
+# (bootstrap is no longer a per-command flag). The root pointer is <ws>/root.json.
+OWNER_WS="$WORK/owner-ws"
+MALLORY_WS="$WORK/mallory-ws"
+OWNER_ROOT="$OWNER_WS/root.json"       # the owner's signed namespace anchor
+MALLORY_ROOT="$MALLORY_WS/root.json"   # a copy mallory obtained (the read-cap)
 
 fail=0
 
@@ -57,9 +61,13 @@ retry() {
 revika-ctl keygen -key "$WORK/owner"   -pow-difficulty 0 >/dev/null
 revika-ctl keygen -key "$WORK/mallory" -pow-difficulty 0 >/dev/null
 
+# A workspace per user, each bootstrapped through the seed.
+revika-ctl connect -root "$OWNER_WS"   -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+revika-ctl connect -root "$MALLORY_WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 >/dev/null
+
 echo ">> owner stores a 1 MiB file across the nodes"
 head -c 1048576 /dev/urandom >"$SRC"
-retry "store" revika-ctl cp -bootstrap "$SEED_ADDR" -signkey "$WORK/owner.sign.key" -root "$OWNER_ROOT" "$SRC" rvk:secret.bin \
+retry "store" revika-ctl cp -root "$OWNER_WS" -signkey "$WORK/owner.sign.key" "$SRC" rvk:secret.bin \
   || { echo "FAIL: owner store never succeeded"; exit 1; }
 [ -s "$OWNER_ROOT" ] || { echo "FAIL: no root pointer written"; exit 1; }
 
@@ -75,7 +83,7 @@ echo "== delete-protection checks =="
 #    owned by another identity (and a node independently refuses her DELETE
 #    token), and the file must survive.
 echo ">> attempt: a non-owner (with the read-cap) removes the file — MUST be denied"
-if revika-ctl rm -bootstrap "$SEED_ADDR" -signkey "$WORK/mallory.sign.key" -root "$MALLORY_ROOT" rvk:secret.bin; then
+if revika-ctl rm -root "$MALLORY_WS" -signkey "$WORK/mallory.sign.key" rvk:secret.bin; then
   echo "   FAIL: a non-owner removed another user's file"
   fail=1
 else
@@ -83,7 +91,7 @@ else
 fi
 
 echo ">> the file must still be retrievable after the refused removal"
-if retry "get" revika-ctl cp -bootstrap "$SEED_ADDR" -root "$OWNER_ROOT" rvk:secret.bin "$OUT" && cmp -s "$SRC" "$OUT"; then
+if retry "get" revika-ctl cp -root "$OWNER_WS" rvk:secret.bin "$OUT" && cmp -s "$SRC" "$OUT"; then
   echo "   OK: the file is intact — the unauthorized removal changed nothing"
 else
   echo "   FAIL: the file is gone or altered after a removal that should have been refused"
@@ -93,7 +101,7 @@ fi
 # 2) POSITIVE control: the owner rm's with their signing key. It must succeed,
 #    and the file must then be unrecoverable.
 echo ">> attempt: the owner removes the file — MUST succeed"
-if revika-ctl rm -bootstrap "$SEED_ADDR" -signkey "$WORK/owner.sign.key" -root "$OWNER_ROOT" rvk:secret.bin; then
+if revika-ctl rm -root "$OWNER_WS" -signkey "$WORK/owner.sign.key" rvk:secret.bin; then
   echo "   OK: the owner removed their own file"
 else
   echo "   FAIL: the owner could not remove their own file"
@@ -104,7 +112,7 @@ echo ">> the file must no longer be retrievable after the owner's removal"
 # A single attempt: the file is grafted out of the root and its blobs removed
 # synchronously when the last owner deletes, so a retrieval can no longer resolve
 # the path (or gather k shards) and must fail.
-if revika-ctl cp -bootstrap "$SEED_ADDR" -root "$OWNER_ROOT" rvk:secret.bin "$WORK/gone.bin" 2>/dev/null; then
+if revika-ctl cp -root "$OWNER_WS" rvk:secret.bin "$WORK/gone.bin" 2>/dev/null; then
   echo "   FAIL: retrieved the file after the owner removed it"
   fail=1
 else

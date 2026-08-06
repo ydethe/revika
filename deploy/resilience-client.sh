@@ -17,7 +17,11 @@ set -euo pipefail
 : "${SEED_ADDR:?SEED_ADDR must point at the seed node /p2p multiaddr}"
 
 SRC=/handoff/resilience-src.bin
-ROOTFILE=/handoff/resilience-root.json
+# The workspace lives on the shared /handoff volume so the `get` container reuses
+# the same config.json (bootstrap) + root.json the `store` container wrote.
+# Bootstrap is no longer a per-command flag; it comes from the workspace config.
+WS=/handoff/resilience-ws
+ROOTFILE=/handoff/resilience-ws/root.json
 
 # DHT discovery + provider records are eventually consistent, so allow a few
 # attempts before giving up.
@@ -38,7 +42,8 @@ case "${1:-}" in
     head -c 1048576 /dev/urandom >"$SRC"
     # Storing is an authenticated write: sign it with a freshly generated owner key.
     revika-ctl keygen -key /tmp/resilience-user -pow-difficulty 0 >/dev/null
-    retry "store" revika-ctl cp -bootstrap "$SEED_ADDR" -signkey /tmp/resilience-user.sign.key -root "$ROOTFILE" "$SRC" rvk:resilience.bin \
+    revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -pow-difficulty 0 -force >/dev/null
+    retry "store" revika-ctl cp -root "$WS" -signkey /tmp/resilience-user.sign.key "$SRC" rvk:resilience.bin \
       || { echo "FAIL: store never succeeded"; exit 1; }
     [ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }
     echo "OK: stored; source + root pointer saved under /handoff"
@@ -48,7 +53,7 @@ case "${1:-}" in
     echo ">> [get] retrieving with a node DOWN (any k=4 of 6 shards suffice)"
     [ -s "$ROOTFILE" ] || { echo "FAIL: /handoff root pointer missing (did 'store' run?)"; exit 1; }
     OUT=/tmp/resilience-out.bin
-    retry "get" revika-ctl cp -bootstrap "$SEED_ADDR" -root "$ROOTFILE" rvk:resilience.bin "$OUT" \
+    retry "get" revika-ctl cp -root "$WS" rvk:resilience.bin "$OUT" \
       || { echo "FAIL: get never succeeded (could not gather k shards from the survivors)"; exit 1; }
     if cmp -s "$SRC" "$OUT"; then
       echo
