@@ -139,8 +139,25 @@ put() {
   [ -n "$ok" ] || { echo "FAIL: cp $src $dst never succeeded"; exit 1; }
 }
 
-# lsline <workspace> <rvk-path> — print one entry name per line for a directory.
-lsline() { revika-ctl ls -root "$1" "$2"; }
+# lsline <workspace> <rvk-path> — print one entry name per line for a directory,
+# retrying on the transient bootstrap-connect flake (a fresh revika-ctl invocation
+# occasionally loses the seed's libp2p security handshake — "all dials failed" /
+# "negotiate security protocol: EOF" — then succeeds on a retry, exactly as put()/
+# getbytes() already tolerate). Diagnostics go to stderr so the captured stdout
+# stays clean for the callers' `grep` assertions.
+lsline() {
+  local ws="$1" p="$2" out ok=""
+  for attempt in 1 2 3 4 5; do
+    if out=$(revika-ctl ls -root "$ws" "$p" 2>/dev/null); then
+      ok=1
+      break
+    fi
+    echo "   ls $p attempt $attempt failed; retrying in 5s..." >&2
+    sleep 5
+  done
+  [ -n "$ok" ] || { echo "FAIL: ls $p never succeeded" >&2; exit 1; }
+  printf '%s\n' "$out"
+}
 
 # published_seq <workspace> — the owner's currently PUBLISHED root sequence as
 # seen over the DHT (empty until the root propagates). `ls -owner` reads the
