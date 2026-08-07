@@ -120,8 +120,7 @@ func run() error {
 		connGrace     = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
 		writeRate     = flag.Float64("write-rate", 0, "per-owner write-verb rate cap in writes/second on PUT/DELETE (0 = disabled). A token bucket keyed on the Ed25519 owner refuses over-rate writes with statusRateLimited; grant-authorized repair/rebalance writes are exempt. LOCAL defence, never inherited")
 		writeBurst    = flag.Float64("write-burst", 0, "per-owner write burst allowance: max back-to-back writes before -write-rate throttles (0 = default to -write-rate, i.e. a ~1s burst; clamped to >=1). LOCAL defence, never inherited")
-		powDiff       = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). Clients must keygen with a matching -pow-puzzle and difficulty >= this")
-		powPuzzle     = flag.String("pow-puzzle", "argon2id", "proof-of-work puzzle owner identities must satisfy: argon2id (memory-hard) or sha256 (fast). Must match what clients mint with")
+		powDiff       = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
 		publicIP      = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
 		listen        multiFlag
 		bootstrap     multiFlag
@@ -142,8 +141,8 @@ func run() error {
 	var ignoredPolicyFlags []string
 	if joining {
 		policyFlags := map[string]struct{}{
-			"pow-difficulty": {}, "pow-puzzle": {},
-			"repair": {}, "repair-interval": {},
+			"pow-difficulty": {},
+			"repair":         {}, "repair-interval": {},
 			"rebalance": {}, "rebalance-interval": {}, "rebalance-threshold": {},
 		}
 		flag.Visit(func(f *flag.Flag) {
@@ -288,19 +287,19 @@ func run() error {
 	// banned owner cannot re-mint a fresh identity for free. Off by default.
 	//
 	// The effective policy is either declared locally (a seed node passes
-	// -pow-difficulty/-pow-puzzle) or, for a node that only knows -bootstrap and
-	// left -pow-difficulty unset, learned from its bootstrap peers over
-	// /revika/params (strictest wins) — the same handshake `revika-ctl connect`
-	// uses. So a node joining an existing network inherits the admission bar
-	// without the operator re-typing it; only the network's first (seed) node must
-	// state the policy.
+	// -pow-difficulty) or, for a node that only knows -bootstrap and left
+	// -pow-difficulty unset, learned from its bootstrap peers over /revika/params
+	// (strictest wins) — the same handshake `revika-ctl connect` uses. So a node
+	// joining an existing network inherits the admission bar without the operator
+	// re-typing it; only the network's first (seed) node must state the policy. The
+	// puzzle is always Argon2id, so only the difficulty is a policy knob.
 	// Effective cluster policy: admission (PoW) + maintenance (repair, rebalance).
 	// A seed uses its own flags; a joiner inherits all of it from bootstrap peers
 	// over /revika/params, so the maintenance cadence and admission bar propagate
 	// without the operator re-typing them and a fresh node stays in step with the
 	// cluster. Intervals are guarded > 0 before adoption so a malformed/old peer
 	// advertisement can never hand us a zero-period ticker (which would panic).
-	effPuzzle, effDiff := *powPuzzle, *powDiff
+	effDiff := *powDiff
 	effRepairOn, effRepairEvery := *repairOn, *repairEvery
 	effRebalOn, effRebalEvery, effRebalThresh := *rebalanceOn, *rebalEvery, *rebalThresh
 	if joining {
@@ -309,9 +308,6 @@ func run() error {
 		cancel()
 		if perr != nil {
 			return fmt.Errorf("learn policy from bootstrap: %w", perr)
-		}
-		if np.PoW.Puzzle != "" {
-			effPuzzle = np.PoW.Puzzle
 		}
 		effDiff = np.PoW.Difficulty
 		effRepairOn = np.Repair.Enabled
@@ -326,7 +322,7 @@ func run() error {
 			effRebalThresh = np.Rebalance.Threshold
 		}
 		log.Info("policy inherited from bootstrap", "event", "policy.inherit",
-			"pow_bits", effDiff, "pow_puzzle", effPuzzle,
+			"pow_bits", effDiff,
 			"repair", effRepairOn, "repair_interval", effRepairEvery,
 			"rebalance", effRebalOn, "rebalance_interval", effRebalEvery, "rebalance_threshold", effRebalThresh)
 		if len(ignoredPolicyFlags) > 0 {
@@ -338,10 +334,7 @@ func run() error {
 		if effDiff > 255 {
 			return fmt.Errorf("pow-difficulty %d out of range (0-255)", effDiff)
 		}
-		puzzle, err := cap.PuzzleByName(effPuzzle)
-		if err != nil {
-			return err
-		}
+		puzzle := cap.DefaultArgon2id()
 		srv.SetPoW(puzzle, cap.Difficulty(effDiff))
 		log.Info("proof-of-work admission enabled", "puzzle", puzzle.Name(), "min_bits", effDiff)
 	}
@@ -452,7 +445,7 @@ func run() error {
 	if *metricsAddr != "" {
 		ms := net.NewMetricsServer(h, led, disc, version, buildDate, startedAt, log)
 		ms.SetGCStats(gcStats)
-		ms.SetPoW(effPuzzle, effDiff)
+		ms.SetPoW(effDiff)
 		ms.SetMaintenance(repairPolicy, rebalancePolicy)
 		ms.SetLoadSource(net.LoadSource(loadSource))
 		go func() {

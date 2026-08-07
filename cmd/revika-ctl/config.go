@@ -71,29 +71,20 @@ type ErasureConfig struct {
 }
 
 // PoWConfig mirrors a node's proof-of-work admission policy for owner
-// identities. Difficulty is leading zero bits (0 = the node enforces none);
-// Puzzle is the grinding function ("argon2id" or "sha256").
+// identities. Difficulty is leading zero bits (0 = the node enforces none). The
+// puzzle is always Argon2id, so it is not recorded.
 type PoWConfig struct {
-	Difficulty uint   `json:"difficulty"`
-	Puzzle     string `json:"puzzle"`
+	Difficulty uint `json:"difficulty"`
 }
 
-// resolve turns a stored policy into the cap types used to mint an identity: an
-// empty puzzle name (the node reported PoW disabled) defaults to argon2id, which
-// costs nothing to satisfy at difficulty 0.
-func (p PoWConfig) resolve() (cap.Puzzle, cap.Difficulty, error) {
-	name := p.Puzzle
-	if name == "" {
-		name = "argon2id"
-	}
+// resolve turns a stored policy into the cap types used to mint an identity. The
+// puzzle is always Argon2id (DefaultArgon2id), which costs nothing to satisfy at
+// difficulty 0.
+func (p PoWConfig) resolve() (cap.Argon2idPuzzle, cap.Difficulty, error) {
 	if p.Difficulty > 255 {
-		return nil, 0, fmt.Errorf("pow difficulty %d out of range (0-255)", p.Difficulty)
+		return cap.Argon2idPuzzle{}, 0, fmt.Errorf("pow difficulty %d out of range (0-255)", p.Difficulty)
 	}
-	puzzle, err := cap.PuzzleByName(name)
-	if err != nil {
-		return nil, 0, err
-	}
-	return puzzle, cap.Difficulty(p.Difficulty), nil
+	return cap.DefaultArgon2id(), cap.Difficulty(p.Difficulty), nil
 }
 
 // Workspace is the resolved -root: where the root pointer lives and, in
@@ -250,24 +241,17 @@ func (w *Workspace) backend(node string) (string, []string) {
 }
 
 // powSettings returns the proof-of-work puzzle and difficulty a newly minted
-// identity in this workspace must satisfy: the workspace config's policy when it
-// has one, else keygen's defaults (argon2id at 12 bits).
-func (w *Workspace) powSettings() (cap.Puzzle, cap.Difficulty, error) {
-	name, diff := "argon2id", uint(12)
+// identity in this workspace must satisfy: the workspace config's difficulty when
+// it has one, else keygen's default of 12 bits. The puzzle is always Argon2id.
+func (w *Workspace) powSettings() (cap.Argon2idPuzzle, cap.Difficulty, error) {
+	diff := uint(12)
 	if w != nil && w.Config != nil {
 		diff = w.Config.PoW.Difficulty
-		if w.Config.PoW.Puzzle != "" {
-			name = w.Config.PoW.Puzzle
-		}
 	}
 	if diff > 255 {
-		return nil, 0, fmt.Errorf("pow difficulty %d out of range (0-255)", diff)
+		return cap.Argon2idPuzzle{}, 0, fmt.Errorf("pow difficulty %d out of range (0-255)", diff)
 	}
-	puzzle, err := cap.PuzzleByName(name)
-	if err != nil {
-		return nil, 0, err
-	}
-	return puzzle, cap.Difficulty(diff), nil
+	return cap.DefaultArgon2id(), cap.Difficulty(diff), nil
 }
 
 // loadConfig reads config.json, returning (nil, nil) when the file is absent — a
@@ -304,11 +288,9 @@ func saveConfig(path string, c Config) error {
 // carry /p2p/<id>, so no DHT warm-up is needed — and reads its admission policy,
 // so `connect` learns the node's proof-of-work requirement instead of the
 // operator re-typing it. It reconciles across reachable nodes: the client must
-// satisfy the strictest, so it takes the max difficulty, and — since one
-// self-certifying identity only verifies against a single puzzle — it rejects a
-// set whose PoW-enforcing nodes disagree on the puzzle. It fails when no
-// bootstrap node answers: the saved policy must match a live node, so there is
-// no offline guess.
+// satisfy the strictest, so it takes the max difficulty (the puzzle is always
+// Argon2id). It fails when no bootstrap node answers: the saved policy must match
+// a live node, so there is no offline guess.
 func fetchNodeParams(ctx context.Context, bootstrap []string) (PoWConfig, error) {
 	h, err := net.NewHost(net.HostConfig{Log: ctlLog})
 	if err != nil {
@@ -323,7 +305,7 @@ func fetchNodeParams(ctx context.Context, bootstrap []string) (PoWConfig, error)
 	if err != nil {
 		return PoWConfig{}, err
 	}
-	return PoWConfig{Difficulty: np.PoW.Difficulty, Puzzle: np.PoW.Puzzle}, nil
+	return PoWConfig{Difficulty: np.PoW.Difficulty}, nil
 }
 
 // cmdConnect creates a workspace: a folder holding config.json (the connection
@@ -393,7 +375,7 @@ func cmdConnect(args []string) error {
 	fmt.Printf("  bootstrap: %s\n", strings.Join(boots, ", "))
 	fmt.Printf("  erasure:   %d data + %d parity (any %d of %d reconstruct)\n", *k, *m, *k, *k+*m)
 	if pow.Difficulty > 0 {
-		fmt.Printf("  pow:       %s, %d bits (from node)\n", pow.Puzzle, pow.Difficulty)
+		fmt.Printf("  pow:       argon2id, %d bits (from node)\n", pow.Difficulty)
 	} else {
 		fmt.Printf("  pow:       none (node enforces none)\n")
 	}

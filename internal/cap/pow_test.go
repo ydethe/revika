@@ -26,13 +26,11 @@ func TestLeadingZeroBits(t *testing.T) {
 	}
 }
 
-// testPuzzles covers both implementations behind the Puzzle interface. Argon2id
-// uses tiny parameters so the test stays fast — production params come from
-// DefaultArgon2id.
-func testPuzzles() []Puzzle {
-	return []Puzzle{
-		SHA256Puzzle{},
-		Argon2idPuzzle{Time: 1, Memory: 8, Threads: 1},
+// testPuzzles returns the puzzle under test with tiny parameters so the test
+// stays fast — production params come from DefaultArgon2id.
+func testPuzzles() []Argon2idPuzzle {
+	return []Argon2idPuzzle{
+		{Time: 1, Memory: 8, Threads: 1},
 	}
 }
 
@@ -92,14 +90,18 @@ func TestMintCancellation(t *testing.T) {
 	defer cancel()
 	// Difficulty 64 is effectively unreachable in the timeout, so the mint must
 	// return the context error rather than hang.
-	_, _, err := MintSigningKeyContext(ctx, SHA256Puzzle{}, 64, nil)
+	_, _, err := MintSigningKeyContext(ctx, Argon2idPuzzle{Time: 1, Memory: 8, Threads: 1}, 64, nil)
 	if err == nil {
 		t.Fatal("expected cancellation error, got nil")
 	}
 }
 
-func TestMintNilPuzzle(t *testing.T) {
-	if _, _, err := MintSigningKey(nil, 4, nil); err == nil {
-		t.Fatal("expected error for nil puzzle")
+// TestMintZeroPuzzleDefaults confirms the zero-value puzzle is filled in with
+// DefaultArgon2id rather than producing an invalid (zero-memory) Argon2id call.
+func TestMintZeroPuzzleDefaults(t *testing.T) {
+	// Difficulty 0 accepts the first key, so this returns immediately even though
+	// DefaultArgon2id's parameters are heavy.
+	if _, _, err := MintSigningKey(Argon2idPuzzle{}, 0, nil); err != nil {
+		t.Fatalf("mint with zero-value puzzle: %v", err)
 	}
 }

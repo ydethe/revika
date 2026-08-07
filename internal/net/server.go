@@ -44,10 +44,11 @@ type Server struct {
 	ledger    *ledger.Ledger
 
 	// Proof-of-work admission policy. When powMin > 0, an owner identity
-	// presented on a write must satisfy powMin leading zero bits under powPuzzle,
-	// or the write is refused — raising the cost of minting a fresh identity to
-	// replace a banned one (see internal/cap/pow.go). Zero disables the check.
-	powPuzzle cap.Puzzle
+	// presented on a write must satisfy powMin leading zero bits under powPuzzle
+	// (Argon2id), or the write is refused — raising the cost of minting a fresh
+	// identity to replace a banned one (see internal/cap/pow.go). Zero disables
+	// the check.
+	powPuzzle cap.Argon2idPuzzle
 	powMin    cap.Difficulty
 
 	// loadSource, when set, reports this node's storage load for the balance
@@ -117,18 +118,18 @@ func (srv *Server) SetLedger(l *ledger.Ledger) { srv.ledger = l }
 // — its puzzle digest must have at least d leading zero bits — or the write is
 // refused with ErrUnauthorized. This is what makes an identity ban bite:
 // replacing a banned owner costs ~2^d puzzle evaluations, not milliseconds.
-// difficulty and puzzle are local operator policy; a client must mint (revika-ctl
-// keygen) with a matching puzzle and difficulty >= d, since a self-certifying key
-// only verifies against the exact puzzle it was minted for. The grant-authorized
-// repair path is exempt (it regenerates already-admitted data, and repair is
-// mandatory), as is DELETE (owner-scoped; drops only the caller's own claim).
+// difficulty is local operator policy; a client must mint (revika-ctl keygen)
+// with difficulty >= d. The puzzle is always Argon2id, so the client and node
+// need not negotiate which one. The grant-authorized repair path is exempt (it
+// regenerates already-admitted data, and repair is mandatory), as is DELETE
+// (owner-scoped; drops only the caller's own claim).
 //
 // A zero difficulty (the default) disables the check, leaving the node's prior
-// behaviour untouched. If d > 0 and puzzle is nil, DefaultArgon2id is used. Call
-// before Register. The check only applies when a ledger is set (no ledger = an
-// unauthenticated blob store with no owner identity to gate).
-func (srv *Server) SetPoW(puzzle cap.Puzzle, d cap.Difficulty) {
-	if d > 0 && puzzle == nil {
+// behaviour untouched. If d > 0 and puzzle is the zero value, DefaultArgon2id is
+// used. Call before Register. The check only applies when a ledger is set (no
+// ledger = an unauthenticated blob store with no owner identity to gate).
+func (srv *Server) SetPoW(puzzle cap.Argon2idPuzzle, d cap.Difficulty) {
+	if d > 0 && puzzle.Memory == 0 {
 		puzzle = cap.DefaultArgon2id()
 	}
 	srv.powPuzzle, srv.powMin = puzzle, d

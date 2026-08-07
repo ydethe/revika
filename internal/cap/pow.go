@@ -7,12 +7,13 @@ package cap
 // one hash to verify, and the work is bound to that exact key — a banned owner
 // cannot re-mint a usable identity in milliseconds.
 //
-// The puzzle function sits behind the Puzzle interface ("Proposal 3b") so an
-// operator can trade a cheap-to-verify SHA-256 hashcash for a memory-hard
-// Argon2id puzzle that flattens the GPU/ASIC advantage an attacker would
-// otherwise hold over an honest laptop. The difficulty (leading zero bits of the
-// digest) and the puzzle choice are local policy — no global authority or
-// consensus is involved, matching revika's "each node defends itself" model.
+// The puzzle is Argon2id ("Proposal 3b"): a memory-hard function that flattens
+// the GPU/ASIC advantage an attacker would otherwise hold over an honest laptop.
+// The difficulty (leading zero bits of the digest) is local policy — no global
+// authority or consensus is involved, matching revika's "each node defends
+// itself" model. Only the difficulty varies across deployments; the puzzle
+// itself is fixed, so a minter and a verifier never have to negotiate which one
+// to use.
 //
 // Quantum note: hash-based PoW stays PQC-class. Grover only halves the effective
 // difficulty (a D-bit proof costs ~2^(D/2) quantum evaluations), and memory
@@ -24,8 +25,6 @@ package cap
 
 import (
 	"context"
-	"crypto/sha256"
-	"errors"
 	"fmt"
 	"math/bits"
 	"runtime"
@@ -46,38 +45,14 @@ const powDomain = "revika/pow/owner/v1\x00"
 // Difficulty 0 accepts any key (proof-of-work disabled).
 type Difficulty uint8
 
-// Puzzle is the swappable hash used to certify an owner identity. Sum must be a
-// pure, deterministic function of pubkey (plus fixed parameters) so that any
-// verifier reproduces the same digest; a key "meets" a difficulty when its digest
-// has at least that many leading zero bits.
-type Puzzle interface {
-	// Name identifies the puzzle and its parameters, for logs and CLI display.
-	Name() string
-	// Sum returns the puzzle digest of an owner public key.
-	Sum(pubkey []byte) []byte
-}
-
-// SHA256Puzzle is a hashcash-style puzzle: a single SHA-256 of the domain-tagged
-// public key. Cheapest to verify, but a GPU/ASIC attacker grinds it far faster
-// than an honest CPU — prefer Argon2idPuzzle for hardened deployments.
-type SHA256Puzzle struct{}
-
-// Name implements Puzzle.
-func (SHA256Puzzle) Name() string { return "sha256" }
-
-// Sum implements Puzzle.
-func (SHA256Puzzle) Sum(pubkey []byte) []byte {
-	h := sha256.New()
-	h.Write([]byte(powDomain))
-	h.Write(pubkey)
-	return h.Sum(nil)
-}
-
-// Argon2idPuzzle is a memory-hard puzzle (Argon2id, the password-hashing-competition
-// winner). Because every attempt costs a fixed slice of RAM and CPU, an attacker's
-// specialised-hardware advantage over an honest machine collapses, so a difficulty
-// painful to grind stays tolerable to mint once. Both minting and verification pay
-// one evaluation; verification stays O(1) per identity.
+// Argon2idPuzzle is the memory-hard puzzle (Argon2id, the password-hashing-competition
+// winner) revika uses to certify an owner identity. Because every attempt costs a
+// fixed slice of RAM and CPU, an attacker's specialised-hardware advantage over an
+// honest machine collapses, so a difficulty painful to grind stays tolerable to
+// mint once. Both minting and verification pay one evaluation; verification stays
+// O(1) per identity. Sum is a pure, deterministic function of pubkey (plus the
+// fixed parameters) so any verifier reproduces the same digest; a key "meets" a
+// difficulty when its digest has at least that many leading zero bits.
 type Argon2idPuzzle struct {
 	Time    uint32 // number of passes over memory
 	Memory  uint32 // memory in KiB
@@ -91,49 +66,15 @@ func DefaultArgon2id() Argon2idPuzzle {
 	return Argon2idPuzzle{Time: 2, Memory: 64 * 1024, Threads: 1}
 }
 
-// Name implements Puzzle.
+// Name renders the puzzle's kind and parameters for logs and CLI display, e.g.
+// "argon2id(t=2,m=65536KiB,p=1)".
 func (p Argon2idPuzzle) Name() string {
 	return fmt.Sprintf("argon2id(t=%d,m=%dKiB,p=%d)", p.Time, p.Memory, p.Threads)
 }
 
-// Sum implements Puzzle.
+// Sum returns the puzzle digest of an owner public key.
 func (p Argon2idPuzzle) Sum(pubkey []byte) []byte {
 	return argon2.IDKey(pubkey, []byte(powDomain), p.Time, p.Memory, p.Threads, 32)
-}
-
-// PuzzleByName returns the puzzle a CLI/daemon flag names: "argon2id"
-// (DefaultArgon2id, memory-hard, recommended) or "sha256" (hashcash). It is the
-// shared mapping behind every -pow-puzzle flag, so a minter and a verifier that
-// pass the same name agree on the puzzle. A self-certifying key only verifies
-// against the exact puzzle it was minted for, so client and node must match.
-func PuzzleByName(name string) (Puzzle, error) {
-	switch name {
-	case "argon2id":
-		return DefaultArgon2id(), nil
-	case "sha256":
-		return SHA256Puzzle{}, nil
-	default:
-		return nil, fmt.Errorf("cap: unknown pow puzzle %q (want argon2id or sha256)", name)
-	}
-}
-
-// PuzzleName is the inverse of PuzzleByName: it returns the short policy name
-// ("argon2id"/"sha256") that PuzzleByName maps back to p's kind — the canonical
-// flag/wire spelling a node advertises so a client can re-derive the exact same
-// puzzle. This differs from Puzzle.Name(), which renders human-readable
-// parameters (e.g. "argon2id(t=2,m=…)") that PuzzleByName does not accept. A nil
-// puzzle yields "" (no policy); any unrecognized puzzle falls back to Name().
-func PuzzleName(p Puzzle) string {
-	switch p.(type) {
-	case nil:
-		return ""
-	case SHA256Puzzle:
-		return "sha256"
-	case Argon2idPuzzle:
-		return "argon2id"
-	default:
-		return p.Name()
-	}
 }
 
 // leadingZeroBits counts the leading zero bits of b (0 for empty input).
@@ -153,7 +94,7 @@ func leadingZeroBits(b []byte) int {
 // has at least d leading zero bits. This is the verifier a node runs against the
 // owner pubkey it recovers from an auth token; it is O(1) in the number of
 // attempts the minter made. A zero difficulty always passes.
-func MeetsPoW(puzzle Puzzle, pubkey []byte, d Difficulty) bool {
+func MeetsPoW(puzzle Argon2idPuzzle, pubkey []byte, d Difficulty) bool {
 	if d == 0 {
 		return true
 	}
@@ -173,16 +114,16 @@ type Progress struct {
 // MeetsPoW holds for its public key. It fans out across all CPUs and reports
 // Progress to onProgress (may be nil) about ten times a second, and once more
 // with the final tally when a key is found. Expected cost is ~2^d evaluations.
-func MintSigningKey(puzzle Puzzle, d Difficulty, onProgress func(Progress)) (SignKey, SignPubKey, error) {
+func MintSigningKey(puzzle Argon2idPuzzle, d Difficulty, onProgress func(Progress)) (SignKey, SignPubKey, error) {
 	return MintSigningKeyContext(context.Background(), puzzle, d, onProgress)
 }
 
 // MintSigningKeyContext is MintSigningKey with cancellation: if ctx is cancelled
 // before a key is found it returns ctx.Err(). A cancelled mint leaves nothing
 // persisted — the caller simply gets no key.
-func MintSigningKeyContext(ctx context.Context, puzzle Puzzle, d Difficulty, onProgress func(Progress)) (SignKey, SignPubKey, error) {
-	if puzzle == nil {
-		return SignKey{}, SignPubKey{}, errors.New("cap: mint: nil puzzle")
+func MintSigningKeyContext(ctx context.Context, puzzle Argon2idPuzzle, d Difficulty, onProgress func(Progress)) (SignKey, SignPubKey, error) {
+	if puzzle.Memory == 0 {
+		puzzle = DefaultArgon2id()
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

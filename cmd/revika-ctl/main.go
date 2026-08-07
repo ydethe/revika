@@ -114,23 +114,23 @@ it per command with -node <ma> to pin a single node.
 
 Commands:
   connect (-bootstrap <ma>… | <ma>…) [-root <dir>] [-label <s>] [-k 4] [-m 2]
-          [-pow-puzzle argon2id|sha256] [-pow-difficulty <bits>] [-force]
+          [-pow-difficulty <bits>] [-force]
         Create a workspace folder (default .revika) with a config.json recording
         the bootstrap peer(s), erasure parameters (k data + m parity, default
         4+2), the node's proof-of-work admission policy, and an optional label.
         root.json and your keys live in the same folder. Writes no keys itself —
         your identity is minted on the first write (cp/rm/share), after a prompt.
 
-  keygen [-key <prefix>] [-pow-puzzle argon2id|sha256] [-pow-difficulty <bits>]
+  keygen [-key <prefix>] [-pow-difficulty <bits>]
         Generate the User identity: an ML-KEM-768 (FIPS 203) keypair for receiving shared files
         (<prefix>.key/.pub) and an Ed25519 signing keypair that is your storage
         owner identity (<prefix>.sign.key/.sign.pub). Default prefix:
         .revika/keys/user
         The signing key is self-certifying: it is ground until its public key
         satisfies a proof-of-work target (-pow-difficulty leading zero bits under
-        -pow-puzzle), so it costs seconds-to-minutes to mint but one hash to
-        verify — a banned owner cannot re-mint an identity for free. Default
-        argon2id (memory-hard) at 12 bits; -pow-difficulty 0 disables it.
+        the Argon2id puzzle), so it costs seconds-to-minutes to mint but one hash
+        to verify — a banned owner cannot re-mint an identity for free. Argon2id
+        (memory-hard) at 12 bits by default; -pow-difficulty 0 disables it.
 
   cp [-root <ws|file>] [backend] [-key <privkey>] [-signkey <path>] <src> <dst>
         Copy between the local filesystem and the namespace; exactly one of <src>/<dst>

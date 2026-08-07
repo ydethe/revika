@@ -2,7 +2,7 @@ Run the seed node — the only node that states the cluster policy. A node's rol
 decided purely by whether -bootstrap is given: the seed (no -bootstrap) declares
 admission (PoW) *and* maintenance cadence (repair / rebalance) from its own flags :
 
-     go run ./cmd/revika-node -data=./.revika -listen=/ip4/127.0.0.1/tcp/4002 -pow-difficulty 2 -pow-puzzle argon2id -repair-interval 30s -rebalance-interval 30s
+     go run ./cmd/revika-node -data=./.revika -listen=/ip4/127.0.0.1/tcp/4002 -pow-difficulty 2 -repair-interval 30s -rebalance-interval 30s
 
 Add a second node that only *joins* : it passes -bootstrap and no policy flags, so
 it reads the seed's whole policy over /revika/params (net.FetchNodePolicy) and

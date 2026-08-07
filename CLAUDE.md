@@ -105,7 +105,7 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -rebalance-abuse-coalesce -rebalance-abuse-strikes
                           #   -rebalance-abuse-decay -conn-low -conn-high -conn-grace
                           #   -write-rate -write-burst -repair-verify
-                          #   -pow-difficulty -pow-puzzle -log-format -log-level -v)
+                          #   -pow-difficulty -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | ls | rm | share | revoke | node
                           #   (see -h). `ls -owner <pubkey-file>` resolves a namespace's DHT-published
                           #   root (verify-only); `revoke rvk:PATH` re-keys a shared subtree.
@@ -172,14 +172,15 @@ read the base64 key from the named file (no `@file` prefix, no inline key).
 
 `keygen` writes two keypairs: `<prefix>.key/.pub` (ML-KEM-768, receiving shares) and
 `<prefix>.sign.key/.sign.pub` (Ed25519, the storage owner identity). The signing key is
-*self-certifying*: it is ground via proof-of-work (`-pow-difficulty`/`-pow-puzzle`, default
-argon2id@12) until its pubkey hashes under the target, so re-minting a banned identity costs
-CPU, not milliseconds (`internal/cap/pow.go`). Nodes admit writes only from owners meeting
-their own `-pow-difficulty` (default 0 = off), so client and node must use a matching puzzle
-and the client's difficulty must be ≥ the node's.
+*self-certifying*: it is ground via proof-of-work (`-pow-difficulty`, default 12) until its
+pubkey hashes under the target, so re-minting a banned identity costs CPU, not milliseconds
+(`internal/cap/pow.go`). The puzzle is always Argon2id (`cap.Argon2idPuzzle`/`DefaultArgon2id`),
+so there is nothing to negotiate — client and node agree on it implicitly. Nodes admit writes
+only from owners meeting their own `-pow-difficulty` (default 0 = off), so the client's
+difficulty must be ≥ the node's.
 
 A node's role is decided purely by whether `-bootstrap` is given. Only the network's **seed**
-node (no `-bootstrap`) states the cluster policy — admission (`-pow-difficulty`/`-pow-puzzle`)
+node (no `-bootstrap`) states the cluster policy — admission (`-pow-difficulty`)
 *and* maintenance (`-repair`/`-repair-interval`, `-rebalance`/`-rebalance-interval`/
 `-rebalance-threshold`) — from its own flags. A **joining** node (`-bootstrap` given) inherits
 that whole policy from its bootstrap peers over `/revika/params` (`net.FetchNodePolicy`, which

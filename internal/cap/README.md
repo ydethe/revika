@@ -87,20 +87,18 @@ under the target — the public key *is* the proof, so it costs seconds-to-minut
 of CPU to produce yet **one hash to verify**, and the work is bound to that exact
 key. A banned owner cannot re-mint a usable identity in milliseconds.
 
-This is a **local** deterrent: difficulty and puzzle are operator policy, checked
-statelessly by any node with no authority or consensus (matching revika's "each
-node defends itself" model). It complements — does not replace — the deferred
+This is a **local** deterrent: difficulty is operator policy, checked statelessly
+by any node with no authority or consensus (matching revika's "each node defends
+itself" model). It complements — does not replace — the deferred
 economic/anti-Sybil layer: it is a re-mint speed bump, not a per-identity tax, so
 it does not stop a patient attacker from pre-minting a stockpile.
 
-The puzzle sits behind a small **`Puzzle` interface** so the hash is swappable:
-
-- `SHA256Puzzle` — hashcash-style single SHA-256. Cheapest to verify, but a
-  GPU/ASIC attacker grinds it far faster than an honest CPU.
-- `Argon2idPuzzle{Time, Memory, Threads}` — memory-hard (Argon2id,
-  `golang.org/x/crypto/argon2`). Every attempt costs a fixed slice of RAM+CPU, so
-  the attacker's specialised-hardware edge collapses; both minting and
-  verification pay one evaluation. `DefaultArgon2id()` = 64 MiB, 2 passes, 1 lane.
+The puzzle is always **`Argon2idPuzzle{Time, Memory, Threads}`** — memory-hard
+(Argon2id, `golang.org/x/crypto/argon2`). Every attempt costs a fixed slice of
+RAM+CPU, so the attacker's specialised-hardware edge collapses; both minting and
+verification pay one evaluation. `DefaultArgon2id()` = 64 MiB, 2 passes, 1 lane.
+Only the difficulty varies across deployments; because the puzzle is fixed, a
+minter and a verifier never have to negotiate which one to use.
 
 Difficulty is the number of leading zero bits the puzzle digest must have;
 expected minting cost is `~2^Difficulty` evaluations, verification always one.
@@ -110,13 +108,10 @@ proof costs ~`2^(D/2)` quantum evaluations) and memory-hardness blunts even that
 ### Types and functions
 
 - `Difficulty` — target as leading zero bits; `0` disables the check.
-- `Puzzle` — `Name()` + `Sum(pubkey) []byte`; a deterministic digest of the key.
-- `SHA256Puzzle`, `Argon2idPuzzle`, `DefaultArgon2id()`.
-- `PuzzleByName(name) (Puzzle, error)` / `PuzzleName(puzzle) string` — the
-  bidirectional mapping between a policy's short flag/wire spelling (`"argon2id"`,
-  `"sha256"`) and a `Puzzle`. `PuzzleName` is the canonical name a node advertises
-  over `/revika/params` (not `Puzzle.Name()`, which carries unparseable parameters)
-  so a client can re-derive the exact same puzzle with `PuzzleByName`.
+- `Argon2idPuzzle{Time, Memory, Threads}` — `Name()` + `Sum(pubkey) []byte`; a
+  deterministic memory-hard digest of the key. `DefaultArgon2id()` returns the
+  standard parameters both the client and the node use; the zero value is treated
+  as `DefaultArgon2id()` by the minter.
 - `MeetsPoW(puzzle, pubkey, d) bool` — the verifier a node runs on a recovered
   owner pubkey; O(1) in the minter's attempt count.
 - `MintSigningKey(puzzle, d, onProgress) (SignKey, SignPubKey, error)` — grind a
@@ -125,14 +120,14 @@ proof costs ~`2^(D/2)` quantum evaluations) and memory-hardness blunts even that
   success. `MintSigningKeyContext` adds cancellation.
 
 `revika-ctl keygen` mints the signing key this way and renders an
-ssh-keygen-style progress line (`-pow-puzzle`, `-pow-difficulty`). A node enforces
-the other side: `net.Server.SetPoW` (wired by `revika-node -pow-difficulty`) runs
+ssh-keygen-style progress line (`-pow-difficulty`). A node enforces the other
+side: `net.Server.SetPoW` (wired by `revika-node -pow-difficulty`) runs
 `MeetsPoW` on the owner pubkey recovered from a PUT's auth token and refuses the
 write if it falls short. Since difficulty is per-node policy, a client must mint at
-the highest difficulty among the nodes it uses under a matching puzzle; the
-**policy advertisement** (`/revika/params`, `net.QueryParams`) lets `revika-ctl
-connect` learn each node's requirement up front and mint a satisfying identity
-with no PoW flags — instead of a late `ErrUnauthorized` — see
+the highest difficulty among the nodes it uses (the puzzle is always Argon2id);
+the **policy advertisement** (`/revika/params`, `net.QueryParams`) lets
+`revika-ctl connect` learn each node's requirement up front and mint a satisfying
+identity with no PoW flags — instead of a late `ErrUnauthorized` — see
 `internal/net/README.md` and Architecture.md §5.
 
 ## How it fits into revika

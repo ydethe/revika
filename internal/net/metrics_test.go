@@ -31,7 +31,7 @@ func newMetricsFixture(t *testing.T) (*MetricsServer, *ledger.Ledger, *httptest.
 	t.Cleanup(func() { led.Close() })
 
 	ms := NewMetricsServer(h, led, nil /* no DHT */, "test-1.2.3", "2026-08-05T12:00:00Z", time.Now(), nil)
-	ms.SetPoW("argon2id", 12)
+	ms.SetPoW(12)
 	ts := httptest.NewServer(ms.Handler())
 	t.Cleanup(ts.Close)
 	return ms, led, ts
@@ -88,8 +88,8 @@ func TestMetricsStatusReflectsLedger(t *testing.T) {
 	if st.BuildDate != "2026-08-05T12:00:00Z" {
 		t.Errorf("build_date = %q, want 2026-08-05T12:00:00Z", st.BuildDate)
 	}
-	if !st.PoW.Enabled || st.PoW.Puzzle != "argon2id" || st.PoW.Difficulty != 12 {
-		t.Errorf("pow = %+v, want enabled argon2id/12", st.PoW)
+	if !st.PoW.Enabled || st.PoW.Difficulty != 12 {
+		t.Errorf("pow = %+v, want enabled at difficulty 12", st.PoW)
 	}
 	if st.PeerID == "" {
 		t.Error("empty peer_id")

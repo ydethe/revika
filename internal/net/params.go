@@ -11,14 +11,12 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-
-	"revika/internal/cap"
 )
 
 // ParamsProtocol lets a client learn a node's admission policy up front instead
 // of discovering it as a late ErrUnauthorized on a failed PUT. Today it carries
-// the proof-of-work policy (puzzle + difficulty) so `revika-ctl connect` can mint
-// an owner identity the node will accept without the operator re-typing the
+// the proof-of-work difficulty so `revika-ctl connect` can mint an owner
+// identity the node will accept without the operator re-typing the
 // policy; the NodeParams envelope leaves room to advertise more (e.g. suggested
 // erasure k/m) without a protocol bump. Read-only and unauthenticated — it
 // reveals only the node's own local policy, never shard content — so it needs no
@@ -83,9 +81,8 @@ func QueryParams(ctx context.Context, h host.Host, p peer.ID) (NodeParams, error
 // new participant should adopt. Because one participant faces the whole reachable
 // set it reconciles conservatively:
 //
-//   - PoW: strictest wins. Max difficulty; and since one self-certifying identity
-//     verifies against a single puzzle, a set whose PoW-enforcing nodes disagree
-//     on the puzzle is rejected.
+//   - PoW: strictest wins. Max difficulty. The puzzle is always Argon2id, so
+//     there is nothing to reconcile beyond the difficulty.
 //   - Repair / Rebalance: any-enabled and most-aggressive. If any reachable node
 //     runs the loop the joiner runs it too, at the shortest advertised interval
 //     (and, for rebalance, the smallest threshold) — so a joiner never dilutes the
@@ -104,7 +101,6 @@ func QueryParams(ctx context.Context, h host.Host, p peer.ID) (NodeParams, error
 func FetchNodePolicy(ctx context.Context, h host.Host, bootstrap []string, dialTimeout time.Duration) (NodeParams, error) {
 	var (
 		out        NodeParams
-		puzzle     string
 		haveThresh bool
 		reached    int
 		lastErr    error
@@ -128,16 +124,9 @@ func FetchNodePolicy(ctx context.Context, h host.Host, bootstrap []string, dialT
 		}
 		reached++
 
-		// PoW: strictest wins (max difficulty; single consistent puzzle).
-		if np.PoW.Enabled {
-			if puzzle == "" {
-				puzzle = np.PoW.Puzzle
-			} else if np.PoW.Puzzle != puzzle {
-				return NodeParams{}, fmt.Errorf("bootstrap nodes disagree on proof-of-work puzzle (%q vs %q); one identity cannot satisfy both — connect to a consistent node set", puzzle, np.PoW.Puzzle)
-			}
-			if np.PoW.Difficulty > out.PoW.Difficulty {
-				out.PoW.Difficulty = np.PoW.Difficulty
-			}
+		// PoW: strictest wins (max difficulty; the puzzle is always Argon2id).
+		if np.PoW.Enabled && np.PoW.Difficulty > out.PoW.Difficulty {
+			out.PoW.Difficulty = np.PoW.Difficulty
 		}
 
 		// Repair: any-enabled + shortest interval.
@@ -169,20 +158,17 @@ func FetchNodePolicy(ctx context.Context, h host.Host, bootstrap []string, dialT
 		return NodeParams{}, fmt.Errorf("could not reach any bootstrap node (%s)", strings.Join(bootstrap, ", "))
 	}
 	out.PoW.Enabled = out.PoW.Difficulty > 0
-	out.PoW.Puzzle = puzzle
 	return out, nil
 }
 
 // powInfo projects the server's proof-of-work admission policy onto the wire
 // PoWInfo, matching MetricsServer.SetPoW's semantics: a zero minimum difficulty
-// means admission is disabled, so no puzzle is reported.
+// means admission is disabled.
 func (srv *Server) powInfo() PoWInfo {
 	if srv.powMin == 0 {
 		return PoWInfo{}
 	}
-	// Advertise the canonical short name PuzzleByName accepts (not Puzzle.Name(),
-	// which carries unparseable parameters) so the client re-derives this puzzle.
-	return PoWInfo{Enabled: true, Puzzle: cap.PuzzleName(srv.powPuzzle), Difficulty: uint(srv.powMin)}
+	return PoWInfo{Enabled: true, Difficulty: uint(srv.powMin)}
 }
 
 // handleParams answers one params-protocol query: it reads no request body and

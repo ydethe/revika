@@ -145,11 +145,10 @@ maintenance cadence (repair, rebalance; §3.4); a joining node passes only `-boo
 learns *and* enforces its bootstrap peers' policy via `net.FetchNodePolicy` (which superseded
 the PoW-only `FetchPoWPolicy`: PoW strictest-wins, repair/rebalance any-enabled + shortest
 interval), so both admission and the maintenance schedule propagate without the operator
-re-typing them (**[implemented]**). The puzzle is swappable
-behind a `Puzzle` interface — `SHA256Puzzle`
-(hashcash) or a memory-hard `Argon2idPuzzle` that collapses the GPU/ASIC advantage over an
-honest CPU. Difficulty and puzzle are *local* operator policy, checked statelessly with no
-authority or consensus. This is a re-mint speed bump keyed to the ban loop, not a
+re-typing them (**[implemented]**). The puzzle is always the memory-hard
+`Argon2idPuzzle`, which collapses the GPU/ASIC advantage over an honest CPU; only the
+difficulty varies, so a minter and a verifier never negotiate which puzzle to use. Difficulty
+is *local* operator policy, checked statelessly with no authority or consensus. This is a re-mint speed bump keyed to the ban loop, not a
 per-identity tax: identity bans still pair with an optional owner allowlist for hardened
 deployments (**[planned]**), and global anti-Sybil, reputation, and economic deterrents stay
 deferred (§5, §10).
@@ -737,15 +736,16 @@ index/accounting of the user's own data and where it lives, *not* a global share
   Ban-by-identity keys on the Ed25519 owner pubkey; to keep that ban meaningful, owner keys
   are **self-certifying** — minted via proof-of-work so a fresh identity costs
   seconds-to-minutes of CPU, not milliseconds. This is enforced end to end: the client mints
-  under proof-of-work (`revika-ctl keygen -pow-difficulty/-pow-puzzle`) and a node admits a
+  under proof-of-work (`revika-ctl keygen -pow-difficulty`) and a node admits a
   PUT only from an owner meeting its own difficulty (`revika-node -pow-difficulty`,
   `Server.SetPoW`; `internal/cap/pow.go`, **[implemented]**). Repair and DELETE are exempt
   (repair regenerates already-admitted data and is mandatory; DELETE is owner-scoped). Since
   difficulty is per-node policy, a client storing across nodes must mint at the max
-  difficulty among them; the **policy advertisement** (`/revika/params`, `net.QueryParams`)
-  lets a client learn each node's `(puzzle, min difficulty)` up front — `revika-ctl connect`
-  queries every bootstrap peer, takes the strictest, and mints a satisfying identity with no
-  PoW flags, instead of hitting a late authorization error (**[implemented]**). A joining node
+  difficulty among them (the puzzle is always Argon2id); the **policy advertisement**
+  (`/revika/params`, `net.QueryParams`) lets a client learn each node's minimum difficulty up
+  front — `revika-ctl connect` queries every bootstrap peer, takes the strictest, and mints a
+  satisfying identity with no PoW flags, instead of hitting a late authorization error
+  (**[implemented]**). A joining node
   reuses the same handshake (`net.FetchNodePolicy`, which superseded the PoW-only
   `FetchPoWPolicy`): with no `-bootstrap`-free seed flags it adopts and enforces its bootstrap
   peers' policy — the strictest PoW bar *and* the maintenance cadence (repair/rebalance, §3.4) —

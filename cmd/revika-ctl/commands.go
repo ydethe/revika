@@ -35,7 +35,6 @@ func cmdKeygen(args []string) error {
 	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
 	prefix := fs.String("key", filepath.Join(".revika", "keys", "user"), "path prefix for the identity (writes <prefix>.key and <prefix>.pub)")
 	powDifficulty := fs.Uint("pow-difficulty", 12, "proof-of-work difficulty for the signing (owner) identity, in leading zero bits (0 disables); expected cost ~2^difficulty attempts")
-	powPuzzle := fs.String("pow-puzzle", "argon2id", "proof-of-work puzzle: argon2id (memory-hard, recommended) or sha256 (fast, GPU-friendly)")
 	powFail := fs.Bool("pow-fail", false, "TESTING ONLY: mint a signing (owner) key that FAILS the pow check at -pow-difficulty, to exercise a node's pow-admission gate")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -43,10 +42,7 @@ func cmdKeygen(args []string) error {
 	if *powDifficulty > 255 {
 		return fmt.Errorf("pow-difficulty %d out of range (0-255)", *powDifficulty)
 	}
-	puzzle, err := cap.PuzzleByName(*powPuzzle)
-	if err != nil {
-		return err
-	}
+	puzzle := cap.DefaultArgon2id()
 
 	pub, err := mintAndWriteIdentity(*prefix, puzzle, cap.Difficulty(*powDifficulty), *powFail)
 	if err != nil {
@@ -71,7 +67,7 @@ func cmdKeygen(args []string) error {
 // mintSigningKey grinds a self-certifying owner identity, rendering an
 // ssh-keygen-style progress line on stderr when it is a terminal (and a quiet
 // one-shot summary otherwise, e.g. when logging to a file or in CI).
-func mintSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, cap.SignPubKey, error) {
+func mintSigningKey(puzzle cap.Argon2idPuzzle, d cap.Difficulty) (cap.SignKey, cap.SignPubKey, error) {
 	if d == 0 {
 		// Proof-of-work disabled: a plain keypair, no grinding.
 		return cap.GenerateSigningKey()
@@ -117,7 +113,7 @@ func mintSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, cap.SignP
 // It exists only for testing that admission gate; a random Ed25519 key fails
 // difficulty d with probability 1 - 2^-d, so this returns almost immediately.
 // At d == 0 no key can fail (every key passes), which is an error.
-func mintFailingSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, cap.SignPubKey, error) {
+func mintFailingSigningKey(puzzle cap.Argon2idPuzzle, d cap.Difficulty) (cap.SignKey, cap.SignPubKey, error) {
 	if d == 0 {
 		return cap.SignKey{}, cap.SignPubKey{}, fmt.Errorf("-pow-fail needs -pow-difficulty > 0: at difficulty 0 every key passes, so none can fail")
 	}
@@ -141,7 +137,7 @@ func mintFailingSigningKey(puzzle cap.Puzzle, d cap.Difficulty) (cap.SignKey, ca
 // private keys. It returns the encryption public key for the caller to report.
 // Shared by `keygen` and the on-demand identity creation a first write triggers
 // inside a workspace (loadOrCreateSignKey).
-func mintAndWriteIdentity(prefix string, puzzle cap.Puzzle, d cap.Difficulty, powFail bool) (cap.PublicKey, error) {
+func mintAndWriteIdentity(prefix string, puzzle cap.Argon2idPuzzle, d cap.Difficulty, powFail bool) (cap.PublicKey, error) {
 	privPath := prefix + ".key"
 	pubPath := prefix + ".pub"
 	signPrivPath := prefix + ".sign.key"

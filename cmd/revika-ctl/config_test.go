@@ -13,7 +13,7 @@ import (
 // startParamsNode spins up an in-process node that answers /revika/params on a
 // dialable multiaddr, enforcing proof-of-work admission at d bits under puzzle
 // (d == 0 disables it). connect direct-dials this addr, so no DHT is needed.
-func startParamsNode(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) string {
+func startParamsNode(t *testing.T, puzzle cap.Argon2idPuzzle, d cap.Difficulty) string {
 	t.Helper()
 	h, err := net.NewHost(net.HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
 	if err != nil {
@@ -34,8 +34,10 @@ func startParamsNode(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) string {
 // over the wire, writes a config.json that resolveWorkspace reads back intact,
 // and mints the identity in place.
 func TestConnectWritesConfig(t *testing.T) {
-	// A node enforcing sha256 PoW at 8 bits (cheap to grind, keeps the test fast).
-	addr := startParamsNode(t, cap.SHA256Puzzle{}, 8)
+	// A node enforcing Argon2id PoW at 4 bits (~16 attempts to grind, keeps the
+	// test fast). The puzzle is always Argon2id, so the wire carries only the
+	// difficulty and connect mints with DefaultArgon2id.
+	addr := startParamsNode(t, cap.DefaultArgon2id(), 4)
 
 	dir := filepath.Join(t.TempDir(), "ws")
 	args := []string{
@@ -71,8 +73,8 @@ func TestConnectWritesConfig(t *testing.T) {
 		t.Fatalf("erasure = %+v", ws.Config.Erasure)
 	}
 	// The proof-of-work policy came from the node, not a flag.
-	if ws.Config.PoW.Difficulty != 8 || ws.Config.PoW.Puzzle != "sha256" {
-		t.Fatalf("pow = %+v, want {8 sha256} from node", ws.Config.PoW)
+	if ws.Config.PoW.Difficulty != 4 {
+		t.Fatalf("pow = %+v, want difficulty 4 from node", ws.Config.PoW)
 	}
 
 	// The erasure params flow through to the pipeline config.
@@ -100,7 +102,7 @@ func TestConnectWritesConfig(t *testing.T) {
 // config.json unless -force is given, and that -force keeps the existing
 // identity rather than re-minting.
 func TestConnectRefusesOverwrite(t *testing.T) {
-	addr := startParamsNode(t, nil, 0) // PoW disabled → instant mint
+	addr := startParamsNode(t, cap.Argon2idPuzzle{}, 0) // PoW disabled → instant mint
 	dir := filepath.Join(t.TempDir(), "ws")
 	base := []string{"-root", dir, "-bootstrap", addr}
 	if err := cmdConnect(base); err != nil {

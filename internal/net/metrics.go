@@ -77,15 +77,15 @@ func (m *MetricsServer) SetGCStats(gc *GCStats) { m.gc = gc }
 func (m *MetricsServer) SetLoadSource(src LoadSource) { m.loadSrc = src }
 
 // SetPoW records the proof-of-work admission policy the node enforces on writes
-// so it is reported on /status and /metrics. puzzle is the puzzle name (e.g.
-// "argon2id"), minBits the required leading-zero-bit difficulty. A zero minBits
+// so it is reported on /status and /metrics. minBits is the required
+// leading-zero-bit difficulty; the puzzle is always Argon2id. A zero minBits
 // means proof-of-work admission is disabled. Optional; call before Serve.
-func (m *MetricsServer) SetPoW(puzzle string, minBits uint) {
+func (m *MetricsServer) SetPoW(minBits uint) {
 	if minBits == 0 {
-		m.pow = PoWInfo{} // disabled: no puzzle to report
+		m.pow = PoWInfo{} // disabled
 		return
 	}
-	m.pow = PoWInfo{Enabled: true, Puzzle: puzzle, Difficulty: minBits}
+	m.pow = PoWInfo{Enabled: true, Difficulty: minBits}
 }
 
 // SetMaintenance records the repair and rebalancing policy this node runs so it
@@ -153,13 +153,13 @@ type Status struct {
 }
 
 // PoWInfo is the proof-of-work admission policy this node enforces on writes:
-// an owner identity must be self-certifying under Puzzle with at least
-// Difficulty leading zero bits, or its writes are refused. Enabled is false
-// (and Difficulty 0) when proof-of-work admission is off.
+// an owner identity must be self-certifying (Argon2id) with at least Difficulty
+// leading zero bits, or its writes are refused. Enabled is false (and Difficulty
+// 0) when proof-of-work admission is off. The puzzle is always Argon2id, so it is
+// not carried on the wire.
 type PoWInfo struct {
-	Enabled    bool   `json:"enabled"`
-	Puzzle     string `json:"puzzle"`     // puzzle name, e.g. "argon2id" (empty when disabled)
-	Difficulty uint   `json:"difficulty"` // required leading zero bits (0 = disabled)
+	Enabled    bool `json:"enabled"`
+	Difficulty uint `json:"difficulty"` // required leading zero bits (0 = disabled)
 }
 
 // RepairInfo is the availability-repair maintenance policy a node runs and
@@ -377,7 +377,7 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	// Proof-of-work admission policy this node enforces on writes.
 	fmt.Fprintln(w, "# HELP revika_pow_enabled Whether proof-of-work owner-identity admission is enforced on writes (1 = on).")
 	fmt.Fprintln(w, "# TYPE revika_pow_enabled gauge")
-	fmt.Fprintf(w, "revika_pow_enabled{puzzle=%q} %d\n", st.PoW.Puzzle, b2i(st.PoW.Enabled))
+	fmt.Fprintf(w, "revika_pow_enabled{puzzle=%q} %d\n", "argon2id", b2i(st.PoW.Enabled))
 	metric("revika_pow_difficulty_bits", "Required proof-of-work difficulty in leading zero bits (0 = disabled).", "gauge", float64(st.PoW.Difficulty))
 
 	// Maintenance policy this node runs (and advertises to joining peers).

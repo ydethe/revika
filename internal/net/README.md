@@ -309,16 +309,15 @@ interprets, or trusts payloads.
   ledger the server is an unauthenticated blob store (tests / legacy single-node).
 - `SetPoW(puzzle, difficulty)` — turns on **proof-of-work identity admission**. When
   difficulty > 0, the owner a PUT would be recorded under (from the token, or the
-  repair grant) must be a *self-certifying* identity — its `cap.Puzzle` digest must
+  repair grant) must be a *self-certifying* identity — its `cap.Argon2idPuzzle` digest must
   have at least `difficulty` leading zero bits (`cap.MeetsPoW`) — or the PUT is refused
   with `ErrUnauthorized`. This makes an identity ban bite: replacing a banned owner
   costs ~`2^difficulty` puzzle evaluations, not milliseconds. Verification is one hash.
   Only PUT is gated (the write/abuse vector); DELETE stays ungated (owner-scoped, and
   gating it would strand data for owners minted below a later-raised bar). Difficulty
-  and puzzle are local operator policy, so a client must `keygen` with a matching puzzle
-  and difficulty ≥ the node's — a self-certifying key only verifies against the exact
-  puzzle it was minted for. Zero (the default) disables the check. See
-  `internal/cap/pow.go` and `revika-node -pow-difficulty/-pow-puzzle`.
+  is local operator policy, so a client must `keygen` with difficulty ≥ the node's; the
+  puzzle is always Argon2id, so there is nothing to negotiate. Zero (the default)
+  disables the check. See `internal/cap/pow.go` and `revika-node -pow-difficulty`.
 - `SetMaintenancePolicy(repair, rebalance)` — records the effective repair/rebalance
   cadence the node runs so `/revika/params` can advertise it for policy inheritance (it
   does not itself schedule anything; the loops live in `cmd/revika-node`).
@@ -351,11 +350,10 @@ read-only, unauthenticated `/revika/params` query (registered by `Register`, sam
 one-request/response framing as balance) with a `NodeParams` envelope carrying the whole
 cluster-facing policy so a new participant inherits it instead of the operator re-typing it:
 
-- **`PoW`** (`PoWInfo`) — admission: the canonical short puzzle name (`cap.PuzzleName`, which
-  `PuzzleByName` re-derives) and minimum difficulty, or a zeroed policy when admission is off.
-  Difficulty is per-node local policy (`SetPoW`); a client must mint an owner identity
-  satisfying the node it stores through, or the mismatch surfaces late as an `ErrUnauthorized`
-  on the failed `PUT`.
+- **`PoW`** (`PoWInfo`) — admission: the minimum difficulty (the puzzle is always Argon2id, so
+  it is not carried on the wire), or a zeroed policy when admission is off. Difficulty is
+  per-node local policy (`SetPoW`); a client must mint an owner identity satisfying the node it
+  stores through, or the mismatch surfaces late as an `ErrUnauthorized` on the failed `PUT`.
 - **`Repair`** (`RepairInfo`) / **`Rebalance`** (`RebalanceInfo`) — the maintenance cadence
   (`Enabled` + `Interval`, plus the rebalance `Threshold`) this node actually runs. A node with
   the DHT off advertises them disabled regardless of its flags (repair/rebalance need the DHT).

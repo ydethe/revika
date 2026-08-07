@@ -14,7 +14,7 @@ import (
 // paramsNode builds a server host answering the params protocol. When d > 0 the
 // node enforces proof-of-work admission under puzzle at d bits; d == 0 leaves it
 // disabled. Returns the host to dial.
-func paramsNode(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) host.Host {
+func paramsNode(t *testing.T, puzzle cap.Argon2idPuzzle, d cap.Difficulty) host.Host {
 	t.Helper()
 	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
 	if err != nil {
@@ -37,7 +37,7 @@ func TestQueryParamsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryParams: %v", err)
 	}
-	want := PoWInfo{Enabled: true, Puzzle: "argon2id", Difficulty: 9}
+	want := PoWInfo{Enabled: true, Difficulty: 9}
 	if got.PoW != want {
 		t.Fatalf("QueryParams PoW = %+v, want %+v", got.PoW, want)
 	}
@@ -46,7 +46,7 @@ func TestQueryParamsRoundTrip(t *testing.T) {
 // TestQueryParamsDisabled confirms a node enforcing no proof-of-work reports the
 // policy as disabled (difficulty 0, no puzzle) rather than erroring.
 func TestQueryParamsDisabled(t *testing.T) {
-	server := paramsNode(t, nil, 0)
+	server := paramsNode(t, cap.Argon2idPuzzle{}, 0)
 	client := clientHost(t, server)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -97,23 +97,8 @@ func TestFetchPoWPolicyStrictestWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchNodePolicy: %v", err)
 	}
-	if np.PoW.Puzzle != "argon2id" || np.PoW.Difficulty != 14 {
-		t.Fatalf("FetchNodePolicy PoW = (%q, %d), want (argon2id, 14)", np.PoW.Puzzle, np.PoW.Difficulty)
-	}
-}
-
-// TestFetchPoWPolicyPuzzleDisagreement rejects a node set whose PoW-enforcing
-// members demand different puzzles: one self-certifying identity cannot satisfy
-// both, so there is no policy to adopt.
-func TestFetchPoWPolicyPuzzleDisagreement(t *testing.T) {
-	argon := paramsNode(t, cap.DefaultArgon2id(), 10)
-	sha := paramsNode(t, cap.SHA256Puzzle{}, 10)
-	client := freshHost(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if _, err := FetchNodePolicy(ctx, client, []string{bootstrapAddr(t, argon), bootstrapAddr(t, sha)}, 10*time.Second); err == nil {
-		t.Fatal("FetchNodePolicy: want error on puzzle disagreement, got nil")
+	if !np.PoW.Enabled || np.PoW.Difficulty != 14 {
+		t.Fatalf("FetchNodePolicy PoW = %+v, want enabled at difficulty 14", np.PoW)
 	}
 }
 
@@ -121,8 +106,8 @@ func TestFetchPoWPolicyPuzzleDisagreement(t *testing.T) {
 // no proof-of-work, the joiner adopts an empty policy (no puzzle, zero
 // difficulty) rather than erroring.
 func TestFetchPoWPolicyAllDisabled(t *testing.T) {
-	a := paramsNode(t, nil, 0)
-	b := paramsNode(t, nil, 0)
+	a := paramsNode(t, cap.Argon2idPuzzle{}, 0)
+	b := paramsNode(t, cap.Argon2idPuzzle{}, 0)
 	client := freshHost(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -140,7 +125,7 @@ func TestFetchPoWPolicyAllDisabled(t *testing.T) {
 // an adopted policy could only be an offline guess, so the joiner must error.
 func TestFetchPoWPolicyNoneReachable(t *testing.T) {
 	// A well-formed multiaddr whose peer no host is listening for.
-	unreachable := "/ip4/127.0.0.1/tcp/1/p2p/" + paramsNode(t, nil, 0).ID().String()
+	unreachable := "/ip4/127.0.0.1/tcp/1/p2p/" + paramsNode(t, cap.Argon2idPuzzle{}, 0).ID().String()
 	client := freshHost(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

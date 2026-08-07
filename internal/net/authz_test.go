@@ -117,7 +117,7 @@ func signedClient(t *testing.T, server host.Host, signer cap.SignKey) *NetStore 
 
 // newPoWNode spins up a ledger-backed server host enforcing proof-of-work
 // admission at difficulty d under puzzle. Returns the host to dial.
-func newPoWNode(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) host.Host {
+func newPoWNode(t *testing.T, puzzle cap.Argon2idPuzzle, d cap.Difficulty) host.Host {
 	t.Helper()
 	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
 	if err != nil {
@@ -230,7 +230,7 @@ func TestUnsignedWriteRejected(t *testing.T) {
 // mintFailingKey returns a signing key whose public key does NOT satisfy puzzle
 // at difficulty d — i.e. a plain, non-self-certifying identity. At small d a
 // random key fails with overwhelming probability, so this returns quickly.
-func mintFailingKey(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) cap.SignKey {
+func mintFailingKey(t *testing.T, puzzle cap.Argon2idPuzzle, d cap.Difficulty) cap.SignKey {
 	t.Helper()
 	for range 10000 {
 		key, pub, err := cap.GenerateSigningKey()
@@ -249,8 +249,9 @@ func mintFailingKey(t *testing.T, puzzle cap.Puzzle, d cap.Difficulty) cap.SignK
 // self-certifying owner is admitted; a plain owner below the difficulty is
 // refused with ErrUnauthorized; and DELETE stays ungated.
 func TestPoWAdmission(t *testing.T) {
-	// SHA-256 keeps the test fast; difficulty 8 => ~256 attempts to mint.
-	puzzle := cap.SHA256Puzzle{}
+	// Tiny Argon2id parameters keep the test fast; difficulty 8 => ~256 attempts
+	// to mint.
+	puzzle := cap.Argon2idPuzzle{Time: 1, Memory: 8, Threads: 1}
 	const d cap.Difficulty = 8
 
 	h := newPoWNode(t, puzzle, d)
@@ -287,7 +288,7 @@ func TestPoWAdmission(t *testing.T) {
 // mintValidButBelow mints a key that is self-certifying under puzzle at mintD
 // but does NOT reach nodeD leading zero bits — a genuine proof-of-work that is
 // nonetheless too weak for a node demanding nodeD. mintD must be < nodeD.
-func mintValidButBelow(t *testing.T, puzzle cap.Puzzle, mintD, nodeD cap.Difficulty) cap.SignKey {
+func mintValidButBelow(t *testing.T, puzzle cap.Argon2idPuzzle, mintD, nodeD cap.Difficulty) cap.SignKey {
 	t.Helper()
 	for range 100 {
 		key, pub, err := cap.MintSigningKey(puzzle, mintD, nil)
@@ -311,7 +312,7 @@ func TestPoWRejectsInvalidProofs(t *testing.T) {
 	t.Run("no proof-of-work", func(t *testing.T) {
 		// A plain keypair minted without grinding: its digest is unconstrained, so
 		// it fails the node's difficulty with overwhelming probability.
-		puzzle := cap.SHA256Puzzle{}
+		puzzle := cap.Argon2idPuzzle{Time: 1, Memory: 8, Threads: 1}
 		const d cap.Difficulty = 12
 		node := newPoWNode(t, puzzle, d)
 		c := signedClient(t, node, mintFailingKey(t, puzzle, d))
@@ -320,29 +321,10 @@ func TestPoWRejectsInvalidProofs(t *testing.T) {
 		}
 	})
 
-	t.Run("wrong puzzle", func(t *testing.T) {
-		// The client mints a valid identity under sha256, but the node enforces
-		// argon2id. The key certifies itself for its own puzzle only; its argon2id
-		// digest is unconstrained, so the node rejects it. (Node-side verification
-		// is a single argon2id evaluation, so this stays fast.)
-		node := newPoWNode(t, cap.DefaultArgon2id(), 8)
-		key, pub, err := cap.MintSigningKey(cap.SHA256Puzzle{}, 8, nil)
-		if err != nil {
-			t.Fatalf("mint: %v", err)
-		}
-		if cap.MeetsPoW(cap.DefaultArgon2id(), pub[:], 8) {
-			t.Skip("sha256-minted key coincidentally satisfies argon2id difficulty")
-		}
-		c := signedClient(t, node, key)
-		if _, err := c.Put(context.Background(), []byte("wrong puzzle")); !errors.Is(err, ErrUnauthorized) {
-			t.Fatalf("put with mismatched puzzle = %v, want ErrUnauthorized", err)
-		}
-	})
-
 	t.Run("insufficient difficulty", func(t *testing.T) {
 		// A real proof, but ground for fewer leading zero bits than the node
-		// demands — the client cannot pass off a cheaper puzzle as a costlier one.
-		puzzle := cap.SHA256Puzzle{}
+		// demands — the client cannot pass off a cheaper proof as a costlier one.
+		puzzle := cap.Argon2idPuzzle{Time: 1, Memory: 8, Threads: 1}
 		const nodeD cap.Difficulty = 12
 		node := newPoWNode(t, puzzle, nodeD)
 		c := signedClient(t, node, mintValidButBelow(t, puzzle, 6, nodeD))
