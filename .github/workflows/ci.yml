@@ -139,12 +139,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: node   # headless storage Node
-            image: revika-node
+    # Only the headless storage Node is published here; the revika-ctl client
+    # image is intentionally not built by this workflow.
     steps:
       - uses: actions/checkout@v4
 
@@ -168,7 +164,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          images: ghcr.io/${{ github.repository_owner }}/revika-node
           # Tag-only publishing: derive the semver tags from the git tag.
           tags: |
             type=semver,pattern={{version}}
@@ -191,7 +187,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          target: ${{ matrix.target }}
+          target: node   # headless storage Node only
           platforms: linux/amd64,linux/arm64
           # Push only on a version tag; otherwise build-only (validation).
           push: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -200,5 +196,5 @@ jobs:
           build-args: |
             VERSION=${{ steps.build.outputs.version }}
             BUILD_DATE=${{ steps.build.outputs.date }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=revika-node
+          cache-to: type=gha,mode=max,scope=revika-node
