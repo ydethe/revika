@@ -87,7 +87,15 @@ For multi-device reconciliation (Architecture §3.7.1), `fullroot.go` adds
 `EncodeFullRoot`/`DecodeFullRoot` — the JSON codec for `manifest.FullRootRecord`,
 the sealed self-root companion `net` publishes under `/revika-fullcap/<owner>`
 alongside the verify-root. It mirrors `EncodeRootPointer` (base64 byte fields);
-the sealed cap is opaque here — only the owner's ML-KEM key can open it.
+the sealed cap is opaque here — only the owner's ML-KEM key can open it. The codec
+carries both the legacy single-owner `sealed` and the per-device `seals` array
+(read revocation, §3.7.2), each `omitempty` so a legacy record round-trips unchanged.
+
+For the read-revocable device model (§3.7.2), `deviceauth.go` adds
+`EncodeDeviceAuth`/`DecodeDeviceAuth` — the JSON codec for `device.Auth`, the
+owner-signed device-authorization record `net` mirrors under `/revika-devices/<owner>`.
+`Decode` re-derives each member's ID from its ML-KEM pubkey (never trusting the wire
+ID), so a tampered record fails `Verify` and the DHT validator rejects it.
 
 ## Item identity
 

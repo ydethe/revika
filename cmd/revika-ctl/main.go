@@ -84,6 +84,8 @@ func main() {
 		err = cmdShare(args)
 	case "node":
 		err = cmdNode(args)
+	case "device":
+		err = cmdDevice(args)
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -181,6 +183,19 @@ Commands:
         is aware of and could place shards on. Joins through the workspace's saved
         bootstrap peers (-root). Reports each node's peer ID, reachability, and
         advertised addresses. No file contact.
+
+  device <id | init | enroll | revoke | list> [-root <ws>] [-signkey <path>]
+        Manage the devices authorized to read your namespace (the master credential
+        is your offline owner signing key). A device is one ML-KEM keypair; a signed
+        record (devices.json, mirrored to the DHT) lists the authorized ones, and the
+        self-root companion is sealed once per device.
+          device init                 start the record with this device
+          device enroll <pubkey-file> authorize another device's ML-KEM public key
+          device revoke <device-id>   de-authorize a device (reseals to survivors)
+          device list                 show authorized devices  ·  device id  show mine
+        enroll/revoke reseal the current root to the new device set (needs the DHT
+        backend), so the change takes effect at once. Revocation is forward-only:
+        already-downloaded data cannot be recalled.
 
 A <multiaddr> includes the node's peer ID, e.g.
   /ip4/127.0.0.1/tcp/4001/p2p/12D3KooW...

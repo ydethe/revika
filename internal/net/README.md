@@ -238,7 +238,17 @@ network-visible and multi-device (Architecture §4). Two complementary paths:
   `fullRootValidator` (registered via `dht.NamespacedValidator(FullRootNamespace, …)`)
   gates it exactly as `rootValidator` does the verify-root — owner-binding + signature,
   highest-`Seq` with a byte-order tie-break — but never opens the seal (confidentiality
-  is the ML-KEM layer's job).
+  is the ML-KEM layer's job). For the **read-revocable device model** (§3.7.2) the same
+  companion is sealed once per authorized device (`manifest.SealFullRootFor`), so a
+  revoked device's ML-KEM key no longer opens it.
+- **Device-authorization record (`deviceauth.go`).** The owner-signed set of ML-KEM device
+  pubkeys currently allowed to read (`device.Auth`) is mirrored to the DHT under
+  `/revika-devices/<owner>` (`DeviceAuthNamespace`) — the *policy* half of read revocation
+  (the sealed companion above is the *mechanism*). `Discovery.PutDeviceAuth`/`GetDeviceAuth`
+  publish/resolve it; `deviceAuthValidator` gates it exactly like `rootValidator` (owner-key
+  binding + signature, highest-`Seq` `Select` for anti-rollback so a stale record can never
+  re-authorize a revoked device). It carries only public keys + an owner signature, so it is
+  safe in the clear.
 - **Direct node stream (`root_proto.go`).** `/revika/root/1.0.0` lets a client that
   already has a node connection fetch a root in one round-trip (or a DHT-less
   single-node/test setup serve one). `QueryRoot(ctx, h, peer, owner)` is the client

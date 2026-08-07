@@ -20,8 +20,14 @@ holds a whole file and the system tolerates node loss.
 
 ### Roles
 
-- **User** — stores, retrieves, and shares data; holds the encryption keys; interacts
-  with the network through the User daemon.
+- **User** — a *principal* that stores, retrieves, and shares data and holds the encryption
+  keys; interacts with the network through the User daemon. A User is realized by one or more
+  **devices** (individually-keyed members) under an offline **master credential** that can
+  enroll and revoke them (§3.7.2; read revocation **[implemented]**, write revocation
+  **[planned]**). A device is not a third trust role: it sits
+  entirely on the User side of the User↔Node boundary — always trusted with plaintext and keys —
+  so it is modelled as a member of the User principal, not a peer of Node. Absent an enrolled
+  device record all a User's devices share one owner key (§3.7.1).
 - **Node** — a server that stores encrypted shards on behalf of one or more users.
 - A single machine can be both (a User who also contributes storage as a Node).
 
@@ -548,7 +554,8 @@ and reconcile:
 #### 3.7.1 Multi-device write reconciliation (inline) — **[implemented]**
 
 Several devices of one User share the **same** Ed25519 owner signing key — that is the only
-way to advance the root. Concurrent commits from two devices at the same `Seq` would otherwise
+way to advance the root (the planned per-device evolution that makes an individual device
+revocable is §3.7.2). Concurrent commits from two devices at the same `Seq` would otherwise
 silently lose one side (the DHT has no compare-and-swap). The client resolves this **inline on
 every `cp`/`rm`/`revoke`**, without needing the (still-planned) sync daemon:
 
@@ -582,6 +589,65 @@ every `cp`/`rm`/`revoke`**, without needing the (still-planned) sync daemon:
   (§3.7), still out of scope. Both DHT records (verify-root + companion) refresh on each write
   and share the DHT record lifetime; a device that never writes again lets them expire like any
   other stale namespace state.
+
+#### 3.7.2 Device model — enrollment and revocation — read layer **[implemented]**, write layer **[planned]**
+
+Left to itself, §3.7.1 makes every device of one User cryptographically **identical**: all share
+the one Ed25519 owner signing key and the one ML-KEM-768 keypair. That makes devices trivially
+interchangeable but also **unrevocable** — you cannot retire a lost or compromised device
+without rotating the whole owner identity, which changes the namespace address (the owner
+pubkey) and so breaks every published share and every `ls -owner` resolution. The device
+model makes an individual device a first-class, revocable member of the User principal *without*
+disturbing the User↔Node trust boundary — a device is always on the User side, trusted with
+plaintext and keys, so this is a refinement of the **User** role, not a new third role. The
+**read-revocation** half is implemented (`internal/device`, `revika-ctl device`); **write
+revocation** (node-enforced) is still planned.
+
+The **User** is therefore a principal, not a single keyholder. It is realized by:
+
+- **Master credential** — the root of trust: the Ed25519 owner key plus the sole authority to
+  sign the device-authorization set. It is kept **offline** (paper / HSM / removable media),
+  *not* an everyday device, and appears only to enroll or revoke a device. No everyday device
+  outranks another: the unavoidable asymmetry (something must be able to say "this device is no
+  longer me") is deliberately pushed onto a rarely-exposed cold credential rather than a hot,
+  network-facing device.
+- **Device** — an enrolled member with its **own** ML-KEM-768 keypair, authorized to read (and,
+  when signing is delegated, write) on the User's behalf.
+
+Authorization is a signed **device-authorization record** (DAR, `device.Auth`): the owner-signed,
+monotonic set of ML-KEM device pubkeys currently allowed to read. It lives at
+`<workspace>/devices.json` as the durable local authority and is mirrored to the DHT under
+`/revika-devices/<owner>` (`net.DeviceAuthNamespace`), validated exactly like the verify-root
+(owner-key binding + signature, highest-`Seq` `Select` for anti-rollback so a stale record can
+never re-authorize a revoked device). The CLI drives it end to end:
+`revika-ctl device init | enroll <pubkey-file> | revoke <device-id> | list | id`.
+
+Two revocation layers, both mirroring the existing user-share revocation machinery
+(`manifest.Rekey` + `revika-ctl revoke`, §3.5):
+
+- **Read revocation — [implemented].** The sealed self-root companion (§3.7.1)
+  stops being sealed to one shared owner ML-KEM key and is instead sealed **per authorized
+  device** (`manifest.SealFullRootFor` writes one wrapped copy per device pubkey — the record's
+  `Seals` — under `/revika-fullcap/<owner>`, coexisting with the legacy single-owner `Sealed` for
+  a workspace that never ran `device init`). Enroll/revoke advance the DAR (`With`/`Without`),
+  sign it with the master credential, then re-commit the current root so its companion is
+  resealed to exactly the surviving devices and the root `Seq` advances — the same
+  advance-and-republish `revoke rvk:PATH` does for a shared subtree. The revoked device's ML-KEM
+  key no longer opens the current companion (`manifest.ErrNoSealForKey`), so it cannot rebuild the
+  namespace on another machine.
+- **Write revocation (new identity layer) — [planned].** Because §3.7.1 shares the *signing* key,
+  read-revocation alone still lets a revoked device forge signed roots. Closing that needs
+  per-device signing sub-identities plus a **signed device-authorization record** (the device
+  pubkey set, signed by the master credential) that readers — and, for a hard stop, nodes at
+  admission — check before accepting a root or write. Node enforcement reuses the same
+  owner-keyed admission path as PoW (§5) and inherits its caveat: ban-by-identity is only as
+  strong as the cost to mint identities.
+
+**Forward-only, always.** As with every revika revocation, a revoked device keeps whatever
+plaintext it already downloaded and any keys it held; revocation protects **future** bytes only —
+already-downloaded copies cannot be clawed back. Master-credential loss is the single
+catastrophic failure — it cannot itself be revoked — so it must be backed up out-of-band; the
+trade is that its attack surface stays tiny because it is never a live, network-facing device.
 
 ### 3.8 OS filesystem integration (mount layer) — **[planned]**
 
@@ -728,7 +794,13 @@ index/accounting of the user's own data and where it lives, *not* a global share
   possession lies — §3.1/§3.4). *(Implemented in `internal/net/defense.go` + `abuse.go`;
   per-peer/per-owner rate limiting still planned.)*
 - **Authentication:** libp2p secure channels authenticate peers; root pointers are signed
-  by the User's key. *(Planned — arrives with the network layer.)*
+  by the User's key. *(Planned — arrives with the network layer.)* Absent an enrolled device
+  record a User's devices share that key; making an individual device separately keyed and
+  **revocable** is the device model (§3.7.2): read revocation via per-device sealed companions and
+  a master-signed device-authorization record is **[implemented]** (`internal/device`, `revika-ctl
+  device`), while node-enforced write revocation is **[planned]**. It is forward-only (a revoked
+  device keeps already-read plaintext) and roots its authority in an **offline master credential**,
+  whose loss is the one unrevocable failure.
 - **Acceptable use / abuse control:** enforced *locally per node*, since nodes are
   independent and untrusted — there is no global ban authority. A node combines per-owner
   storage quota + leases (§3.2, **[implemented]**) with the connection/flow defences above

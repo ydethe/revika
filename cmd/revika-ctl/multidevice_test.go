@@ -12,10 +12,10 @@ import (
 	"revika/internal/store"
 )
 
-// device is a test stand-in for one machine sharing the owner keys: its own
+// testDevice is a test stand-in for one machine sharing the owner keys: its own
 // workspace files (root.json/base.json), its own conflict-copy tag, and its own
 // DHT discovery, all over a shared content store.
-type device struct {
+type testDevice struct {
 	cc   commitConfig
 	disc fullRootPublisher
 	s    store.Store
@@ -25,7 +25,7 @@ type device struct {
 // put stores data at rvk-path name grafted onto this device's *current* root
 // (loaded from its root.json, exactly as cmdCp does) and commits — driving the
 // full read-merge-publish loop.
-func (d *device) put(t *testing.T, ctx context.Context, name string, data []byte) {
+func (d *testDevice) put(t *testing.T, ctx context.Context, name string, data []byte) {
 	t.Helper()
 	prev, exists, sealed, err := loadRoot(d.cc.file, "")
 	if err != nil {
@@ -57,7 +57,7 @@ func (d *device) put(t *testing.T, ctx context.Context, name string, data []byte
 
 // tip resolves this device's currently published root to its decryptable form
 // (verify-root from the DHT + companion open), the view any device would rebuild.
-func (d *device) tip(t *testing.T, ctx context.Context, owner cap.SignPubKey) manifest.ReadCap {
+func (d *testDevice) tip(t *testing.T, ctx context.Context, owner cap.SignPubKey) manifest.ReadCap {
 	t.Helper()
 	verify, ok, err := d.disc.GetRoot(ctx, owner)
 	if err != nil || !ok {
@@ -135,8 +135,8 @@ func TestMultiDeviceConverge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mk := func(dir, tag string, disc fullRootPublisher) *device {
-		return &device{
+	mk := func(dir, tag string, disc fullRootPublisher) *testDevice {
+		return &testDevice{
 			cc: commitConfig{
 				file:     dir + "/root.json",
 				basePath: dir + "/base.json",

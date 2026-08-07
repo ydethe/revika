@@ -63,6 +63,119 @@ func TestSealFullRootRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSealFullRootForMultiDevice is the read-side device-revocation crux
+// (Architecture §3.7.2): the full root is sealed to three devices at once; each
+// authorized device opens it with its own ML-KEM key, and a non-listed (revoked)
+// device's key opens nothing.
+func TestSealFullRootForMultiDevice(t *testing.T) {
+	sk, owner, err := cap.GenerateSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three authorized devices + one that is not in the set (stands in for a
+	// revoked device).
+	type dev struct {
+		priv cap.PrivateKey
+		pub  cap.PublicKey
+	}
+	var devs []dev
+	for range 3 {
+		priv, pub, err := cap.GenerateIdentity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		devs = append(devs, dev{priv, pub})
+	}
+	outPriv, outPub, err := cap.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := ReadCap{Kind: KindDir, K: 4, M: 2, Shards: []store.ShardID{{1}, {2}, {3}, {4}, {5}, {6}}}
+	root.Key[0] = 0x7e
+
+	recipients := []cap.PublicKey{devs[0].pub, devs[1].pub, devs[2].pub}
+	rec, err := SealFullRootFor(sk, recipients, root, 5)
+	if err != nil {
+		t.Fatalf("SealFullRootFor: %v", err)
+	}
+	if rec.Owner != owner || rec.Seq != 5 {
+		t.Fatalf("record owner/seq wrong: owner-match=%v seq=%d", rec.Owner == owner, rec.Seq)
+	}
+	if len(rec.Sealed) != 0 {
+		t.Fatal("device-scoped record should leave the legacy Sealed empty")
+	}
+	if len(rec.Seals) != 3 {
+		t.Fatalf("Seals len = %d, want 3", len(rec.Seals))
+	}
+	if !rec.Verify() {
+		t.Fatal("device-scoped record failed Verify")
+	}
+
+	// Every authorized device opens it and recovers the identical key-bearing cap.
+	for i, d := range devs {
+		got, err := rec.Open(d.priv, d.pub)
+		if err != nil {
+			t.Fatalf("device %d Open: %v", i, err)
+		}
+		if !reflect.DeepEqual(got, root) {
+			t.Fatalf("device %d opened a different cap", i)
+		}
+	}
+
+	// A device not in the set (revoked / never enrolled) opens nothing.
+	if _, err := rec.Open(outPriv, outPub); err == nil {
+		t.Fatal("a non-recipient device should not be able to open the companion")
+	}
+
+	// Read revocation: re-seal to the survivors only (drop devs[0]); the dropped
+	// device can no longer open the new record, the survivors still can.
+	survivors := []cap.PublicKey{devs[1].pub, devs[2].pub}
+	rec2, err := SealFullRootFor(sk, survivors, root, 6)
+	if err != nil {
+		t.Fatalf("re-seal: %v", err)
+	}
+	if _, err := rec2.Open(devs[0].priv, devs[0].pub); err == nil {
+		t.Fatal("revoked device still opened the re-sealed companion")
+	}
+	if _, err := rec2.Open(devs[1].priv, devs[1].pub); err != nil {
+		t.Fatalf("survivor lost access after revoke: %v", err)
+	}
+
+	// Empty recipient set is rejected rather than producing an unopenable record.
+	if _, err := SealFullRootFor(sk, nil, root, 7); err == nil {
+		t.Fatal("SealFullRootFor with no recipients should error")
+	}
+}
+
+// TestFullRootSealTamperRejected checks the signature also binds the multi-device
+// Seals list: mutating any seal after signing fails Verify.
+func TestFullRootSealTamperRejected(t *testing.T) {
+	sk, _, err := cap.GenerateSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv, pub, err := cap.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := ReadCap{Kind: KindDir, K: 4, M: 2, Shards: []store.ShardID{{1}, {2}, {3}, {4}, {5}, {6}}}
+	rec, err := SealFullRootFor(sk, []cap.PublicKey{pub}, root, 1)
+	if err != nil {
+		t.Fatalf("SealFullRootFor: %v", err)
+	}
+	bad := rec
+	bad.Seals = [][]byte{append([]byte(nil), rec.Seals[0]...)}
+	bad.Seals[0][0] ^= 0xFF
+	if bad.Verify() {
+		t.Fatal("seal-byte tamper should fail verification")
+	}
+	// A well-formed but signature-less record must not open.
+	if _, err := (FullRootRecord{Owner: rec.Owner, Seq: 1, Seals: rec.Seals}).Open(priv, pub); err == nil {
+		t.Fatal("unsigned record should not open")
+	}
+}
+
 // TestFullRootTamperRejected checks the signature binds the sealed bytes and
 // seq: mutating either after signing fails Verify (and thus Open).
 func TestFullRootTamperRejected(t *testing.T) {

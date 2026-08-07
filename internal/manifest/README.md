@@ -147,13 +147,19 @@ content-addressed blob would force needless rewrites on every rename.
   the edit. Content-complete and structurally deterministic, **not** cap-identical across runs
   (`StoreDir` mints a fresh per-blob key) — convergence comes from the caller's monotonic `Seq`,
   not cap identity. `DefaultLabeler` is the untagged fallback; the CLI injects a device-tagged one.
-- **`FullRootRecord{Owner, Seq, Sealed, Sig}`** (`fullroot.go`) — the **sealed self-root
+- **`FullRootRecord{Owner, Seq, Sealed, Seals, Sig}`** (`fullroot.go`) — the **sealed self-root
   companion** that delivers the decryptable root between a User's own devices. `SealFullRoot(signer,
   recipient, root, seq)` wraps the *full* root cap (AES key retained) to the owner's own ML-KEM
   key (`WrapCap`) and Ed25519-signs `owner||seq||sealed` under a distinct domain tag; `Open(priv,
   pub)` verifies then `UnwrapCap`s it. Confidentiality rests on the ML-KEM seal (only owner devices
   hold the key); the caller binds `companion.VerifyCap() == verifyRoot.Root` for the monotonic
   `Seq`. Published/resolved over the DHT by `net.PutFullRoot`/`GetFullRoot` under `/revika-fullcap`.
+  For the **read-revocable device model** (Architecture §3.7.2) `SealFullRootFor(signer, recipients,
+  root, seq)` seals **one copy per authorized device** into `Seals` (the signature covers them when
+  non-empty), so revoking a device = resealing to the survivors. `Open` tries the legacy single-owner
+  `Sealed` first, then each `Seals` entry, returning `ErrNoSealForKey` when none fit — a revoked
+  device's key. A workspace that never ran `device init` keeps producing legacy `Sealed`-only records,
+  byte-identical to before, so old readers are unaffected.
 
 ## Blob size budget (and the scale path)
 

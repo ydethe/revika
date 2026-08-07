@@ -11,7 +11,10 @@ See [Architecture.md](Architecture.md) for full detail; keep it and this file up
 code changes.
 
 **Roles:** *User* holds the keys and stores/retrieves/shares data; *Node* is a dumb server
-that stores ciphertext shards. One machine can be both.
+that stores ciphertext shards. One machine can be both. A User is a *principal* realized by one
+or more *devices* under an offline *master credential* that can enroll/revoke them (planned —
+Architecture §3.7.2); a device is not a third role but a member of the User principal (always
+trusted with plaintext/keys). Today all a User's devices share one owner key.
 
 ## Guiding principle
 
@@ -107,8 +110,10 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -write-rate -write-burst -repair-verify
                           #   -pow-difficulty -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | ls | rm | share | revoke | node
-                          #   (see -h). `ls -owner <pubkey-file>` resolves a namespace's DHT-published
-                          #   root (verify-only); `revoke rvk:PATH` re-keys a shared subtree.
+                          #   | device (see -h). `ls -owner <pubkey-file>` resolves a namespace's
+                          #   DHT-published root (verify-only); `revoke rvk:PATH` re-keys a shared
+                          #   subtree; `device init|enroll|revoke|list|id` manages the offline
+                          #   master credential's authorized read-devices (§3.7.2).
 ```
 
 The client is **workspace-centric** on top of a namespace. `connect` creates a
@@ -170,6 +175,21 @@ of scope. Public keys are always passed as *files*, never as literals on the
 command line: `share -to <recipient-pubkey-file>` and `ls -owner <signing-pubkey-file>`
 read the base64 key from the named file (no `@file` prefix, no inline key).
 
+`device` manages the **read-revocable device model** (Architecture §3.7.2): the User
+is a principal whose *master credential* is the offline owner Ed25519 signing key, and
+whose *devices* are individually-keyed ML-KEM members. A signed **device-authorization
+record** (`device.Auth`, `internal/device`) at `<workspace>/devices.json` (mirrored to
+DHT `/revika-devices/<owner>`, `net.DeviceAuthNamespace`) lists the authorized device
+pubkeys. `device init` bootstraps the record with this device; `enroll <pubkey-file>` /
+`revoke <device-id>` advance it (signed by the master key) and **reseal the self-root
+companion to exactly the surviving devices** by re-committing the current root — so the
+companion carries one seal per device (`manifest.SealFullRootFor` → `FullRootRecord.Seals`,
+coexisting with the legacy single-owner `Sealed`), and a revoked device's key opens no
+current companion (`manifest.ErrNoSealForKey`). `device list`/`id` inspect the set. Absent
+a `devices.json` the workspace runs the legacy single-owner-key path unchanged. Read
+revocation is forward-only (already-downloaded plaintext can't be clawed back); node-enforced
+*write* revocation is still deferred.
+
 `keygen` writes two keypairs: `<prefix>.key/.pub` (ML-KEM-768, receiving shares) and
 `<prefix>.sign.key/.sign.pub` (Ed25519, the storage owner identity). The signing key is
 *self-certifying*: it is ground via proof-of-work (`-pow-difficulty`, default 12) until its
@@ -212,6 +232,8 @@ internal/
   net/       libp2p host, shard/probe protocols, NetStore, ledger-gated Server, DHT
              (Discovery), DHTStore + PlacementStore + RepairStore, signed auth tokens
   cap/       ML-KEM-768 cap wrapping (Wrap/Unwrap) + Ed25519 signing identity
+  device/    signed device-authorization record (Auth = owner-signed set of ML-KEM device
+             pubkeys); read-revocable device model under the offline master credential (§3.7.2)
   ledger/    per-node SQLite ownership/lease/quota + stripe index
   manifest/  cap-addressed encrypted file/dir blobs = Merkle DAG (ReadCap, DirManifest,
              COW Graft, signed RootPointer); reuses pipeline blobs + cap wrapping
@@ -231,7 +253,10 @@ internal/
 Terms: **shard/share** = an erasure-coded encrypted piece of a file; **ledger** = node-side
 SQLite ownership/lease/quota index (`.revika/ledger/ledger.db`), *not* a blockchain; **keys** =
 User ML-KEM + User Ed25519 signing + node libp2p identity; **mock store** = in-memory backend
-for testing before the network layer.
+for testing before the network layer; **device** = one enrolled, individually-keyed member of a
+User principal (planned as revocable — Architecture §3.7.2); **master credential** = the offline
+root of trust (owner Ed25519 key + authority to sign the device-authorization set) that enrolls
+and revokes devices.
 
 ## Build order (PoC — walk before run)
 

@@ -31,10 +31,12 @@ import (
 	"strings"
 
 	"revika/internal/cap"
+	"revika/internal/device"
 	"revika/internal/erasure"
 	"revika/internal/manifest"
 	"revika/internal/net"
 	"revika/internal/pipeline"
+	"revika/internal/provider"
 )
 
 const (
@@ -213,6 +215,65 @@ func (w *Workspace) deviceTag() string {
 		return tag
 	}
 	return tag
+}
+
+// devicesFileName is the workspace's device-authorization record (device.Auth):
+// the owner-signed set of devices allowed to open the self-root companion
+// (Architecture §3.7.2). It is the durable local authority (like root.json);
+// the DHT copy under net.DeviceAuthNamespace is a best-effort mirror.
+const devicesFileName = "devices.json"
+
+// devicesPath is the device-authorization record location for this workspace, or
+// "" in file mode (a bare root pointer has no workspace dir to hold it).
+func (w *Workspace) devicesPath() string {
+	if w == nil || w.fileMode {
+		return ""
+	}
+	return filepath.Join(w.Dir, devicesFileName)
+}
+
+// loadDeviceAuth reads and verifies this workspace's device-authorization record.
+// ok is false (nil error) when the file is absent — a workspace with no record
+// runs in the legacy single-owner-key mode (every device shares the owner keys,
+// none individually revocable). A present but malformed or unverifiable record is
+// an error: it governs who can read, so it must not be silently ignored.
+func (w *Workspace) loadDeviceAuth() (device.Auth, bool, error) {
+	path := w.devicesPath()
+	if path == "" {
+		return device.Auth{}, false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return device.Auth{}, false, nil
+		}
+		return device.Auth{}, false, err
+	}
+	a, err := provider.DecodeDeviceAuth(data)
+	if err != nil {
+		return device.Auth{}, false, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if !a.Verify() {
+		return device.Auth{}, false, fmt.Errorf("device record %s failed signature verification", path)
+	}
+	return a, true, nil
+}
+
+// saveDeviceAuth writes the device-authorization record as indented JSON, 0600
+// (it names the ML-KEM keys of every authorized device).
+func (w *Workspace) saveDeviceAuth(a device.Auth) error {
+	path := w.devicesPath()
+	if path == "" {
+		return fmt.Errorf("this workspace has no place to store a device record (bare root file mode)")
+	}
+	data, err := provider.EncodeDeviceAuth(a)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // pipelineConfig starts from the pipeline defaults and applies this workspace's

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -339,6 +340,13 @@ type commitConfig struct {
 	label    manifest.MergeLabeler // conflict-copy namer (device-tagged)
 	s        store.Store
 	cfg      pipeline.Config
+	// recipients is the authorized-device seal set for the self-root companion
+	// (Architecture §3.7.2). Empty → legacy single-owner-key seal (SealFullRoot),
+	// preserving pre-device-revocation behaviour for a workspace with no
+	// devices.json. Non-empty → the companion is sealed per device (SealFullRootFor),
+	// so a device dropped from the record can no longer open future roots. This
+	// device's own ML-KEM key is always unioned in, so it never seals itself out.
+	recipients []cap.PublicKey
 }
 
 // newCommitConfig assembles the commit inputs from a workspace: the base
@@ -350,17 +358,47 @@ func (w *Workspace) newCommitConfig(rootFile string, signer cap.SignKey, s store
 	if err != nil {
 		return commitConfig{}, err
 	}
+	recipients, err := w.companionRecipients(signer, pub, ok)
+	if err != nil {
+		return commitConfig{}, err
+	}
 	return commitConfig{
-		file:     rootFile,
-		basePath: w.basePath(),
-		signer:   signer,
-		mlkemOK:  ok,
-		priv:     priv,
-		pub:      pub,
-		label:    w.deviceLabeler(),
-		s:        s,
-		cfg:      cfg,
+		file:       rootFile,
+		basePath:   w.basePath(),
+		signer:     signer,
+		mlkemOK:    ok,
+		priv:       priv,
+		pub:        pub,
+		label:      w.deviceLabeler(),
+		s:          s,
+		cfg:        cfg,
+		recipients: recipients,
 	}, nil
+}
+
+// companionRecipients returns the seal-recipient set for the self-root companion:
+// every device in this workspace's device-authorization record (devices.json),
+// unioned with this device's own ML-KEM key so a commit never seals itself out.
+// It returns nil (→ legacy single-owner seal) when there is no record, the record
+// is empty, or the owner ML-KEM key is absent. A record whose owner does not match
+// the signer is ignored (it governs a different namespace).
+func (w *Workspace) companionRecipients(signer cap.SignKey, selfPub cap.PublicKey, mlkemOK bool) ([]cap.PublicKey, error) {
+	if !mlkemOK {
+		return nil, nil
+	}
+	auth, ok, err := w.loadDeviceAuth()
+	if err != nil {
+		return nil, err
+	}
+	if !ok || len(auth.Members) == 0 || auth.Owner != signer.Public() {
+		return nil, nil
+	}
+	recipients := auth.Recipients()
+	// Union in this device's own key (idempotent if already a member).
+	if !slices.Contains(recipients, selfPub) {
+		recipients = append(recipients, selfPub)
+	}
+	return recipients, nil
 }
 
 // fullRootPublisher is the DHT surface commitRoot needs for multi-device merge:
@@ -465,7 +503,7 @@ func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, 
 		if err != nil {
 			return err
 		}
-		rec, err := manifest.SealFullRoot(cc.signer, cc.pub, merged, newSeq)
+		rec, err := cc.sealCompanion(merged, newSeq)
 		if err != nil {
 			return err
 		}
@@ -500,6 +538,18 @@ func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, 
 	// Exhausted retries against a hot race; the local root file still holds our
 	// last signed attempt and its changes fold in on the next write.
 	return fmt.Errorf("commit: gave up after %d attempts racing a concurrent writer (change kept locally, will reconcile on next write)", commitMaxAttempts)
+}
+
+// sealCompanion builds the self-root companion for a commit: a device-scoped
+// record sealed to every authorized device when this workspace has a
+// device-authorization record (cc.recipients non-empty, Architecture §3.7.2),
+// else the legacy single-owner-key record. Both are opened by GetFullRoot the
+// same way, so the choice is transparent to readers.
+func (cc commitConfig) sealCompanion(root manifest.ReadCap, seq uint64) (manifest.FullRootRecord, error) {
+	if len(cc.recipients) > 0 {
+		return manifest.SealFullRootFor(cc.signer, cc.recipients, root, seq)
+	}
+	return manifest.SealFullRoot(cc.signer, cc.pub, root, seq)
 }
 
 // commitLocalOnly is the pre-multi-device commit: sign at prev.Seq+1 (1 for a
