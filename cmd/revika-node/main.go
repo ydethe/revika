@@ -434,6 +434,15 @@ func run() error {
 
 	srv.Register(h)
 
+	// Versioned stream protocols now installed on the host, for the startup banner
+	// and metrics surface: revika is pre-release, so operators watch these to confirm
+	// every peer speaks the same wire versions.
+	served := srv.Protocols()
+	protocols := make([]string, len(served))
+	for i, p := range served {
+		protocols[i] = string(p)
+	}
+
 	// Garbage collector: reclaim shards no owner holds any longer (and, if
 	// enabled, expired leases), keeping disk and ledger aligned. Its activity is
 	// recorded into gcStats so the metrics server can report it.
@@ -448,6 +457,7 @@ func run() error {
 		ms.SetPoW(effDiff)
 		ms.SetMaintenance(repairPolicy, rebalancePolicy)
 		ms.SetLoadSource(net.LoadSource(loadSource))
+		ms.SetProtocols(served)
 		go func() {
 			if err := ms.Serve(ctx, *metricsAddr); err != nil {
 				log.Error("metrics: server stopped", "err", err)
@@ -463,6 +473,7 @@ func run() error {
 		"event", "node.start",
 		"version", version,
 		"buildDate", buildDate,
+		"protocols", protocols,
 		"peer", h.ID().String(),
 		"addrs", addrs,
 		"shards", shardsDir,

@@ -138,9 +138,9 @@ func TestGrantPutRejected(t *testing.T) {
 	})
 }
 
-// TestNilLedgerAcceptsStripeFrame confirms the 1.1.0 four-blob frame is backward
-// compatible with a node that runs no ledger: it stores the bytes and ignores the
-// stripe descriptor and grant.
+// TestNilLedgerAcceptsStripeFrame confirms the four-blob PUT frame is accepted by
+// a node that runs no ledger: it stores the bytes and ignores the stripe
+// descriptor and grant.
 func TestNilLedgerAcceptsStripeFrame(t *testing.T) {
 	backing := store.NewMemStore()
 	serverHost, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})

@@ -36,6 +36,13 @@ User side — a node is trusted for *availability*, never *confidentiality*.
   private `/revika` prefix; no LAN/mDNS path — discovery is DHT-only), NAT traversal, and
   transport. Build revika protocols as versioned libp2p stream protocols; don't roll a bespoke
   wire protocol.
+- **One wire version per protocol — no retro-compatibility (dev).** While revika is a
+  development version, keep exactly one version of each stream protocol (`ShardProtocol`,
+  `ProbeProtocol`, and the rest) in the implementation. Bump the version ID when the frame
+  changes, but do *not* keep the predecessor around or serve/dial multiple versions for
+  back-compat: only the current version is registered and offered, and libp2p's muxer fails
+  negotiation against a mismatched peer rather than mis-framing. Peers must run matching
+  builds. Node startup logs and `/status` + `/metrics` advertise the served versions.
 - **Everything is encrypted client-side** before shards leave the machine.
 - **Sharing = wrapping/sharing keys**, never copying plaintext. A read-capability = manifest
   location + decryption key, wrapped with the recipient's public key.

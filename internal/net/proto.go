@@ -42,21 +42,19 @@ import (
 // Protocol IDs. Semantic-versioned so upgrades are negotiable via libp2p's
 // multistream muxer.
 const (
-	// ShardProtocol is at 1.2.0: the PUT request frame gained a single trailing
+	// ShardProtocol is at 1.2.0: the PUT request frame carries a single trailing
 	// MoveReason byte after the four blobs (data, token, stripe descriptor, grant),
 	// so a Node can tell a client write from a repair regeneration from a rebalance
 	// move — the receive-side abuse detector polices only rebalance moves against
 	// the cluster schedule, and must not mistake a repair burst for abuse. GET / HAS
 	// / DELETE carry no reason byte; it is PUT-specific.
 	//
-	// 1.1.0 (ShardProtocolV1) is still served for back-compat: its PUT frame omits
-	// the reason byte, so a 1.1.0 peer's write is treated as ReasonRepair
-	// (schedule-exempt) — a legacy client cannot be schedule-policed, and exempting
-	// it is the safe default. libp2p's multistream muxer negotiates the newest
-	// version both peers share.
-	ShardProtocol   protocol.ID = "/revika/shard/1.2.0"
-	ShardProtocolV1 protocol.ID = "/revika/shard/1.1.0"
-	ProbeProtocol   protocol.ID = "/revika/probe/1.0.0"
+	// While revika is pre-release the wire protocol carries no back-compat guarantee:
+	// only the current version is served and dialed, so both peers must run the same
+	// build. libp2p's multistream muxer still negotiates the version, so a mismatched
+	// peer fails to open a stream rather than mis-framing.
+	ShardProtocol protocol.ID = "/revika/shard/1.2.0"
+	ProbeProtocol protocol.ID = "/revika/probe/1.0.0"
 )
 
 // MoveReason is the trailing byte on a 1.2.0 PUT frame: it declares why a shard

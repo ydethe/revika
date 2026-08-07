@@ -14,6 +14,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/protocol"
 
 	"revika/internal/ledger"
 )
@@ -53,6 +54,7 @@ type MetricsServer struct {
 	repair    RepairInfo    // repair maintenance policy this node runs (and advertises)
 	rebalance RebalanceInfo // rebalance maintenance policy this node runs (and advertises)
 	loadSrc   LoadSource    // optional: reports storage capacity/load for rebalancing (§3.4)
+	protocols []string      // versioned libp2p stream protocols this node serves
 	log       *slog.Logger
 }
 
@@ -86,6 +88,18 @@ func (m *MetricsServer) SetPoW(minBits uint) {
 		return
 	}
 	m.pow = PoWInfo{Enabled: true, Difficulty: minBits}
+}
+
+// SetProtocols records the versioned libp2p stream protocols this node serves so
+// they are reported on /status (protocols) and /metrics (revika_protocol_info),
+// letting an operator confirm the wire versions a node speaks. revika is
+// pre-release, so peers must run matching versions. Optional; call before Serve.
+func (m *MetricsServer) SetProtocols(ps []protocol.ID) {
+	m.protocols = make([]string, 0, len(ps))
+	for _, p := range ps {
+		m.protocols = append(m.protocols, string(p))
+	}
+	sort.Strings(m.protocols)
 }
 
 // SetMaintenance records the repair and rebalancing policy this node runs so it
@@ -143,7 +157,10 @@ type Status struct {
 	// Bootstrap holds this node's dialable addresses each terminated with
 	// /p2p/<peer-id>: ready to paste into `revika-ctl -bootstrap <addr>` to join
 	// the network through this node. Mirrors ListenAddrs with the peer ID attached.
-	Bootstrap []string      `json:"bootstrap"`
+	Bootstrap []string `json:"bootstrap"`
+	// Protocols are the versioned libp2p stream protocols this node serves (e.g.
+	// /revika/shard/1.2.0). revika is pre-release: peers must run matching versions.
+	Protocols []string      `json:"protocols"`
 	PoW       PoWInfo       `json:"pow"`
 	Repair    RepairInfo    `json:"repair"`
 	Rebalance RebalanceInfo `json:"rebalance"`
@@ -230,6 +247,7 @@ func (m *MetricsServer) snapshot() (Status, error) {
 		Version:       m.version,
 		BuildDate:     m.buildDate,
 		UptimeSeconds: time.Since(m.started).Seconds(),
+		Protocols:     m.protocols,
 		PoW:           m.pow,
 		Repair:        m.repair,
 		Rebalance:     m.rebalance,
@@ -373,6 +391,15 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintln(w, "# HELP revika_build_info Build provenance (constant 1; version and build date in labels).")
 	fmt.Fprintln(w, "# TYPE revika_build_info gauge")
 	fmt.Fprintf(w, "revika_build_info{version=%q,build_date=%q} 1\n", st.Version, st.BuildDate)
+
+	// Versioned stream protocols this node serves, one info-style line (constant 1)
+	// per protocol, the protocol ID in a label. revika is pre-release: peers must run
+	// matching versions, so operators watch these to confirm the wire versions.
+	fmt.Fprintln(w, "# HELP revika_protocol_info Versioned libp2p stream protocol this node serves (constant 1; protocol ID in the protocol label).")
+	fmt.Fprintln(w, "# TYPE revika_protocol_info gauge")
+	for _, p := range st.Protocols {
+		fmt.Fprintf(w, "revika_protocol_info{protocol=%q} 1\n", p)
+	}
 
 	// Proof-of-work admission policy this node enforces on writes.
 	fmt.Fprintln(w, "# HELP revika_pow_enabled Whether proof-of-work owner-identity admission is enforced on writes (1 = on).")

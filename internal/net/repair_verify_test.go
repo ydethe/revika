@@ -50,7 +50,6 @@ func TestRepairVerifyCatchesLyingHolder(t *testing.T) {
 	// A liar that announces a provider record for id but serves no bytes.
 	liar := newDHTNode(t, DHTModeServer, store.NewMemStore())
 	liar.h.SetStreamHandler(ShardProtocol, lyingShardHandler)
-	liar.h.SetStreamHandler(ShardProtocolV1, lyingShardHandler)
 
 	repairer := newDHTNode(t, DHTModeServer, store.NewMemStore(), dhtAddr(liar))
 	waitRoutingTable(t, repairer)

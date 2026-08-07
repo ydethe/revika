@@ -15,17 +15,15 @@ Two versioned libp2p stream protocols, semantic-versioned so upgrades negotiate
 through libp2p's multistream muxer:
 
 - `ShardProtocol` = `/revika/shard/1.2.0` — PUT / GET / HAS / DELETE a shard by
-  content address. The `1.1.0` bump added two trailing blobs (stripe descriptor +
-  repair grant) after the auth token on PUT; the `1.2.0` bump appends one trailing
-  **`MoveReason`** byte after those blobs, declaring *why* a shard is being written:
-  `ReasonClient` (0, owner-initiated write, carries a token), `ReasonRepair` (1,
-  grant-gated regeneration — schedule-exempt, may burst after node loss), or
-  `ReasonRebalance` (2, grant-gated diffusion move — policed by the abuse detector).
-  The reason carries only the reason, no load fraction. `ShardProtocolV1` =
-  `/revika/shard/1.1.0` is still served for back-compat (`Register` installs both →
-  the same handler): a 1.1.0 PUT omits the byte and is read as `ReasonRepair`. A
-  client's `openStream` offers both IDs and libp2p's multistream muxer picks the
-  newest shared.
+  content address. A PUT frame carries the data, three trailing blobs (auth token,
+  stripe descriptor, repair grant) after it, and a final **`MoveReason`** byte
+  declaring *why* a shard is being written: `ReasonClient` (0, owner-initiated write,
+  carries a token), `ReasonRepair` (1, grant-gated regeneration — schedule-exempt,
+  may burst after node loss), or `ReasonRebalance` (2, grant-gated diffusion move —
+  policed by the abuse detector). The reason carries only the reason, no load
+  fraction. revika is pre-release, so the wire carries no back-compat guarantee: only
+  the current version is served and dialed, and libp2p's multistream muxer fails
+  negotiation against a peer on a different version rather than mis-framing.
 - `ProbeProtocol` = `/revika/probe/1.0.0` — proof-of-possession challenge/response
   used by repair.
 - `BalanceProtocol` = `/revika/balance/1.0.0` — read-only load report used by
@@ -334,8 +332,8 @@ interprets, or trusts payloads.
 - `SetAbuseMonitor(*AbuseMonitor)` — wires the maintenance-abuse detector. On a
   grant-authorized PUT tagged `ReasonRebalance` (no owner token, stripe descriptor + grant
   present) `handlePut` calls `RecordRebalanceMove` so the detector can police a peer that
-  rebalances against this node too fast. The reason byte is read only on `ShardProtocol`
-  (1.2.0); a 1.1.0 PUT defaults to `ReasonRepair` and is never counted as a rebalance move.
+  rebalances against this node too fast. Every PUT frame carries the reason byte; an unknown
+  value defaults to `ReasonRepair` and is never counted as a rebalance move.
 - `SetRateLimiter(*OwnerRateLimiter)` — wires the optional per-owner write-verb rate cap
   (see **Write-verb rate limiting**). `handlePut` meters the token branch (after the PoW
   check) and `handleDelete` meters the verified owner; an over-rate write is refused with
@@ -462,7 +460,9 @@ holds the same **fraction of its own capacity** — not the same shard count
 behind a TLS-terminating reverse proxy). `NewMetricsServer(h, ledger, disc, version,
 buildDate, started, log)`; `disc`, the GC stats (`SetGCStats`), the proof-of-work
 policy (`SetPoW`), the maintenance policy (`SetMaintenance`, the effective
-repair/rebalance cadence this node runs and advertises), and the storage-load reporter
+repair/rebalance cadence this node runs and advertises), the served stream-protocol
+versions (`SetProtocols`, fed `Server.Protocols()` so `/status` and `/metrics` report
+the wire versions this node speaks), and the storage-load reporter
 (`SetLoadSource`, feeding the capacity/free/load fields) are optional. `Serve(ctx, addr)`
 runs it with graceful shutdown; `Handler()` exposes the mux for tests. Endpoints:
 
@@ -470,15 +470,16 @@ runs it with graceful shutdown; `Handler()` exposes the mux for tests. Endpoints
 - `GET /readyz` — readiness (DHT routing table non-empty when the DHT is on; always
   ready otherwise).
 - `GET /status` — JSON `Status` snapshot: general info (including `build_date`, the
-  `bootstrap` strings, and the `PoWInfo` admission policy — enabled, puzzle name,
-  difficulty bits), `StorageInfo` (shards, bytes, quota, the rebalancing signal
+  `bootstrap` strings, the served `protocols` list, and the `PoWInfo` admission policy —
+  enabled, puzzle name, difficulty bits), `StorageInfo` (shards, bytes, quota, the rebalancing signal
   `capacity_bytes`/`free_bytes`/`load` when a load source is set, and a per-`OwnerInfo`
   breakdown from the ledger), the `RepairInfo`/`RebalanceInfo` maintenance policy, `NetworkInfo`
   (connected peers, routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
   `bootstrap` mirrors `listen_addrs` with the node's `/p2p/<peer-id>` appended — each entry is
   ready to paste into `revika-ctl -bootstrap`.
 - `GET /metrics` — Prometheus text exposition of the same snapshot, including
-  `revika_build_info{version,build_date}`, `revika_bootstrap_info{addr}`,
+  `revika_build_info{version,build_date}`, `revika_protocol_info{protocol}` (one line per
+  served stream protocol), `revika_bootstrap_info{addr}`,
   `revika_pow_enabled{puzzle}`, `revika_pow_difficulty_bits`, the load gauges
   `revika_capacity_bytes` / `revika_free_bytes` / `revika_load_ratio`, and the maintenance
   gauges `revika_repair_enabled` / `revika_repair_interval_seconds` /

@@ -11,6 +11,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/protocol"
 
 	"revika/internal/cap"
 	"revika/internal/ledger"
@@ -175,15 +176,25 @@ func (srv *Server) enforcePoW(owner []byte) error {
 // peer that dials them.
 func (srv *Server) Register(h host.Host) {
 	h.SetStreamHandler(ShardProtocol, srv.handleShard)
-	// Also serve the 1.1.0 predecessor (no MoveReason byte) so a not-yet-upgraded
-	// client keeps working; handleShard branches on s.Protocol() for the PUT frame.
-	h.SetStreamHandler(ShardProtocolV1, srv.handleShard)
 	h.SetStreamHandler(ProbeProtocol, srv.handleProbe)
 	h.SetStreamHandler(BalanceProtocol, srv.handleLoad)
 	h.SetStreamHandler(ParamsProtocol, srv.handleParams)
 	if srv.rootResolver != nil {
 		h.SetStreamHandler(RootProtocol, srv.handleRoot)
 	}
+}
+
+// Protocols returns the versioned libp2p stream protocols this Server serves, in
+// a stable order, so the daemon can advertise them on its startup banner and
+// metrics/status surfaces. It mirrors Register exactly — RootProtocol appears only
+// when a root resolver is configured — so operators can confirm the wire versions a
+// node actually speaks (revika is pre-release: peers must run matching versions).
+func (srv *Server) Protocols() []protocol.ID {
+	ps := []protocol.ID{ShardProtocol, ProbeProtocol, BalanceProtocol, ParamsProtocol}
+	if srv.rootResolver != nil {
+		ps = append(ps, RootProtocol)
+	}
+	return ps
 }
 
 // handleShard serves one shard-protocol request on s. The wire contract is one
@@ -248,19 +259,15 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 		_ = s.Reset()
 		return
 	}
-	// The MoveReason byte trails the grant only on 1.2.0. A 1.1.0 frame ends at the
-	// grant, so a legacy write defaults to ReasonRepair — schedule-exempt, since a
-	// legacy client cannot be policed and exempting it is the safe default.
-	reason := ReasonRepair
-	if s.Protocol() == ShardProtocol {
-		rb, rerr := readByte(s)
-		if rerr != nil {
-			srv.log.Debug("shard put: read reason", "peer", peer, "err", rerr)
-			_ = s.Reset()
-			return
-		}
-		reason = MoveReason(rb)
+	// The MoveReason byte trails the grant on every PUT frame. An unknown value is
+	// treated as ReasonRepair (schedule-exempt) by the abuse detector downstream.
+	rb, rerr := readByte(s)
+	if rerr != nil {
+		srv.log.Debug("shard put: read reason", "peer", peer, "err", rerr)
+		_ = s.Reset()
+		return
 	}
+	reason := MoveReason(rb)
 	id := store.HashOf(data)
 
 	// Parse and validate any accompanying stripe descriptor + grant once. desc is

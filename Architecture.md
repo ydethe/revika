@@ -838,11 +838,13 @@ index/accounting of the user's own data and where it lives, *not* a global share
 Versioned stream protocols (semantic-versioned IDs so upgrades are negotiable):
 
 - `/revika/shard/1.2.0` — `PUT` / `GET` / `HAS` / `DELETE` a shard by ID. PUT carries the
-  auth token, the stripe descriptor, the repair grant, and (since 1.2.0) a trailing
-  `MoveReason` byte — `client` / `repair` / `rebalance` — so the receiver can distinguish a
-  policed rebalance move from schedule-exempt repair regeneration (§3.1/§3.4). `1.1.0` (no
-  reason byte, read as `repair`) is still served for back-compat; a client offers both IDs and
-  libp2p's muxer picks the newest shared.
+  auth token, the stripe descriptor, the repair grant, and a trailing `MoveReason` byte —
+  `client` / `repair` / `rebalance` — so the receiver can distinguish a policed rebalance
+  move from schedule-exempt repair regeneration (§3.1/§3.4). While revika is pre-release the
+  wire carries no back-compat guarantee: only the current version is served and dialed, and
+  libp2p's muxer fails negotiation against a peer on a different version rather than
+  mis-framing. The node advertises the versions it serves on its startup banner and on
+  `/status` (`protocols`) + `/metrics` (`revika_protocol_info`).
 - `/revika/probe/1.0.0` — proof-of-possession challenge/response for the repair loop and the
   rebalancer's proof-gated release.
 - `/revika/root/1.0.0` — optional direct fetch/publish of a User's signed root pointer

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +34,7 @@ func newMetricsFixture(t *testing.T) (*MetricsServer, *ledger.Ledger, *httptest.
 
 	ms := NewMetricsServer(h, led, nil /* no DHT */, "test-1.2.3", "2026-08-05T12:00:00Z", time.Now(), nil)
 	ms.SetPoW(12)
+	ms.SetProtocols(NewServer(store.NewMemStore(), nil).Protocols())
 	ts := httptest.NewServer(ms.Handler())
 	t.Cleanup(ts.Close)
 	return ms, led, ts
@@ -91,6 +94,16 @@ func TestMetricsStatusReflectsLedger(t *testing.T) {
 	if !st.PoW.Enabled || st.PoW.Difficulty != 12 {
 		t.Errorf("pow = %+v, want enabled at difficulty 12", st.PoW)
 	}
+	// The served stream protocols are advertised (sorted), so an operator can
+	// confirm the wire versions from /status.
+	wantProtos := []string{
+		string(BalanceProtocol), string(ParamsProtocol),
+		string(ProbeProtocol), string(ShardProtocol),
+	}
+	sort.Strings(wantProtos)
+	if !slices.Equal(st.Protocols, wantProtos) {
+		t.Errorf("protocols = %v, want %v", st.Protocols, wantProtos)
+	}
 	if st.PeerID == "" {
 		t.Error("empty peer_id")
 	}
@@ -136,6 +149,9 @@ func TestMetricsPrometheus(t *testing.T) {
 		"revika_gc_runs_total 0",
 		"revika_owner_bytes_used{owner=",
 		`revika_build_info{version="test-1.2.3",build_date="2026-08-05T12:00:00Z"} 1`,
+		"# TYPE revika_protocol_info gauge",
+		`revika_protocol_info{protocol="` + string(ShardProtocol) + `"} 1`,
+		`revika_protocol_info{protocol="` + string(ProbeProtocol) + `"} 1`,
 		`revika_pow_enabled{puzzle="argon2id"} 1`,
 		"revika_pow_difficulty_bits 12",
 		"# TYPE revika_bootstrap_info gauge",

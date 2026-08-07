@@ -73,11 +73,11 @@ func (n *NetStore) authToken(o op, id store.ShardID) []byte {
 }
 
 // openStream dials a fresh stream for one request and applies a deadline. It
-// offers the current shard protocol and the 1.1.0 predecessor, so libp2p's
-// multistream muxer negotiates the newest version the node also speaks — a
-// 1.2.0-aware client keeps working against a not-yet-upgraded 1.1.0 node.
+// offers only the current shard protocol; while revika is pre-release the wire
+// carries no back-compat guarantee, so a peer on a different version fails
+// negotiation rather than mis-framing.
 func (n *NetStore) openStream(ctx context.Context) (network.Stream, error) {
-	s, err := n.h.NewStream(ctx, n.peer, ShardProtocol, ShardProtocolV1)
+	s, err := n.h.NewStream(ctx, n.peer, ShardProtocol)
 	if err != nil {
 		return nil, fmt.Errorf("revika/net: open stream to %s: %w", n.peer, err)
 	}
@@ -151,10 +151,8 @@ func (n *NetStore) putGrant(ctx context.Context, data []byte, d stripe.Descripto
 }
 
 // putRaw sends one PUT: data, then the three trailing blobs (token, stripe
-// descriptor, grant), any of which may be empty, and — when the negotiated
-// protocol is 1.2.0 — a final MoveReason byte. It verifies the node echoed the
-// shard's true content address. Against a 1.1.0 node the reason byte is omitted
-// (that node's frame ends at the grant blob), so the write stays wire-compatible.
+// descriptor, grant), any of which may be empty, and a final MoveReason byte. It
+// verifies the node echoed the shard's true content address.
 func (n *NetStore) putRaw(ctx context.Context, data, token, stripeBytes, grant []byte, reason MoveReason) (store.ShardID, error) {
 	s, err := n.openStream(ctx)
 	if err != nil {
@@ -172,13 +170,9 @@ func (n *NetStore) putRaw(ctx context.Context, data, token, stripeBytes, grant [
 			return store.ShardID{}, err
 		}
 	}
-	// The reason byte exists only in 1.2.0; a 1.1.0 node's handler would treat it
-	// as the next request's op byte, so gate it on the negotiated protocol.
-	if s.Protocol() == ShardProtocol {
-		if err := writeByte(s, byte(reason)); err != nil {
-			_ = s.Reset()
-			return store.ShardID{}, err
-		}
+	if err := writeByte(s, byte(reason)); err != nil {
+		_ = s.Reset()
+		return store.ShardID{}, err
 	}
 	if err := readResp(s); err != nil {
 		return store.ShardID{}, err
