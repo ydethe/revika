@@ -164,8 +164,10 @@ the DHT (best-effort mirror behind the durable local `root.json`); `ls -owner
 a browse path. Commit is now a **multi-device read-merge-publish loop**
 (`commitRoot`, Architecture §3.7.1): several devices sharing one owner signing key
 reconcile without lost updates. Each commit reads the current DHT root; if it
-diverged from this device's merge base (a local, unsigned sidecar
-`<workspace>/base.json`), it three-way-merges via `manifest.Merge3` — conflicting
+diverged from this device's merge base — which **is** the durable local `root.json`
+(the last root this device committed; `commitRoot` loads it as `prev` and uses
+`prev.Root` as the common ancestor, so no separate base sidecar is kept) — it
+three-way-merges via `manifest.Merge3` — conflicting
 leaves become device-tagged conflict copies (`Config.DeviceTag`, a random 4-byte
 hex minted per-workspace, never signed), never silent losses — signs at
 `max(local,remote).Seq+1`, and re-reads to catch a racing writer. The decryptable

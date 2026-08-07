@@ -13,8 +13,8 @@ import (
 )
 
 // testDevice is a test stand-in for one machine sharing the owner keys: its own
-// workspace files (root.json/base.json), its own conflict-copy tag, and its own
-// DHT discovery, all over a shared content store.
+// workspace root.json (which doubles as the merge base), its own conflict-copy
+// tag, and its own DHT discovery, all over a shared content store.
 type testDevice struct {
 	cc   commitConfig
 	disc fullRootPublisher
@@ -139,7 +139,6 @@ func TestMultiDeviceConverge(t *testing.T) {
 		return &testDevice{
 			cc: commitConfig{
 				file:     dir + "/root.json",
-				basePath: dir + "/base.json",
 				signer:   sk,
 				mlkemOK:  true,
 				priv:     priv,

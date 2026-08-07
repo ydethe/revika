@@ -141,15 +141,6 @@ func (w *Workspace) signKeyPath(flagVal string) string {
 	return w.keyPrefix() + ".sign.key"
 }
 
-// basePath is the merge-base sidecar location for this workspace, or "" in
-// file mode (a bare root pointer has no workspace dir to keep per-device state).
-func (w *Workspace) basePath() string {
-	if w == nil || w.fileMode {
-		return ""
-	}
-	return filepath.Join(w.Dir, "base.json")
-}
-
 // ownerMLKEM loads this workspace's ML-KEM owner key pair (keys/user.key, its
 // public half derived), used to seal/open the self-root companion for
 // multi-device reconciliation. ok is false when the key file is absent, in which

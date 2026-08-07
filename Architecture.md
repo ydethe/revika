@@ -560,11 +560,13 @@ silently lose one side (the DHT has no compare-and-swap). The client resolves th
 every `cp`/`rm`/`revoke`**, without needing the (still-planned) sync daemon:
 
 - **Read-merge-publish loop** (`cmd/revika-ctl` `commitRoot`). Before publishing, the client
-  reads the current DHT root. If it diverged from this device's *merge base* (a local, unsigned
-  sidecar `<workspace>/base.json` recording the last root this device reconciled), the client
+  reads the current DHT root. If it diverged from this device's *merge base*, the client
   three-way-merges the two roots, signs at `max(local, remote).Seq + 1`, publishes, and re-reads
   to catch a racing writer — folding and retrying if one won. The durable local `root.json`
-  stays authoritative; a DHT failure never fails the commit.
+  stays authoritative; a DHT failure never fails the commit. The merge base **is** `root.json`
+  itself — the last root this device committed — so no separate sidecar is kept: a commit always
+  writes the signed root and its ancestor as one file, and the next commit loads that same
+  `root.json` as `prev` and uses `prev.Root` as the three-way common ancestor.
 - **Merge primitive** (`manifest.Merge3`). Recursive over the COW Merkle DAG with cap-equality
   pruning: an unchanged subtree keeps an identical cap on both sides and is taken whole. Only a
   genuinely divergent directory is descended. A leaf both sides changed differently is never

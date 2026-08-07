@@ -331,8 +331,7 @@ func currentRoot(ctx context.Context, s store.Store, cfg pipeline.Config, prev m
 // keys) commit degrades to a plain local sign+save (+ best-effort DHT mirror),
 // exactly as before multi-device support.
 type commitConfig struct {
-	file     string      // authoritative local root.json
-	basePath string      // merge-base sidecar; "" disables base tracking / merge
+	file     string      // authoritative local root.json (also the merge base)
 	signer   cap.SignKey // owner Ed25519
 	mlkemOK  bool        // owner ML-KEM pair loaded (below)
 	priv     cap.PrivateKey
@@ -349,10 +348,10 @@ type commitConfig struct {
 	recipients []cap.PublicKey
 }
 
-// newCommitConfig assembles the commit inputs from a workspace: the base
-// sidecar path, the owner ML-KEM keys (if present — absent disables merge), and
-// the device-tagged conflict labeler. It never fails for a missing key file;
-// only a malformed one is an error.
+// newCommitConfig assembles the commit inputs from a workspace: the owner
+// ML-KEM keys (if present — absent disables merge) and the device-tagged
+// conflict labeler. It never fails for a missing key file; only a malformed one
+// is an error.
 func (w *Workspace) newCommitConfig(rootFile string, signer cap.SignKey, s store.Store, cfg pipeline.Config) (commitConfig, error) {
 	priv, pub, ok, err := w.ownerMLKEM()
 	if err != nil {
@@ -364,7 +363,6 @@ func (w *Workspace) newCommitConfig(rootFile string, signer cap.SignKey, s store
 	}
 	return commitConfig{
 		file:       rootFile,
-		basePath:   w.basePath(),
 		signer:     signer,
 		mlkemOK:    ok,
 		priv:       priv,
@@ -458,11 +456,10 @@ func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, 
 			ctlLog.Warn("commit: dht root read failed, committing locally", "event", "root.commit", "err", err)
 			return commitLocalOnly(ctx, cc, localTip, prev, exists, pub)
 		}
-		base, hasBase, err := loadBase(cc.basePath)
-		if err != nil {
-			return err
-		}
-
+		// The merge base is this device's last committed root — prev, the durable
+		// root.json loaded above. root.json and its (former) base sidecar were always
+		// written together with the same cap+seq, so prev.Root/prev.Seq are exactly
+		// that ancestor; it stays constant across retries while localTip/prevSeq advance.
 		newSeq := prevSeq + 1
 		if hasRemote && remote.Seq+1 > newSeq {
 			newSeq = remote.Seq + 1
@@ -473,9 +470,9 @@ func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, 
 		switch {
 		case !hasRemote:
 			// Nothing published yet.
-		case hasBase && remote.Seq < base.Seq:
+		case exists && remote.Seq < prev.Seq:
 			// We are strictly ahead of the published root; it is our own ancestor.
-		case hasBase && sameVerify(remote.Root, base.Root):
+		case exists && sameVerify(remote.Root, prev.Root):
 			// The published root is exactly our merge base: a pure local advance.
 		default:
 			// Fork (or unknown ancestor): fetch the decryptable remote root and merge.
@@ -488,8 +485,8 @@ func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, 
 					"event", "root.commit", "remote_seq", remote.Seq, "err", ferr)
 			} else {
 				baseCap := manifest.ReadCap{}
-				if hasBase {
-					baseCap = base.Root
+				if exists {
+					baseCap = prev.Root
 				}
 				m, cf, merr := manifest.Merge3(ctx, cc.s, cc.cfg, baseCap, localTip, remoteFull, cc.label)
 				if merr != nil {
@@ -529,9 +526,6 @@ func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, 
 		if err := provider.NewFileRootStore(cc.file).Save(ctx, rp); err != nil {
 			return err
 		}
-		if err := saveBase(cc.basePath, baseRecord{Root: merged, Seq: newSeq}); err != nil {
-			return err
-		}
 		reportConflicts(conflicts)
 		return nil
 	}
@@ -554,8 +548,8 @@ func (cc commitConfig) sealCompanion(root manifest.ReadCap, seq uint64) (manifes
 
 // commitLocalOnly is the pre-multi-device commit: sign at prev.Seq+1 (1 for a
 // fresh namespace) and save to the durable local file, mirroring to the DHT
-// verify-root best-effort when a publisher is available. It advances the merge
-// base too so a later multi-device-capable commit has an ancestor.
+// verify-root best-effort when a publisher is available. The saved root.json is
+// itself the merge base a later multi-device-capable commit reads as its ancestor.
 func commitLocalOnly(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, prev manifest.RootPointer, exists bool, pub provider.RootPublisher) error {
 	seq := uint64(1)
 	if exists {
@@ -569,10 +563,7 @@ func commitLocalOnly(ctx context.Context, cc commitConfig, newRoot manifest.Read
 	if pub != nil {
 		rs = provider.NewMultiRootStore(ctlLog, rs, provider.NewDHTRootStore(pub, cc.signer.Public()))
 	}
-	if err := rs.Save(ctx, rp); err != nil {
-		return err
-	}
-	return saveBase(cc.basePath, baseRecord{Root: newRoot, Seq: seq})
+	return rs.Save(ctx, rp)
 }
 
 // sameVerify reports whether two caps address the identical blob ignoring their
