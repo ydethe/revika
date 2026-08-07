@@ -55,23 +55,24 @@ retry() {
   return 1
 }
 
-# Two independent User identities, each with its own signing key. Only `owner`
-# will store the file; `mallory` is a legitimate other user (e.g. someone the
-# file was shared with) who must not be able to delete it.
-revika-ctl keygen -key "$WORK/owner"   -pow-difficulty 0 >/dev/null
-revika-ctl keygen -key "$WORK/mallory" -pow-difficulty 0 >/dev/null
-
 # A workspace per user, each bootstrapped through the seed. compose only waits for
 # the node container to START, not for its libp2p host to be dialable, and connect
 # fails fast when no bootstrap node answers — so retry while the seed comes up.
+# `connect` mints each user's Ed25519 signing key into its workspace and grinds it
+# to the node's proof-of-work difficulty (read from the bootstrap policy), so PUTs
+# meet admission. The two identities are independent: only `owner` stores the file;
+# `mallory` is a legitimate other user (someone it was shared with) who must not be
+# able to delete it.
 retry "connect owner"   revika-ctl connect -root "$OWNER_WS"   -bootstrap "$SEED_ADDR" \
   || { echo "FAIL: connect $OWNER_WS never reached the seed at $SEED_ADDR"; exit 1; }
 retry "connect mallory" revika-ctl connect -root "$MALLORY_WS" -bootstrap "$SEED_ADDR" \
   || { echo "FAIL: connect $MALLORY_WS never reached the seed at $SEED_ADDR"; exit 1; }
+OWNER_SIGNKEY="$OWNER_WS/keys/user.sign.key"
+MALLORY_SIGNKEY="$MALLORY_WS/keys/user.sign.key"
 
 echo ">> owner stores a 1 MiB file across the nodes"
 head -c 1048576 /dev/urandom >"$SRC"
-retry "store" revika-ctl cp -root "$OWNER_WS" -signkey "$WORK/owner.sign.key" "$SRC" rvk:secret.bin \
+retry "store" revika-ctl cp -root "$OWNER_WS" -signkey "$OWNER_SIGNKEY" "$SRC" rvk:secret.bin \
   || { echo "FAIL: owner store never succeeded"; exit 1; }
 [ -s "$OWNER_ROOT" ] || { echo "FAIL: no root pointer written"; exit 1; }
 
@@ -87,7 +88,7 @@ echo "== delete-protection checks =="
 #    owned by another identity (and a node independently refuses her DELETE
 #    token), and the file must survive.
 echo ">> attempt: a non-owner (with the read-cap) removes the file — MUST be denied"
-if revika-ctl rm -root "$MALLORY_WS" -signkey "$WORK/mallory.sign.key" rvk:secret.bin; then
+if revika-ctl rm -root "$MALLORY_WS" -signkey "$MALLORY_SIGNKEY" rvk:secret.bin; then
   echo "   FAIL: a non-owner removed another user's file"
   fail=1
 else
@@ -105,7 +106,7 @@ fi
 # 2) POSITIVE control: the owner rm's with their signing key. It must succeed,
 #    and the file must then be unrecoverable.
 echo ">> attempt: the owner removes the file — MUST succeed"
-if revika-ctl rm -root "$OWNER_WS" -signkey "$WORK/owner.sign.key" rvk:secret.bin; then
+if revika-ctl rm -root "$OWNER_WS" -signkey "$OWNER_SIGNKEY" rvk:secret.bin; then
   echo "   OK: the owner removed their own file"
 else
   echo "   FAIL: the owner could not remove their own file"

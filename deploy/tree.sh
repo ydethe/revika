@@ -61,11 +61,6 @@ printf '%s\n' "$MARKER" >"$SRC/root.txt"
 printf 'document a\n' >"$SRC/docs/a.txt"
 head -c 1048576 /dev/urandom >"$SRC/docs/nested/big.bin"
 
-# The client signs each write with its Ed25519 signing identity; generate one.
-echo ">> generating the client's signing identity"
-revika-ctl keygen -key "$WORK/user" -pow-difficulty 0 >/dev/null
-SIGNKEY="$WORK/user.sign.key"
-
 # Create a workspace whose saved config.json carries the bootstrap peer, so every
 # namespace command reaches the network via -root (bootstrap is no longer a
 # per-command flag). The seed is the sole bootstrap; the rest are found via the DHT.
@@ -90,6 +85,11 @@ connect_ws() {
 
 echo ">> creating a workspace bootstrapped through the seed"
 connect_ws "$WS"
+
+# The client signs each write with the Ed25519 identity `connect` minted into the
+# workspace and ground to the node's proof-of-work difficulty (read from the
+# bootstrap policy), so its PUTs meet admission.
+SIGNKEY="$WS/keys/user.sign.key"
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
@@ -311,8 +311,9 @@ echo "OK: a subtree was shared from the tree and restored, leaking nothing outsi
 # so the recipient's previously-sealed cap can no longer read the subtree.
 echo
 # `ls -owner` reads the signing pubkey from a FILE (never a literal), so point it
-# straight at the owner's .sign.pub rather than passing the key text.
-OWNER_PUB="$WORK/user.sign.pub"
+# straight at the owner's .sign.pub (the one `connect` minted into the workspace)
+# rather than passing the key text.
+OWNER_PUB="$WS/keys/user.sign.pub"
 
 # Parse the "seq:" line out of `ls -owner` (empty if the root isn't resolvable yet).
 # The trailing `|| true` keeps a not-yet-resolvable lookup (revika-ctl exits

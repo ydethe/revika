@@ -30,7 +30,10 @@ SRC=/handoff/repair-src.bin
 # container wrote. Bootstrap is no longer a per-command flag; it comes from here.
 WS=/handoff/repair-ws
 ROOTFILE=/handoff/repair-ws/root.json
-SIGNKEY=/handoff/repair-user.sign.key
+# The signing identity `connect` mints into the workspace, ground to the node's
+# proof-of-work difficulty (read from the bootstrap policy) so its PUTs meet
+# admission. Written by the `store` step's connect below.
+SIGNKEY="$WS/keys/user.sign.key"
 
 # The node data volumes are mounted read-only here; the DOWN node is passed so
 # verify knows which survivors to inspect. node4/node5 are spares in the repair
@@ -58,7 +61,6 @@ case "${1:-}" in
   store)
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
-    revika-ctl keygen -key /handoff/repair-user -pow-difficulty 0 >/dev/null
     retry "connect" revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -force \
       || { echo "FAIL: connect never reached the seed at $SEED_ADDR"; exit 1; }
     retry "store" revika-ctl cp -root "$WS" -signkey "$SIGNKEY" "$SRC" rvk:repair.bin \

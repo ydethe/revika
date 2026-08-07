@@ -40,11 +40,12 @@ case "${1:-}" in
   store)
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
-    # Storing is an authenticated write: sign it with a freshly generated owner key.
-    revika-ctl keygen -key /tmp/resilience-user -pow-difficulty 0 >/dev/null
+    # Storing is an authenticated write. `connect` mints the owner signing key into
+    # the workspace and grinds it to the node's proof-of-work difficulty (read from
+    # the bootstrap policy), so its PUTs meet admission.
     retry "connect" revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -force \
       || { echo "FAIL: connect never reached the seed at $SEED_ADDR"; exit 1; }
-    retry "store" revika-ctl cp -root "$WS" -signkey /tmp/resilience-user.sign.key "$SRC" rvk:resilience.bin \
+    retry "store" revika-ctl cp -root "$WS" -signkey "$WS/keys/user.sign.key" "$SRC" rvk:resilience.bin \
       || { echo "FAIL: store never succeeded"; exit 1; }
     [ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }
     echo "OK: stored; source + root pointer saved under /handoff"

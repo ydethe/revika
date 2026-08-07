@@ -61,12 +61,10 @@ COLLIDE_B="COLLISION-from-device-B-22222222"
 # --- one shared owner identity, two devices ---------------------------------
 # The User has ONE owner identity (ML-KEM receiving key + Ed25519 signing key).
 # Both devices must sign as it (to advance the same root) AND hold its ML-KEM key
-# (to open the sealed self-root companion). Mint it once, then copy it into each
-# workspace's keys/ dir, replacing the throwaway identity `connect` minted.
-echo ">> minting the shared owner identity (one User, two devices)"
-revika-ctl keygen -key "$WORK/owner" -pow-difficulty 0 >/dev/null
-SIGNKEY="$WORK/owner.sign.key"
-OWNER_PUB="$WORK/owner.sign.pub"
+# (to open the sealed self-root companion). `connect` mints an identity into each
+# workspace and grinds its signing key to the node's proof-of-work difficulty
+# (read from the bootstrap policy) so PUTs meet admission; we adopt device A's
+# minted identity as the shared one and copy it into device B below.
 
 # connect_ws <workspace> — bootstrap a workspace through the seed, retrying while
 # the seed's libp2p listener finishes coming up. compose only waits for the node
@@ -91,14 +89,14 @@ echo ">> creating two workspaces bootstrapped through the seed"
 connect_ws "$WS_A"
 connect_ws "$WS_B"
 
-# Overwrite each workspace's keys with the shared owner identity. The device tag
+# Adopt device A's connect-minted identity as the shared owner and copy it into
+# device B, replacing the throwaway identity connect minted there. The device tag
 # (config.json) and root/base sidecars stay per-workspace, so the two devices
 # diverge exactly as two machines would.
-for ws in "$WS_A" "$WS_B"; do
-  cp "$WORK/owner.key"      "$ws/keys/user.key"
-  cp "$WORK/owner.pub"      "$ws/keys/user.pub"
-  cp "$WORK/owner.sign.key" "$ws/keys/user.sign.key"
-  cp "$WORK/owner.sign.pub" "$ws/keys/user.sign.pub"
+SIGNKEY="$WS_A/keys/user.sign.key"
+OWNER_PUB="$WS_A/keys/user.sign.pub"
+for f in user.key user.pub user.sign.key user.sign.pub; do
+  cp "$WS_A/keys/$f" "$WS_B/keys/$f"
 done
 echo "OK: both workspaces now share one owner identity (distinct device tags/roots)"
 

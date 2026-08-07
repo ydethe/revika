@@ -45,13 +45,6 @@ echo ">> generating ~1 MiB test file with a plaintext canary"
 printf '%s\n' "$MARKER" >"$SRC"
 head -c 1048576 /dev/urandom >>"$SRC"
 
-# Storing is an authenticated write: the client signs each PUT with its Ed25519
-# signing key (its storage owner identity), so generate one and pass it to cp via
-# -signkey. This is also the key that authorizes a later rm.
-echo ">> generating the client's signing identity"
-revika-ctl keygen -key "$WORK/user" -pow-difficulty 0 >/dev/null
-SIGNKEY="$WORK/user.sign.key"
-
 # Create a workspace whose saved config.json carries the bootstrap peer, so every
 # namespace command reaches the network via -root (bootstrap is no longer a
 # per-command flag). The seed is the sole bootstrap; the rest are found via the DHT.
@@ -76,6 +69,12 @@ connect_ws() {
 
 echo ">> creating a workspace bootstrapped through the seed"
 connect_ws "$WS"
+
+# Storing is an authenticated write. The signing identity is the one `connect`
+# minted into the workspace and ground to the node's proof-of-work difficulty
+# (read from the bootstrap policy over /revika/params), so its PUTs meet
+# admission. This is also the key that authorizes a later rm/share.
+SIGNKEY="$WS/keys/user.sign.key"
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
