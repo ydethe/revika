@@ -93,6 +93,7 @@ services:
       # Seed states the cluster maintenance cadence; joiners inherit it. Repair
       # interval is shortened by deploy/repair.sh via REPAIR_INTERVAL, else 1h.
       - -repair-interval=${REPAIR_INTERVAL:-1h}
+      - -pow-difficulty=2
     healthcheck: *node_healthcheck
     volumes:
       - ./deploy/seed.key:/data/keys/node.key:ro
