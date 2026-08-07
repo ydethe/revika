@@ -7,21 +7,15 @@
 *.dll
 *.so
 *.dylib
-.env
 manifest.json
 *.key
 *.pub
 *.cap
 testfile.bin
-.test.rvk.json
-.test/
-.guest_test/
-.user
-.jcloud
+.*
 
 # Test binary, built with `go test -c`
 *.test
-.mcp.json
 
 # Code coverage profiles and other test artifacts
 *.out
@@ -36,9 +30,6 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
-.env
-
 # Editor/IDE
 # .idea/
 # .vscode/
@@ -52,7 +43,7 @@ tools/.attack-stix/
 __pycache__/
 *.pyc
 # compiled binaries
-/revika
-/revika-node
-/revika-ctl
-/revika-daemon
+revika
+revika-node
+revika-ctl
+revika-daemon

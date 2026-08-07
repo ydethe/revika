@@ -75,3 +75,40 @@ retrieve the revoked subtree (its old shard IDs were reclaimed) :
 
      go run ./cmd/revika-ctl ls -root guest -owner ws/keys/user.sign.pub
      go run ./cmd/revika-ctl cp -root shared-dir.root.json -key guest/keys/user.key -node /ip4/127.0.0.1/tcp/4002/p2p/xxxxxx rvk: .guest_revoked   # expected to fail
+
+Manage the User's *devices* under the offline master credential (Architecture
+§3.7.2). The master credential is the owner Ed25519 signing key (ws/keys/user.sign.key);
+a device is one ML-KEM keypair authorized to open the sealed self-root companion.
+Bootstrap the device-authorization record (ws/devices.json) with this workspace as
+its first member — signed by the master key, mirrored to the DHT :
+
+     go run ./cmd/revika-ctl device init -root ws -label "laptop"
+
+Inspect the record and this device's identity :
+
+     go run ./cmd/revika-ctl device list -root ws
+     go run ./cmd/revika-ctl device id -root ws
+
+Bring up a second device. On the real second machine it would share the master
+signing key so it can also write; enrollment itself only needs the device's ML-KEM
+public key, so here a bare keygen stands in for that machine's ML-KEM keypair
+(dev2/user.key/.pub) :
+
+     go run ./cmd/revika-ctl keygen -key dev2/user -pow-difficulty 0
+
+Enroll it from the first device (the master credential). This advances the record,
+reseals the self-root companion to {laptop, phone}, and republishes — so the new
+device's ML-KEM key can open the current root. `enroll` reads the pubkey from a file
+(never a literal) and needs the DHT backend (it comes from ws/config.json) :
+
+     go run ./cmd/revika-ctl device enroll -root ws -label "phone" dev2/user.pub
+     go run ./cmd/revika-ctl device list -root ws
+
+Read-revoke that device. Grab its device-id from `device id` (or the `device list`
+prefix), then `revoke` advances the record, reseals the companion to the *surviving*
+device set only, and advances the root — so the revoked device's key can no longer
+open the current root (forward-only: bytes it already downloaded stay with it) :
+
+     DEV2_ID=$(go run ./cmd/revika-ctl device id -root dev2 | awk '/device id:/ {print $3}')
+     go run ./cmd/revika-ctl device revoke -root ws "$DEV2_ID"
+     go run ./cmd/revika-ctl device list -root ws
