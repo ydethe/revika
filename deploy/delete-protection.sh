@@ -61,9 +61,13 @@ retry() {
 revika-ctl keygen -key "$WORK/owner"   -pow-difficulty 0 >/dev/null
 revika-ctl keygen -key "$WORK/mallory" -pow-difficulty 0 >/dev/null
 
-# A workspace per user, each bootstrapped through the seed.
-revika-ctl connect -root "$OWNER_WS"   -bootstrap "$SEED_ADDR" >/dev/null
-revika-ctl connect -root "$MALLORY_WS" -bootstrap "$SEED_ADDR" >/dev/null
+# A workspace per user, each bootstrapped through the seed. compose only waits for
+# the node container to START, not for its libp2p host to be dialable, and connect
+# fails fast when no bootstrap node answers — so retry while the seed comes up.
+retry "connect owner"   revika-ctl connect -root "$OWNER_WS"   -bootstrap "$SEED_ADDR" \
+  || { echo "FAIL: connect $OWNER_WS never reached the seed at $SEED_ADDR"; exit 1; }
+retry "connect mallory" revika-ctl connect -root "$MALLORY_WS" -bootstrap "$SEED_ADDR" \
+  || { echo "FAIL: connect $MALLORY_WS never reached the seed at $SEED_ADDR"; exit 1; }
 
 echo ">> owner stores a 1 MiB file across the nodes"
 head -c 1048576 /dev/urandom >"$SRC"

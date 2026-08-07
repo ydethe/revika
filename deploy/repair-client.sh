@@ -59,7 +59,8 @@ case "${1:-}" in
     echo ">> [store] generating a 1 MiB file and storing it across all nodes"
     head -c 1048576 /dev/urandom >"$SRC"
     revika-ctl keygen -key /handoff/repair-user -pow-difficulty 0 >/dev/null
-    revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -force >/dev/null
+    retry "connect" revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" -force \
+      || { echo "FAIL: connect never reached the seed at $SEED_ADDR"; exit 1; }
     retry "store" revika-ctl cp -root "$WS" -signkey "$SIGNKEY" "$SRC" rvk:repair.bin \
       || { echo "FAIL: store never succeeded"; exit 1; }
     [ -s "$ROOTFILE" ] || { echo "FAIL: no root pointer written"; exit 1; }

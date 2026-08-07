@@ -68,9 +68,28 @@ revika-ctl keygen -key "$WORK/owner" -pow-difficulty 0 >/dev/null
 SIGNKEY="$WORK/owner.sign.key"
 OWNER_PUB="$WORK/owner.sign.pub"
 
+# connect_ws <workspace> — bootstrap a workspace through the seed, retrying while
+# the seed's libp2p listener finishes coming up. compose only waits for the node
+# container to START (not for its host to be dialable), and `connect` fails fast
+# if no bootstrap node answers, so a first attempt can lose the race with the
+# seed's security handshake ("all dials failed"/"negotiate security protocol: EOF").
+# connect writes no config.json on failure, so re-running against the same dir is safe.
+connect_ws() {
+  local ws="$1" ok=""
+  for attempt in 1 2 3 4 5 6; do
+    if revika-ctl connect -root "$ws" -bootstrap "$SEED_ADDR" >/dev/null; then
+      ok=1
+      break
+    fi
+    echo "   connect $ws attempt $attempt failed (seed not dialable yet); retrying in 5s..."
+    sleep 5
+  done
+  [ -n "$ok" ] || { echo "FAIL: connect $ws never reached the seed at $SEED_ADDR"; exit 1; }
+}
+
 echo ">> creating two workspaces bootstrapped through the seed"
-revika-ctl connect -root "$WS_A" -bootstrap "$SEED_ADDR" >/dev/null
-revika-ctl connect -root "$WS_B" -bootstrap "$SEED_ADDR" >/dev/null
+connect_ws "$WS_A"
+connect_ws "$WS_B"
 
 # Overwrite each workspace's keys with the shared owner identity. The device tag
 # (config.json) and root/base sidecars stay per-workspace, so the two devices

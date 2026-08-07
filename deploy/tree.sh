@@ -69,8 +69,27 @@ SIGNKEY="$WORK/user.sign.key"
 # Create a workspace whose saved config.json carries the bootstrap peer, so every
 # namespace command reaches the network via -root (bootstrap is no longer a
 # per-command flag). The seed is the sole bootstrap; the rest are found via the DHT.
+# connect_ws <workspace> — bootstrap a workspace through the seed, retrying while
+# the seed's libp2p listener finishes coming up. compose only waits for the node
+# container to START (not for its host to be dialable), and `connect` fails fast
+# if no bootstrap node answers, so a first attempt can lose the race with the
+# seed's security handshake. connect writes no config.json on failure, so
+# re-running against the same dir is safe.
+connect_ws() {
+  local ws="$1" ok=""
+  for attempt in 1 2 3 4 5 6; do
+    if revika-ctl connect -root "$ws" -bootstrap "$SEED_ADDR" >/dev/null; then
+      ok=1
+      break
+    fi
+    echo "   connect $ws attempt $attempt failed (seed not dialable yet); retrying in 5s..."
+    sleep 5
+  done
+  [ -n "$ok" ] || { echo "FAIL: connect $ws never reached the seed at $SEED_ADDR"; exit 1; }
+}
+
 echo ">> creating a workspace bootstrapped through the seed"
-revika-ctl connect -root "$WS" -bootstrap "$SEED_ADDR" >/dev/null
+connect_ws "$WS"
 
 count_shards() { find "$1/shards" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
@@ -193,7 +212,7 @@ RCPT_KEY="$WORK/recipient.key"
 # reconstruct k=4 shards spread 2-per-node across 3 nodes). Drop the sealed root
 # in as the workspace's root.json; its config.json supplies the bootstrap peer.
 RCPT_WS="$WORK/recipient-ws"
-revika-ctl connect -root "$RCPT_WS" -bootstrap "$SEED_ADDR" >/dev/null
+connect_ws "$RCPT_WS"
 
 SHARE_REL="docs/a.txt"
 FILE_SEALED="$RCPT_WS/root.json"
