@@ -4,10 +4,13 @@ name: CI
 # multi-node end-to-end run in containers (authorized round-trip, the
 # unauthorized-access checks, the delete-protection checks, a directory-tree
 # round-trip that also exercises DHT root publication and revocation, and a
-# multi-device write-reconciliation run) via docker compose.
+# multi-device write-reconciliation run) via docker compose. On a version tag
+# (v1.2.3), and only after every test job above is green, the `publish` job
+# pushes the container images to GHCR — a green-tests gate on every release.
 on:
   push:
     branches: [main]
+    tags: ["v*.*.*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -124,3 +127,78 @@ jobs:
       # no client online — then retrieves the file. Self-contained; cleans up.
       - name: Store, drop a node, repair, retrieve
         run: ./deploy/repair.sh
+
+  publish:
+    name: publish images (GHCR)
+    runs-on: ubuntu-latest
+    # Gate on every test job: an image is pushed only if the whole test suite
+    # (unit + all four compose end-to-end runs + resilience + repair) is green.
+    needs: [test, e2e, resilience, repair]
+    # Push only on a version tag (v1.2.3). On branch/PR pushes the job still
+    # builds the multi-arch image to validate the Dockerfile, but never pushes.
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: node   # headless storage Node
+            image: revika-node
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU + buildx enable multi-arch builds; the Dockerfile cross-compiles
+      # the Go binary per target arch, so this stays fast (no emulated builds).
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Log in only when we intend to push — i.e. on a version tag.
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          # Tag-only publishing: derive the semver tags from the git tag.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          # latest=auto tags `latest` on a semver tag.
+          flavor: |
+            latest=auto
+
+      # Build metadata stamped into the binary and shown in the node's startup
+      # logs. VERSION is metadata-action's derived version (the semver tag);
+      # BUILD_DATE is the UTC build time.
+      - name: Derive build metadata
+        id: build
+        run: |
+          echo "version=${{ steps.meta.outputs.version }}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          # Push only on a version tag; otherwise build-only (validation).
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build.outputs.version }}
+            BUILD_DATE=${{ steps.build.outputs.date }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
