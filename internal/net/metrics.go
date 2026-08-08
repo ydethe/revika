@@ -16,6 +16,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
 
+	"revika/internal/geoip"
 	"revika/internal/ledger"
 )
 
@@ -34,6 +35,9 @@ const metricsShutdownTimeout = 5 * time.Second
 //	               admission policy), storage accounting, and the node's view of
 //	               the network (peer cartography)
 //	GET /metrics   Prometheus text-exposition metrics
+//	GET /nodes     rich HTML dashboard of currently connected peers: a detailed
+//	               list panel and a geographic map (OpenStreetMap via Leaflet)
+//	               plotting each peer at its estimated position (SetGeolocator)
 //
 // It reads live state from the host, the ledger, and (optionally) the DHT
 // Discovery; it holds no state of its own beyond the start time and version.
@@ -55,6 +59,7 @@ type MetricsServer struct {
 	rebalance RebalanceInfo // rebalance maintenance policy this node runs (and advertises)
 	loadSrc   LoadSource    // optional: reports storage capacity/load for rebalancing (§3.4)
 	protocols []string      // versioned libp2p stream protocols this node serves
+	geo       geoip.Locator // optional: estimates a peer's position for the /nodes map (nil = positions unknown)
 	log       *slog.Logger
 }
 
@@ -102,6 +107,12 @@ func (m *MetricsServer) SetProtocols(ps []protocol.ID) {
 	sort.Strings(m.protocols)
 }
 
+// SetGeolocator attaches the position estimator the /nodes dashboard uses to
+// place connected peers on its map. Optional; left unset (nil), the map renders
+// with no markers and the list still shows every peer — positions simply read
+// "unknown". Call before Serve.
+func (m *MetricsServer) SetGeolocator(g geoip.Locator) { m.geo = g }
+
 // SetMaintenance records the repair and rebalancing policy this node runs so it
 // is reported on /status and (via the params protocol) advertised to joining
 // peers. A joining node that inherited its policy passes the same effective
@@ -119,6 +130,7 @@ func (m *MetricsServer) Handler() http.Handler {
 	mux.HandleFunc("/readyz", m.handleReadyz)
 	mux.HandleFunc("/status", m.handleStatus)
 	mux.HandleFunc("/metrics", m.handleMetrics)
+	mux.HandleFunc("/nodes", m.handleNodes)
 	return mux
 }
 

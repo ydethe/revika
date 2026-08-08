@@ -462,8 +462,9 @@ buildDate, started, log)`; `disc`, the GC stats (`SetGCStats`), the proof-of-wor
 policy (`SetPoW`), the maintenance policy (`SetMaintenance`, the effective
 repair/rebalance cadence this node runs and advertises), the served stream-protocol
 versions (`SetProtocols`, fed `Server.Protocols()` so `/status` and `/metrics` report
-the wire versions this node speaks), and the storage-load reporter
-(`SetLoadSource`, feeding the capacity/free/load fields) are optional. `Serve(ctx, addr)`
+the wire versions this node speaks), the storage-load reporter
+(`SetLoadSource`, feeding the capacity/free/load fields), and the peer geolocator
+(`SetGeolocator`, powering the `/nodes` map) are optional. `Serve(ctx, addr)`
 runs it with graceful shutdown; `Handler()` exposes the mux for tests. Endpoints:
 
 - `GET /healthz` — liveness.
@@ -477,6 +478,18 @@ runs it with graceful shutdown; `Handler()` exposes the mux for tests. Endpoints
   (connected peers, routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
   `bootstrap` mirrors `listen_addrs` with the node's `/p2p/<peer-id>` appended — each entry is
   ready to paste into `revika-ctl -bootstrap`.
+- `GET /nodes` — an operator-facing **HTML dashboard** of currently connected peers
+  (`nodes_page.go`): a two-panel layout — a detailed peer table (peer ID, connection
+  direction, chosen IP + scope pill, estimated location, remote multiaddrs) beside a
+  Leaflet/OpenStreetMap map with a marker per located peer. `nodeGeos` gathers the view
+  from `Network().Peers()`/`ConnsToPeer`, preferring a global remote IP over a private
+  one for placement and classifying it (`global`/`local`/`unknown`). Positions come from
+  an optional [`geoip.Locator`](../geoip/README.md) wired by `SetGeolocator` (nil = off,
+  the default — the page then shows a hint to start the node with `-geoip=ip-api`). Only
+  global IPs are geolocated; a LAN/loopback peer is marked `local` and never plotted.
+  Peer-supplied strings reach the page only through `html/template` escaping (the table)
+  or JS `textContent` (the map popups), never as raw HTML. Leaflet + the OSM tiles load
+  from public CDNs, so the map needs outbound internet; the list works offline.
 - `GET /metrics` — Prometheus text exposition of the same snapshot, including
   `revika_build_info{version,build_date}`, `revika_protocol_info{protocol}` (one line per
   served stream protocol), `revika_bootstrap_info{addr}`,

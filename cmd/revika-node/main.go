@@ -38,6 +38,7 @@ import (
 
 	"revika/internal/cap"
 	"revika/internal/erasure"
+	"revika/internal/geoip"
 	"revika/internal/ledger"
 	"revika/internal/net"
 	"revika/internal/pipeline"
@@ -108,7 +109,8 @@ func run() error {
 		rebalEvery    = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
 		rebalThresh   = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
 		capacity      = flag.Int64("capacity", 0, "usable storage budget in bytes for load balancing (0 = use the shard filesystem's total capacity)")
-		metricsAddr   = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics over plain HTTP — put TLS on a reverse proxy")
+		metricsAddr   = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics /nodes over plain HTTP — put TLS on a reverse proxy")
+		geoipMode     = flag.String("geoip", "off", "geolocation source for the /nodes map: 'off' (no lookups) or 'ip-api' (best-effort cached lookups via ip-api.com — sends peer PUBLIC IPs to that third party; private/loopback IPs are never sent). LOCAL/operator-facing only, never inherited")
 		blocklist     = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
 		blocklistAuto = flag.String("blocklist-auto", "", "path to the persistent auto-blocklist the abuse detector appends banned peers to and reloads on restart (empty = derive as <data>/blocklist.auto; set to 'off' to disable persistence)")
 		abuseTol      = flag.Duration("rebalance-abuse-tolerance", 0, "fast-side slack on the rebalance schedule before a peer is judged off-schedule; absorbs jitter (0 = built-in default 10m). LOCAL defence, never inherited")
@@ -458,6 +460,9 @@ func run() error {
 		ms.SetMaintenance(repairPolicy, rebalancePolicy)
 		ms.SetLoadSource(net.LoadSource(loadSource))
 		ms.SetProtocols(served)
+		if loc := geolocator(*geoipMode, log); loc != nil {
+			ms.SetGeolocator(loc)
+		}
 		go func() {
 			if err := ms.Serve(ctx, *metricsAddr); err != nil {
 				log.Error("metrics: server stopped", "err", err)
@@ -490,6 +495,27 @@ func run() error {
 	<-ctx.Done()
 	log.Info("shutting down", "event", "node.stop")
 	return nil
+}
+
+// geolocator builds the position estimator the /nodes dashboard uses, from the
+// -geoip mode. "off" (default) returns nil, so the dashboard renders the peer
+// list with positions unknown and no map markers — no address ever leaves the
+// host. "ip-api" enables opt-in, cached best-effort lookups via ip-api.com (which
+// sends peer public IPs to that third party). An unrecognised mode is treated as
+// off with a warning rather than failing startup.
+func geolocator(mode string, log *slog.Logger) geoip.Locator {
+	switch mode {
+	case "", "off":
+		return nil
+	case "ip-api":
+		log.Warn("geoip: /nodes map enabled via ip-api.com — peer PUBLIC IPs will be sent to that third party for geolocation",
+			"event", "node.geoip", "mode", mode)
+		return geoip.NewIPAPILocator()
+	default:
+		log.Warn("geoip: unrecognised -geoip mode, disabling the /nodes map geolocation",
+			"event", "node.geoip", "mode", mode)
+		return nil
+	}
 }
 
 // nodeRole names a node's policy role for the startup banner: a node with no

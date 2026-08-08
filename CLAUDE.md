@@ -115,7 +115,7 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -rebalance-abuse-coalesce -rebalance-abuse-strikes
                           #   -rebalance-abuse-decay -conn-low -conn-high -conn-grace
                           #   -write-rate -write-burst -repair-verify
-                          #   -pow-difficulty -log-format -log-level -v)
+                          #   -pow-difficulty -geoip -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | mv | ls | rm | share | revoke | node
                           #   | device (see -h). `ls -owner <pubkey-file>` resolves a namespace's
                           #   DHT-published root (verify-only); `revoke rvk:PATH` re-keys a shared
@@ -254,6 +254,8 @@ internal/
              COW Graft, signed RootPointer); reuses pipeline blobs + cap wrapping
   fsmeta/    capture/restore live-file attributes ⇄ pipeline.Metadata (Linux + portable split);
              shared by revika-ctl and provider
+  geoip/     coarse IP→position estimation behind a pluggable Locator (IPAPILocator now,
+             opt-in; offline MaxMind .mmdb planned) for the node's /nodes dashboard map
   provider/  framework-neutral OS filesystem-integration API (Provider iface) mapping macOS File
              Provider / Windows Cloud Filter / Linux GVfs; Manifest impl over the manifest DAG with
              stable ItemIDs, DAG-diff change enumeration, and a RootStore seam for the (planned) DHT
