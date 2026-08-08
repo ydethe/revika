@@ -55,6 +55,26 @@ func TestNodesPageNoPeers(t *testing.T) {
 	}
 }
 
+// TestNodesPageSelf confirms the node serving the page lists itself, chipped
+// apart from its peers, even when no peer is connected.
+func TestNodesPageSelf(t *testing.T) {
+	ms, _, ts := newMetricsFixture(t)
+	code, body := getBody(t, ts.URL+"/nodes")
+	if code != 200 {
+		t.Fatalf("/nodes = %d, want 200", code)
+	}
+	if !strings.Contains(body, ms.h.ID().String()) {
+		t.Errorf("/nodes did not list this node's own peer ID %s", ms.h.ID())
+	}
+	if !strings.Contains(body, `pill self">this node`) {
+		t.Errorf("/nodes missing the \"this node\" chip distinguishing the serving node")
+	}
+	// The self row's JSON must carry the self flag so the map can mark it too.
+	if !strings.Contains(body, `"self":true`) {
+		t.Errorf("/nodes map JSON missing the self flag")
+	}
+}
+
 func TestNodesPageContentType(t *testing.T) {
 	_, _, ts := newMetricsFixture(t)
 	resp, err := ts.Client().Get(ts.URL + "/nodes")

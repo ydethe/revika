@@ -14,19 +14,68 @@ import (
 	"revika/internal/geoip"
 )
 
-// NodeGeo is one connected peer as the /nodes dashboard sees it: identity,
-// connection direction, the remote addresses we hold it on, and — when the IP is
-// global and a geolocator is configured — an estimated position. Scope classifies
-// the chosen IP so the UI can distinguish a peer with no public position
-// ("local") from one we simply could not resolve ("global" but Located false).
+// NodeGeo is one node as the /nodes dashboard sees it: identity, connection
+// direction, the addresses we hold it on, and — when the IP is global and a
+// geolocator is configured — an estimated position. Scope classifies the chosen
+// IP so the UI can distinguish a peer with no public position ("local") from one
+// we simply could not resolve ("global" but Located false). Self marks the node
+// serving the page itself (Direction "self"), so the UI can chip it apart from
+// the connected peers.
 type NodeGeo struct {
 	ID        string         `json:"id"`
-	Direction string         `json:"direction"` // "inbound" | "outbound" | "unknown"
+	Direction string         `json:"direction"` // "inbound" | "outbound" | "unknown" | "self"
+	Self      bool           `json:"self"`      // the node rendering this page
 	Addrs     []string       `json:"addrs"`
 	IP        string         `json:"ip,omitempty"` // the address chosen for geolocation
 	Scope     string         `json:"scope"`        // "global" | "local" | "unknown"
 	Located   bool           `json:"located"`      // a position estimate is present
 	Location  geoip.Location `json:"location"`     // valid only when Located
+}
+
+// placeIP classifies chosen and, for a global IP with a configured locator,
+// estimates a position — filling IP/Scope/Located/Location on ng. Shared by the
+// per-peer and self views so both place an address identically.
+func (m *MetricsServer) placeIP(ctx context.Context, ng *NodeGeo, chosen netip.Addr) {
+	if !chosen.IsValid() {
+		return
+	}
+	ng.IP = chosen.String()
+	if !geoip.IsGlobal(chosen) {
+		ng.Scope = "local"
+		return
+	}
+	ng.Scope = "global"
+	if m.geo != nil {
+		if loc, ok := m.geo.Locate(ctx, chosen); ok {
+			ng.Location = loc
+			ng.Located = true
+		}
+	}
+}
+
+// selfGeo builds the dashboard's view of the node serving the page. It places the
+// node by its own advertised addresses (m.h.Addrs()), preferring a global address
+// so a publicly-reachable node lands on the map alongside its peers.
+func (m *MetricsServer) selfGeo(ctx context.Context) NodeGeo {
+	ng := NodeGeo{ID: m.h.ID().String(), Direction: "self", Self: true, Scope: "unknown"}
+	var chosen netip.Addr
+	for _, a := range m.h.Addrs() {
+		ng.Addrs = append(ng.Addrs, a.String())
+		ip, err := manet.ToIP(a)
+		if err != nil {
+			continue
+		}
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if !chosen.IsValid() || (!geoip.IsGlobal(chosen) && geoip.IsGlobal(addr)) {
+			chosen = addr
+		}
+	}
+	m.placeIP(ctx, &ng, chosen)
+	return ng
 }
 
 // nodeGeos builds the dashboard's view of currently connected peers. For each
@@ -59,20 +108,7 @@ func (m *MetricsServer) nodeGeos(ctx context.Context) []NodeGeo {
 				chosen = a
 			}
 		}
-		if chosen.IsValid() {
-			ng.IP = chosen.String()
-			if geoip.IsGlobal(chosen) {
-				ng.Scope = "global"
-				if m.geo != nil {
-					if loc, ok := m.geo.Locate(ctx, chosen); ok {
-						ng.Location = loc
-						ng.Located = true
-					}
-				}
-			} else {
-				ng.Scope = "local"
-			}
-		}
+		m.placeIP(ctx, &ng, chosen)
 		out = append(out, ng)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -92,7 +128,9 @@ type nodesPage struct {
 }
 
 func (m *MetricsServer) handleNodes(w http.ResponseWriter, r *http.Request) {
-	nodes := m.nodeGeos(r.Context())
+	peers := m.nodeGeos(r.Context())
+	// The list and map lead with this node itself, chipped apart from its peers.
+	nodes := append([]NodeGeo{m.selfGeo(r.Context())}, peers...)
 	located := 0
 	for _, n := range nodes {
 		if n.Located {
@@ -109,7 +147,7 @@ func (m *MetricsServer) handleNodes(w http.ResponseWriter, r *http.Request) {
 		PeerID:     m.h.ID().String(),
 		Version:    m.version,
 		Generated:  time.Now().UTC().Format(time.RFC3339),
-		Total:      len(nodes),
+		Total:      len(peers), // connected peers, excluding this node
 		Located:    located,
 		GeoEnabled: m.geo != nil,
 		Nodes:      nodes,
@@ -183,6 +221,8 @@ const nodesHTML = `<!DOCTYPE html>
   .pill.local  { color: var(--warn); border-color: rgba(210,153,34,.4); }
   .pill.inbound  { color: var(--accent); border-color: rgba(76,154,255,.4); }
   .pill.outbound { color: var(--good);   border-color: rgba(63,185,80,.4); }
+  .pill.self { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  tr.self-row td { background: rgba(76,154,255,.06); }
   .empty { padding: 28px 14px; color: var(--muted); text-align: center; }
   .note { padding: 8px 14px; color: var(--warn); font-size: 12px; border-bottom: 1px solid var(--border); }
   footer { padding: 8px 20px 20px; color: var(--muted); font-size: 11px; }
@@ -200,16 +240,16 @@ const nodesHTML = `<!DOCTYPE html>
 
 <div class="grid">
   <section class="panel" aria-label="Node list">
-    <h2>Nodes ({{.Total}})</h2>
+    <h2>Nodes ({{len .Nodes}})</h2>
     {{if not .GeoEnabled}}<div class="note">Geolocation disabled — start revika-node with <code>-geoip=ip-api</code> to place nodes on the map.</div>{{end}}
     <div class="list-wrap">
-      {{if .Nodes}}
+      {{if not .Total}}<div class="empty">No peers currently connected.</div>{{end}}
       <table>
         <thead><tr><th>Peer</th><th>Dir</th><th>IP</th><th>Location</th><th>Address</th></tr></thead>
         <tbody>
           {{range .Nodes}}
-          <tr>
-            <td class="id">{{.ID}}</td>
+          <tr{{if .Self}} class="self-row"{{end}}>
+            <td class="id">{{.ID}}{{if .Self}} <span class="pill self">this node</span>{{end}}</td>
             <td><span class="pill {{.Direction}}">{{.Direction}}</span></td>
             <td class="mono">{{if .IP}}{{.IP}} <span class="pill {{.Scope}}">{{.Scope}}</span>{{else}}<span class="pill">n/a</span>{{end}}</td>
             <td>{{if .Located}}{{with .Location}}{{if .City}}{{.City}}, {{end}}{{.Country}} <span class="pill">{{printf "%.2f" .Lat}}, {{printf "%.2f" .Lon}}</span>{{end}}{{else}}<span class="pill">unknown</span>{{end}}</td>
@@ -218,9 +258,6 @@ const nodesHTML = `<!DOCTYPE html>
           {{end}}
         </tbody>
       </table>
-      {{else}}
-      <div class="empty">No peers currently connected.</div>
-      {{end}}
     </div>
   </section>
 
@@ -248,13 +285,16 @@ const nodesHTML = `<!DOCTYPE html>
     var bounds = [];
     located.forEach(function (n) {
       var lat = n.location.lat, lon = n.location.lon;
-      var m = L.marker([lat, lon]).addTo(map);
+      // This node draws as a filled accent circle to stand apart from the peer pins.
+      var m = n.self
+        ? L.circleMarker([lat, lon], { radius: 8, color: '#4c9aff', fillColor: '#4c9aff', fillOpacity: .9, weight: 2 }).addTo(map)
+        : L.marker([lat, lon]).addTo(map);
       // Build the popup as DOM so peer-supplied text can never inject HTML.
       var box = document.createElement('div');
       var loc = n.location || {};
       var place = [loc.city, loc.country].filter(Boolean).join(', ');
       var b = document.createElement('div'); b.style.fontWeight = '600';
-      b.textContent = place || 'Unknown place';
+      b.textContent = (n.self ? 'This node — ' : '') + (place || 'Unknown place');
       var id = document.createElement('div'); id.style.fontFamily = 'monospace'; id.style.fontSize = '11px';
       id.textContent = n.id;
       var ip = document.createElement('div'); ip.style.color = '#8b98a5'; ip.style.fontSize = '11px';

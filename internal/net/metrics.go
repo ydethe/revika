@@ -35,9 +35,10 @@ const metricsShutdownTimeout = 5 * time.Second
 //	               admission policy), storage accounting, and the node's view of
 //	               the network (peer cartography)
 //	GET /metrics   Prometheus text-exposition metrics
-//	GET /nodes     rich HTML dashboard of currently connected peers: a detailed
-//	               list panel and a geographic map (OpenStreetMap via Leaflet)
-//	               plotting each peer at its estimated position (SetGeolocator)
+//	GET /nodes     rich HTML dashboard of this node and its connected peers: a
+//	               detailed list panel (the serving node leads, chipped apart) and
+//	               a geographic map (OpenStreetMap via Leaflet) plotting each node
+//	               at its estimated position (SetGeolocator)
 //
 // It reads live state from the host, the ledger, and (optionally) the DHT
 // Discovery; it holds no state of its own beyond the start time and version.
