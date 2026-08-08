@@ -116,7 +116,7 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -rebalance-abuse-decay -conn-low -conn-high -conn-grace
                           #   -write-rate -write-burst -repair-verify
                           #   -pow-difficulty -log-format -log-level -v)
-go run ./cmd/revika-ctl   # User client: connect | keygen | cp | ls | rm | share | revoke | node
+go run ./cmd/revika-ctl   # User client: connect | keygen | cp | mv | ls | rm | share | revoke | node
                           #   | device (see -h). `ls -owner <pubkey-file>` resolves a namespace's
                           #   DHT-published root (verify-only); `revoke rvk:PATH` re-keys a shared
                           #   subtree; `device init|enroll|revoke|list|id` manages the offline
@@ -148,9 +148,15 @@ A User's files live under one mutable root directory addressed by `rvk:` paths
 (e.g. `rvk:docs/report.pdf`), anchored by a signed `manifest.RootPointer`
 persisted via `provider.FileRootStore` (`<workspace>/root.json`, overridable with
 `-root`/`$REVIKA_ROOT`). `cp` writes/reads
-scp-style (`cp file rvk:docs/` stores, `cp rvk:docs/file .` retrieves); `ls`
-browses (dir blobs only, `-l`/`-R`); `rm` grafts-out a subtree and releases its
-shards; `share rvk:PATH -to <key-file>` seals a `RootPointer` anchored at that subtree
+scp-style (`cp file rvk:docs/` stores, `cp rvk:docs/file .` retrieves, and
+`cp rvk:a rvk:b` copies within the namespace — a pure copy-on-write graft of the
+source cap, no re-encryption, so both paths share shards by content address);
+`mv rvk:a rvk:b` renames/moves within the namespace — the same COW graft of the
+source cap at the destination plus a graft-out of the source, in one advanced
+root (atomic, no re-encryption or shard movement); `ls` browses (dir blobs only,
+`-l`/`-R`); `rm` grafts-out a subtree and releases
+only the shards nothing under the new root still references (a keep-set diff, so a
+copy's shared shards survive removing its sibling); `share rvk:PATH -to <key-file>` seals a `RootPointer` anchored at that subtree
 to the recipient's ML-KEM key (a *sealed shared root* file the recipient uses as
 `-root … -key <priv>` — never a bearer token); `revoke rvk:PATH` re-keys that
 subtree down to its data chunks (`manifest.Rekey`), advances + republishes the

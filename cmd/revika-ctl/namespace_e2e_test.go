@@ -101,6 +101,45 @@ func TestNamespaceE2E(t *testing.T) {
 		t.Fatalf("retrieved %d bytes, want %d", len(got), len(payload))
 	}
 
+	// --- rvk:→rvk: copy within the namespace (copy-on-write, no re-encryption) ---
+	// Copy the file to a new path and to a sibling name, then confirm both read back.
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:docs/report.pdf", "rvk:backup/report.pdf"})
+	})
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:docs/report.pdf", "rvk:docs/copy.pdf"})
+	})
+	if out := capture(t, func() error {
+		return cmdLs([]string{"-node", addr, "-root", rootFile, "rvk:backup"})
+	}); !strings.Contains(out, "report.pdf") {
+		t.Fatalf("after rvk:→rvk: copy, ls rvk:backup = %q, want report.pdf", out)
+	}
+	copyDir := t.TempDir()
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "rvk:backup/report.pdf", copyDir})
+	})
+	if got, err := os.ReadFile(filepath.Join(copyDir, "report.pdf")); err != nil {
+		t.Fatalf("read rvk:→rvk: copy: %v", err)
+	} else if !bytes.Equal(got, payload) {
+		t.Fatal("rvk:→rvk: copied file does not match original")
+	}
+
+	// Removing one copy must not delete shards the other copy still shares (by
+	// content address): rvk:docs/copy.pdf and rvk:backup/report.pdf point at the
+	// same cap. After rm of the docs copy, the backup copy must still read back.
+	capture(t, func() error {
+		return cmdRm([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:docs/copy.pdf"})
+	})
+	afterRmDir := t.TempDir()
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "rvk:backup/report.pdf", afterRmDir})
+	})
+	if got, err := os.ReadFile(filepath.Join(afterRmDir, "report.pdf")); err != nil {
+		t.Fatalf("backup copy unreadable after rm of a shared-shard sibling: %v", err)
+	} else if !bytes.Equal(got, payload) {
+		t.Fatal("backup copy corrupted after rm of a shared-shard sibling")
+	}
+
 	// --- sharing: seal the docs/ subtree to a recipient, who reads it ---
 	recipientSign, recipientPriv, recipientPub := genIdentity(t, home, "recipient")
 	sharedFile := filepath.Join(t.TempDir(), "docs.root.json")
@@ -139,7 +178,10 @@ func TestNamespaceE2E(t *testing.T) {
 		t.Fatal("cp stored into a shared read-only root")
 	}
 
-	// --- rm: remove the file, then confirm docs/ is empty ---
+	// --- rm: remove the ORIGINAL, then confirm docs/ is empty ---
+	// rvk:backup/report.pdf is a copy of this file and shares its shards by content
+	// address, so removing the original must leave the copy fully readable — the
+	// two paths behave as independent files (rm one never affects the other).
 	capture(t, func() error {
 		return cmdRm([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:docs/report.pdf"})
 	})
@@ -147,5 +189,99 @@ func TestNamespaceE2E(t *testing.T) {
 		return cmdLs([]string{"-node", addr, "-root", rootFile, "rvk:docs"})
 	}); strings.Contains(out, "report.pdf") {
 		t.Fatalf("after rm, ls rvk:docs still lists report.pdf: %q", out)
+	}
+
+	// The independent copy survives removal of the original, byte-for-byte.
+	survivorDir := t.TempDir()
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "rvk:backup/report.pdf", survivorDir})
+	})
+	if got, err := os.ReadFile(filepath.Join(survivorDir, "report.pdf")); err != nil {
+		t.Fatalf("copy unreadable after rm of the original: %v", err)
+	} else if !bytes.Equal(got, payload) {
+		t.Fatal("copy corrupted after rm of the original — copies are not independent")
+	}
+}
+
+// TestNamespaceMv drives rvk:→rvk: rename/move: a file rename within a directory,
+// a move into another directory, guards against moving onto itself or into its
+// own subtree, and confirms the moved bytes read back unchanged while the source
+// path disappears.
+func TestNamespaceMv(t *testing.T) {
+	ctx := t.Context()
+	addr, _ := startStorageNode(t, ctx, "")
+
+	home := t.TempDir()
+	ownerSign, _, _ := genIdentity(t, home, "owner")
+	rootFile := filepath.Join(home, "root.json")
+
+	payload := bytes.Repeat([]byte("revika-mv-"), 5000)
+	srcFile := filepath.Join(t.TempDir(), "report.pdf")
+	if err := os.WriteFile(srcFile, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the namespace: docs/report.pdf.
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, srcFile, "rvk:docs/"})
+	})
+
+	// Rename within docs/: report.pdf -> final.pdf. The old name vanishes, the new
+	// one holds the original bytes.
+	capture(t, func() error {
+		return cmdMv([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:docs/report.pdf", "rvk:docs/final.pdf"})
+	})
+	if out := capture(t, func() error {
+		return cmdLs([]string{"-node", addr, "-root", rootFile, "rvk:docs"})
+	}); strings.Contains(out, "report.pdf") || !strings.Contains(out, "final.pdf") {
+		t.Fatalf("after mv, ls rvk:docs = %q, want final.pdf and no report.pdf", out)
+	}
+	renamedDir := t.TempDir()
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "rvk:docs/final.pdf", renamedDir})
+	})
+	if got, err := os.ReadFile(filepath.Join(renamedDir, "final.pdf")); err != nil {
+		t.Fatalf("read renamed file: %v", err)
+	} else if !bytes.Equal(got, payload) {
+		t.Fatal("renamed file does not match original")
+	}
+
+	// Move into another directory via a trailing slash: docs/final.pdf -> archive/final.pdf.
+	capture(t, func() error {
+		return cmdMv([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:docs/final.pdf", "rvk:archive/"})
+	})
+	if out := capture(t, func() error {
+		return cmdLs([]string{"-node", addr, "-root", rootFile, "rvk:archive"})
+	}); !strings.Contains(out, "final.pdf") {
+		t.Fatalf("after mv into archive/, ls rvk:archive = %q, want final.pdf", out)
+	}
+	movedDir := t.TempDir()
+	capture(t, func() error {
+		return cmdCp([]string{"-node", addr, "-root", rootFile, "rvk:archive/final.pdf", movedDir})
+	})
+	if got, err := os.ReadFile(filepath.Join(movedDir, "final.pdf")); err != nil {
+		t.Fatalf("read moved file: %v", err)
+	} else if !bytes.Equal(got, payload) {
+		t.Fatal("moved file does not match original")
+	}
+
+	// Moving a directory onto the same path is rejected (no-op guard).
+	if err := cmdMv([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:archive", "rvk:archive"}); err == nil {
+		t.Fatal("mv allowed source == destination")
+	}
+	// Moving a directory into its own subtree is rejected (would drop the data).
+	if err := cmdMv([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:archive", "rvk:archive/nested"}); err == nil {
+		t.Fatal("mv allowed moving a directory into its own subtree")
+	}
+	// The archive/ subtree survived the rejected moves intact.
+	if out := capture(t, func() error {
+		return cmdLs([]string{"-node", addr, "-root", rootFile, "rvk:archive"})
+	}); !strings.Contains(out, "final.pdf") {
+		t.Fatalf("after rejected moves, ls rvk:archive = %q, want final.pdf still present", out)
+	}
+
+	// mv needs two rvk: paths — a local endpoint is rejected (that is cp's job).
+	if err := cmdMv([]string{"-node", addr, "-root", rootFile, "-signkey", ownerSign, "rvk:archive/final.pdf", srcFile}); err == nil {
+		t.Fatal("mv accepted a local destination")
 	}
 }

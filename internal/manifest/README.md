@@ -106,6 +106,12 @@ content-addressed blob would force needless rewrites on every rename.
   slash-separated path from a root dir cap to a target cap. `..` is rejected (a
   DAG has no parent-of-root). Only `open`/`read` on the returned cap touches the
   network beyond the directories on the path — on-demand hydration.
+- **`ResolveEntry(ctx, s, root ReadCap, path) (Entry, error)`** — like `Resolve`
+  but returns the target's directory `Entry` (cap **plus** the parent's cached
+  `StatCache`), so a caller can copy a node preserving its size/mode/mtime. The
+  root itself (empty path) is reported as a nameless `KindDir` entry. Backs the
+  `revika-ctl cp rvk:a rvk:b` in-namespace copy: graft the resolved cap at a new
+  path (CoW), and the two paths share shards by content address.
 - **`Graft(ctx, s, cfg, root, path, child, stat) (ReadCap, error)`** — the
   **copy-on-write** mutation primitive: bind `child` at `path`, rewriting every
   directory on the path → a new root. Untouched sibling subtrees keep their caps

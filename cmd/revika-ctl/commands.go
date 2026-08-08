@@ -652,10 +652,12 @@ func writeBackend(ctx context.Context, node string, bootstrap []string, signer c
 
 // --- cp -------------------------------------------------------------------
 
-// cmdCp copies between the local filesystem and the namespace, scp-style:
-// exactly one of <src>/<dst> carries the rvk: prefix. Storing grafts the local
-// file or subtree into the -root and advances its signed sequence; retrieving
-// resolves the rvk: path and reconstructs it locally.
+// cmdCp copies between the local filesystem and the namespace, scp-style, or
+// within the namespace when both endpoints carry the rvk: prefix. Storing grafts
+// the local file or subtree into the -root and advances its signed sequence;
+// retrieving resolves the rvk: path and reconstructs it locally; an rvk:→rvk:
+// copy is a pure copy-on-write graft of the source cap at the destination (no
+// re-encryption, shards shared by content address).
 func cmdCp(args []string) error {
 	fs := flag.NewFlagSet("cp", flag.ExitOnError)
 	node := addBackendFlags(fs)
@@ -682,7 +684,7 @@ func cmdCp(args []string) error {
 	case isRvk(src) && !isRvk(dst):
 		return cpRetrieve(ctx, ws, rvkPath(src), dst, *keyPath, *node)
 	case isRvk(src) && isRvk(dst):
-		return fmt.Errorf("cp between two rvk: paths is not supported; retrieve to a local path, then store")
+		return cpCopy(ctx, ws, rvkPath(src), rvkPath(dst), *keyPath, *signKeyFlag, *node)
 	default:
 		return fmt.Errorf("cp needs exactly one rvk: path, e.g. `cp file rvk:dir/` (store) or `cp rvk:dir/file .` (retrieve)")
 	}
@@ -875,6 +877,171 @@ func cpRetrieve(ctx context.Context, ws *Workspace, srcRvk, dst, keyPath, node s
 	default:
 		return fmt.Errorf("rvk:%s has unknown kind %s", srcRvk, c.Kind)
 	}
+}
+
+// cpCopy copies a file or subtree from one rvk: path to another within the same
+// namespace root. It is a metadata-only operation: because every blob is
+// immutable and content-addressed, the copy grafts the source's existing cap at
+// the destination (copy-on-write up the destination path), so the two paths
+// share the same shards — no re-encryption and no shard movement. The source
+// cap's StatCache is preserved so the copy keeps its size/mode/mtime. The
+// destination follows cp/scp semantics via destPath (trailing slash or an
+// existing directory means "into it under the source's base name").
+//
+// Because the copy shares shards with the source, rm/revoke reclaim a shard only
+// once nothing under the current root still references it (see cmdRm's keep-set).
+func cpCopy(ctx context.Context, ws *Workspace, srcRvk, dstRvk, keyPath, signKeyFlag, node string) error {
+	rootFile := ws.RootFile
+	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(signKeyFlag))
+	if err != nil {
+		return err
+	}
+	prev, exists, sealed, err := loadRoot(rootFile, keyPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to copy", rootFile)
+	}
+	if sealed {
+		return fmt.Errorf("cannot copy within a shared, read-only root (%s)", rootFile)
+	}
+	if prev.Owner != signer.Public() {
+		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", rootFile)
+	}
+
+	cfg := ws.pipelineConfig()
+	node, bootstrap := ws.backend(node)
+	s, closer, err := writeBackend(ctx, node, bootstrap, signer, 0, cfg)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	srcEntry, err := manifest.ResolveEntry(ctx, s, prev.Root, srcRvk)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", srcRvk, err)
+	}
+	base := path.Base(srcRvk)
+	if base == "." || base == "/" || base == "" {
+		return fmt.Errorf("cannot copy the namespace root itself; name a specific rvk: source")
+	}
+	dstPath := destPath(ctx, s, prev.Root, dstRvk, base)
+
+	newRoot, err := manifest.Graft(ctx, s, cfg, prev.Root, dstPath, srcEntry.Cap, srcEntry.Stat)
+	if err != nil {
+		return fmt.Errorf("graft rvk:%s: %w", dstPath, err)
+	}
+	cc, err := ws.newCommitConfig(rootFile, signer, s, cfg)
+	if err != nil {
+		return err
+	}
+	if err := commitRoot(ctx, cc, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
+		return err
+	}
+	fmt.Printf("Copied rvk:%s -> rvk:%s [%s]\n", srcRvk, dstPath, srcEntry.Cap.Kind)
+	return nil
+}
+
+// --- mv -------------------------------------------------------------------
+
+// cmdMv renames or moves a file or subtree within the namespace from one rvk:
+// path to another. Both endpoints must carry the rvk: prefix (mv is
+// namespace-internal — use cp to cross the local filesystem boundary).
+func cmdMv(args []string) error {
+	fs := flag.NewFlagSet("mv", flag.ExitOnError)
+	node := addBackendFlags(fs)
+	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
+	keyPath := fs.String("key", "", "private key to open a sealed shared root")
+	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing the move (default <workspace>/keys/user.sign.key)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 || !isRvk(fs.Arg(0)) || !isRvk(fs.Arg(1)) {
+		return fmt.Errorf("mv takes rvk:<src> rvk:<dst> (both name the namespace; use cp to cross to/from local files)")
+	}
+	ws, err := resolveWorkspace(*rootFlag)
+	if err != nil {
+		return err
+	}
+	return mvRename(context.Background(), ws, rvkPath(fs.Arg(0)), rvkPath(fs.Arg(1)), *keyPath, *signKeyFlag, *node)
+}
+
+// mvRename moves srcRvk to dstRvk within the same namespace root. Like cpCopy it
+// is a metadata-only copy-on-write operation — it grafts the source's existing
+// cap at the destination and removes the source entry, committing a single
+// advanced RootPointer — so no bytes are re-encrypted or moved: the shards stay
+// put (referenced by content address at the new path) and only their name
+// changes. The destination follows cp/scp semantics via destPath (a trailing
+// slash or an existing directory means "into it under the source's base name").
+func mvRename(ctx context.Context, ws *Workspace, srcRvk, dstRvk, keyPath, signKeyFlag, node string) error {
+	rootFile := ws.RootFile
+	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(signKeyFlag))
+	if err != nil {
+		return err
+	}
+	prev, exists, sealed, err := loadRoot(rootFile, keyPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to move", rootFile)
+	}
+	if sealed {
+		return fmt.Errorf("cannot move within a shared, read-only root (%s)", rootFile)
+	}
+	if prev.Owner != signer.Public() {
+		return fmt.Errorf("root %s is owned by a different identity; your signing key cannot modify it", rootFile)
+	}
+
+	cfg := ws.pipelineConfig()
+	node, bootstrap := ws.backend(node)
+	s, closer, err := writeBackend(ctx, node, bootstrap, signer, 0, cfg)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	srcEntry, err := manifest.ResolveEntry(ctx, s, prev.Root, srcRvk)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", srcRvk, err)
+	}
+	base := path.Base(srcRvk)
+	if base == "." || base == "/" || base == "" {
+		return fmt.Errorf("cannot move the namespace root itself; name a specific rvk: source")
+	}
+	dstPath := destPath(ctx, s, prev.Root, dstRvk, base)
+
+	// Reject a no-op and a move of a subtree into itself or one of its descendants:
+	// both would graft the entry and then remove it (or its new home) in the same
+	// commit, silently dropping the data.
+	srcClean, dstClean := path.Clean(srcRvk), path.Clean(dstPath)
+	if srcClean == dstClean {
+		return fmt.Errorf("source and destination are the same path (rvk:%s)", srcClean)
+	}
+	if strings.HasPrefix(dstClean+"/", srcClean+"/") {
+		return fmt.Errorf("cannot move rvk:%s into its own subtree (rvk:%s)", srcClean, dstClean)
+	}
+
+	// Graft the source cap at the destination, then remove the source — a single
+	// new root, so the move is atomic (never a window with two copies or none).
+	moved, err := manifest.Graft(ctx, s, cfg, prev.Root, dstPath, srcEntry.Cap, srcEntry.Stat)
+	if err != nil {
+		return fmt.Errorf("graft rvk:%s: %w", dstPath, err)
+	}
+	newRoot, err := manifest.GraftRemove(ctx, s, cfg, moved, srcRvk)
+	if err != nil {
+		return fmt.Errorf("remove source rvk:%s: %w", srcRvk, err)
+	}
+	cc, err := ws.newCommitConfig(rootFile, signer, s, cfg)
+	if err != nil {
+		return err
+	}
+	if err := commitRoot(ctx, cc, newRoot, prev, exists, sealed, rootPublisher(s)); err != nil {
+		return err
+	}
+	fmt.Printf("Moved rvk:%s -> rvk:%s [%s]\n", srcRvk, dstPath, srcEntry.Cap.Kind)
+	return nil
 }
 
 // --- ls -------------------------------------------------------------------
@@ -1115,9 +1282,21 @@ func cmdRm(args []string) error {
 
 	// The namespace no longer references the subtree; release its shards (best
 	// effort — the pointer already advanced, so a failed delete only leaves
-	// unreferenced ciphertext for the node's GC/lease expiry to reclaim).
-	var deleted, missing, failed int
+	// unreferenced ciphertext for the node's GC/lease expiry to reclaim). Only
+	// drop shards nothing under the new root still references: an rvk:→rvk: copy
+	// (cpCopy) grafts the same cap at two paths, so its shards are shared by
+	// content address and must survive removing one path. Diffing against
+	// everything reachable from the new root also spares shards a sibling shares.
+	keep := map[store.ShardID]struct{}{}
+	if err := collectShards(ctx, s, newRoot, keep); err != nil {
+		return fmt.Errorf("enumerate remaining namespace shards: %w", err)
+	}
+	var deleted, missing, failed, kept int
 	for id := range shards {
+		if _, ok := keep[id]; ok {
+			kept++
+			continue
+		}
 		switch err := s.Delete(ctx, id); {
 		case err == nil:
 			deleted++
@@ -1128,7 +1307,7 @@ func cmdRm(args []string) error {
 			fmt.Fprintf(os.Stderr, "delete %s: %v\n", id, err)
 		}
 	}
-	fmt.Printf("Removed rvk:%s (%d shard(s) released, %d already absent, %d failed)\n", target, deleted, missing, failed)
+	fmt.Printf("Removed rvk:%s (%d shard(s) released, %d already absent, %d still referenced, %d failed)\n", target, deleted, missing, kept, failed)
 	return nil
 }
 

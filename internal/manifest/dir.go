@@ -191,6 +191,40 @@ func Resolve(ctx context.Context, s store.Store, root ReadCap, p string) (ReadCa
 	return cur, nil
 }
 
+// ResolveEntry walks p like Resolve but returns the target's directory Entry —
+// its cap plus the parent's cached StatCache — so a caller can copy a node
+// while preserving its recorded size/mode/mtime. The root itself (empty path)
+// has no parent Entry, so it is reported as a nameless KindDir entry carrying
+// the root cap and a bare directory stat.
+func ResolveEntry(ctx context.Context, s store.Store, root ReadCap, p string) (Entry, error) {
+	parts, err := splitPath(p)
+	if err != nil {
+		return Entry{}, err
+	}
+	if len(parts) == 0 {
+		return Entry{Name: "", Cap: root, Stat: StatCache{Kind: KindDir}}, nil
+	}
+	cur := root
+	for i, name := range parts {
+		if cur.Kind != KindDir {
+			return Entry{}, fmt.Errorf("manifest: %q is not a directory", strings.Join(parts[:i], "/"))
+		}
+		d, err := LoadDir(ctx, s, cur)
+		if err != nil {
+			return Entry{}, err
+		}
+		e, ok := d.Lookup(name)
+		if !ok {
+			return Entry{}, fmt.Errorf("manifest: %q not found", strings.Join(parts[:i+1], "/"))
+		}
+		if i == len(parts)-1 {
+			return e, nil
+		}
+		cur = e.Cap
+	}
+	return Entry{}, fmt.Errorf("manifest: %q not found", p) // unreachable: loop returns on last part
+}
+
 // Graft returns a new root cap with the child cap bound at path p, rewriting
 // every directory on the path to p (copy-on-write up the Merkle tree, §3.8):
 // a new child manifest → a new parent directory → … → a new root. Sibling

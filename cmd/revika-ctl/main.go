@@ -20,6 +20,7 @@
 //	revika-ctl keygen [-key <prefix>]
 //	revika-ctl cp    [-root <ws>] [backend] <local> rvk:<path>            # store
 //	revika-ctl cp    [-root <ws>] [backend] rvk:<path> <local>           # retrieve
+//	revika-ctl mv    [-root <ws>] [backend] rvk:<src> rvk:<dst>          # rename/move
 //	revika-ctl ls    [-root <ws>] [backend] [-l] [-R] [rvk:<path>]       # browse
 //	revika-ctl rm     [-root <ws>] [backend] rvk:<path>                  # delete
 //	revika-ctl revoke [-root <ws>] [backend] rvk:<path>                  # rotate caps
@@ -74,6 +75,8 @@ func main() {
 		err = cmdKeygen(args)
 	case "cp":
 		err = cmdCp(args)
+	case "mv":
+		err = cmdMv(args)
 	case "ls":
 		err = cmdLs(args)
 	case "rm":
@@ -146,6 +149,14 @@ Commands:
         subtree) into your -root, then advances the root's sequence — signed with your
         signing key. Retrieving resolves the rvk: path and reconstructs it. A trailing
         slash (or an existing rvk: directory) means "into that directory".
+
+  mv [-root <ws|file>] [backend] [-key <privkey>] [-signkey <path>] rvk:<src> rvk:<dst>
+        Rename or move a file or subtree within the namespace. Both endpoints are
+        rvk: paths (use cp to cross to/from local files). Like an rvk:→rvk: copy it
+        is metadata-only — the source cap is grafted at the destination and the
+        source removed in a single advanced root, so no bytes are re-encrypted or
+        moved. A trailing slash (or an existing rvk: directory) means "into it".
+        Owned root only.
 
   ls [-root <ws|file>] [backend] [-key <privkey>] [-owner <pubkey-file>] [-l] [-R] [rvk:<path>]
         List a directory in the namespace. Reads directory blobs only — no file

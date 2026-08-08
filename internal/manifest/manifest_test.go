@@ -140,6 +140,51 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestResolveEntry(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemStore()
+	cfg := testConfig()
+	root, _, aTxt := buildTree(t, ctx, s, cfg)
+
+	// A leaf carries both its cap and the parent's cached stat.
+	e, err := ResolveEntry(ctx, s, root, "docs/a.txt")
+	if err != nil {
+		t.Fatalf("ResolveEntry(docs/a.txt): %v", err)
+	}
+	if !reflect.DeepEqual(e.Cap, aTxt) {
+		t.Fatal("ResolveEntry cap mismatch for docs/a.txt")
+	}
+	if e.Name != "a.txt" || e.Stat.Kind != KindFile || e.Stat.Size != 9000 {
+		t.Fatalf("ResolveEntry stat = %+v, want name a.txt, file, size 9000", e)
+	}
+
+	// A subdirectory reports its cap and dir stat.
+	de, err := ResolveEntry(ctx, s, root, "docs")
+	if err != nil {
+		t.Fatalf("ResolveEntry(docs): %v", err)
+	}
+	if de.Name != "docs" || de.Stat.Kind != KindDir {
+		t.Fatalf("ResolveEntry(docs) = %+v, want dir named docs", de)
+	}
+
+	// The root itself has no parent entry: a nameless dir carrying the root cap.
+	re, err := ResolveEntry(ctx, s, root, "")
+	if err != nil {
+		t.Fatalf("ResolveEntry(root): %v", err)
+	}
+	if re.Name != "" || re.Stat.Kind != KindDir || !reflect.DeepEqual(re.Cap, root) {
+		t.Fatalf("ResolveEntry(root) = %+v, want nameless dir with the root cap", re)
+	}
+
+	// Missing paths and descending into a file fail cleanly (as Resolve does).
+	if _, err := ResolveEntry(ctx, s, root, "docs/missing.txt"); err == nil {
+		t.Fatal("ResolveEntry of missing path should fail")
+	}
+	if _, err := ResolveEntry(ctx, s, root, "notes.txt/nope"); err == nil {
+		t.Fatal("descending into a file should fail")
+	}
+}
+
 func TestGraftCopyOnWrite(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemStore()
