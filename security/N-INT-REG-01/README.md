@@ -1,25 +1,25 @@
 # N-INT-REG-01 — Double publication
 
-- **Cible** : Nœuds
-- **Catégorie** : Intégrité › Registre
-- **Identifiant** : N-INT-REG-01
+- **Target**: Nodes
+- **Category**: Integrity › Registry
+- **Identifier**: N-INT-REG-01
 
 ## Description
-Un nœud publie deux versions divergentes d'un même enregistrement dans le registre distribué pour créer une incohérence exploitable.
+A node publishes two divergent versions of the same record in the distributed registry to create an exploitable inconsistency.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Stored Data Manipulation | T1565.001 | Le nœud inscrit deux valeurs contradictoires pour la même entrée afin d'altérer l'état cohérent du registre. | Chaque entrée est signée Ed25519 et chaînée par hash (append-only), rendant toute équivocation détectable par comparaison des chaînes entre nœuds. |
-| Rogue Domain Controller | T1207 | Analogue P2P : le nœud se comporte en pair illégitime diffusant des enregistrements « autoritaires » divergents. | Adressage par hash de contenu + réconciliation croisée du ledger SQLite entre pairs, qui rejette les publications conflictuelles non-monotones. |
+| Stored Data Manipulation | T1565.001 | The node writes two contradictory values for the same entry in order to alter the consistent state of the registry. | Each entry is Ed25519-signed and hash-chained (append-only), making any equivocation detectable by comparing the chains across nodes. |
+| Rogue Domain Controller | T1207 | P2P analogue: the node behaves as an illegitimate peer broadcasting divergent "authoritative" records. | Content-hash addressing + cross-reconciliation of the SQLite ledger between peers, which rejects non-monotonic conflicting publications. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Journaux append-only chaînés + seq signés | T1565.001 | — | AU-9 |
-| Adressage par hash de contenu | T1207 | D3-FH | SI-7 |
-| Corroboration croisée inter-pairs du ledger | T1207 | — | AU-6 |
-| Contrôles CTID (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-7, SI-12, SI-16 |
-| Techniques D3FEND (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
+| Chained append-only logs + signed seq | T1565.001 | — | AU-9 |
+| Content-hash addressing | T1207 | D3-FH | SI-7 |
+| Cross-peer ledger corroboration | T1207 | — | AU-6 |
+| CTID controls (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-7, SI-12, SI-16 |
+| D3FEND techniques (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |

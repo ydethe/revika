@@ -1,26 +1,26 @@
-# C-INT-JRN-04 — Réémission d'événements
+# C-INT-JRN-04 — Re-emission of events
 
-- **Cible** : Clients
-- **Catégorie** : Intégrité › Journaux
-- **Identifiant** : C-INT-JRN-04
+- **Target**: Clients
+- **Category**: Integrity › Journal
+- **Identifier**: C-INT-JRN-04
 
 ## Description
-Des événements de journal déjà consignés sont réémis pour fausser le décompte ou l'historique.
+Already-recorded log events are re-emitted to distort the count or the history.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Data Manipulation: Transmitted Data Manipulation | T1565.002 | Analogue de rejeu : des événements déjà consignés sont réémis pour fausser décompte et historique. | Attribuer à chaque événement un nonce/numéro de séquence signé, tout doublon étant détecté et rejeté. |
-| Use Alternate Authentication Material: Application Access Token | T1550.001 | La réémission réutilise des messages signés authentiques hors de leur occurrence d'origine. | Chaîner les entrées par hash et horodater/signer chaque occurrence, empêchant l'insertion d'un événement déjà présent dans la chaîne. |
+| Data Manipulation: Transmitted Data Manipulation | T1565.002 | A replay analogue: already-recorded events are re-emitted to distort the count and history. | Assigning each event a signed nonce/sequence number, any duplicate being detected and rejected. |
+| Use Alternate Authentication Material: Application Access Token | T1550.001 | The re-emission reuses authentic signed messages outside their original occurrence. | Chaining entries by hash and timestamping/signing each occurrence, preventing the insertion of an event already present in the chain. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |
-| Journaux append-only chaînés + seq signés | T1550.001 | — | AU-9 |
-| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
-| Contrôles CTID (neo4j) | T1550.001 | — | AC-16, AC-17, AC-19, AC-20, CM-2, CM-6, CM-10, CM-11, IA-2, IA-4, SC-8, SC-28, SI-4, SI-7, SI-12 |
-| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |
-| Techniques D3FEND (neo4j) | T1550.001 | D3-OSM | — |
+| Anti-replay nonce/clock/seq + TTL | T1565.002 | — | SC-23 |
+| Append-only chained logs + signed seq | T1550.001 | — | AU-9 |
+| CTID controls (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
+| CTID controls (neo4j) | T1550.001 | — | AC-16, AC-17, AC-19, AC-20, CM-2, CM-6, CM-10, CM-11, IA-2, IA-4, SC-8, SC-28, SI-4, SI-7, SI-12 |
+| D3FEND techniques (neo4j) | T1565.002 | D3-OSM | — |
+| D3FEND techniques (neo4j) | T1550.001 | D3-OSM | — |

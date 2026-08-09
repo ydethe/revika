@@ -1,25 +1,25 @@
-# C-DISP-02 — Multiplication des connexions
+# C-DISP-02 — Connection multiplication
 
-- **Cible** : Clients
-- **Catégorie** : Disponibilité
-- **Identifiant** : C-DISP-02
+- **Target**: Clients
+- **Category**: Availability
+- **Identifier**: C-DISP-02
 
 ## Description
-Un client ouvre un grand nombre de connexions pour épuiser les ressources de connexion des nœuds.
+A client opens a large number of connections to exhaust the nodes' connection resources.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Endpoint Denial of Service: Service Exhaustion Flood | T1499.002 | La multiplication des connexions épuise le service de connexion des nœuds. | Plafonner les connexions via `ConnManager` (bornes low/high, période de grâce) dans `internal/net/defense.go`. |
-| Endpoint Denial of Service: OS Exhaustion Flood | T1499.001 | Le grand nombre de connexions épuise les ressources système (descripteurs, mémoire) du nœud. | Imposer les limites du `ResourceManager` libp2p et bannir par pair/sous-réseau via `ConnectionGater`. |
+| Endpoint Denial of Service: Service Exhaustion Flood | T1499.002 | Multiplying connections exhausts the nodes' connection service. | Cap connections via `ConnManager` (low/high bounds, grace period) in `internal/net/defense.go`. |
+| Endpoint Denial of Service: OS Exhaustion Flood | T1499.001 | The large number of connections exhausts the node's system resources (descriptors, memory). | Enforce the libp2p `ResourceManager` limits and ban by peer/subnet via `ConnectionGater`. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
 | ConnectionGater / ResourceManager / ConnManager | T1499.001, T1499.002 | D3-NTF | SC-7 |
-| Contrôles CTID (neo4j) | T1499.001 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
-| Contrôles CTID (neo4j) | T1499.002 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
-| Techniques D3FEND (neo4j) | T1499.001 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
-| Techniques D3FEND (neo4j) | T1499.002 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| CTID controls (neo4j) | T1499.001 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| CTID controls (neo4j) | T1499.002 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| D3FEND techniques (neo4j) | T1499.001 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| D3FEND techniques (neo4j) | T1499.002 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |

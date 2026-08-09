@@ -1,25 +1,25 @@
-# C-ECO-01 — Création massive de données
+# C-ECO-01 — Mass data creation
 
-- **Cible** : Clients
-- **Catégorie** : Menaces économiques
-- **Identifiant** : C-ECO-01
+- **Target**: Clients
+- **Category**: Economic threats
+- **Identifier**: C-ECO-01
 
 ## Description
-Un client crée un volume massif de données pour épuiser les ressources ou le quota du réseau.
+A client creates a massive volume of data to exhaust the network's resources or quota.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Le client inonde les nœuds de créations pour épuiser leur stockage disponible. | Quotas par-owner et baux (leases) à TTL tenus par le ledger SQLite, plafonnant le stockage consommable par identité. |
-| Resource Hijacking | T1496 | Le client accapare les ressources de stockage du réseau au détriment des autres. | Rate-limiting par-owner clé sur la pubkey Ed25519 et admission des écritures conditionnée à une preuve de travail (argon2id). |
+| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | The client floods the nodes with creations to exhaust their available storage. | Per-owner quotas and TTL leases held by the SQLite ledger, capping the storage consumable per identity. |
+| Resource Hijacking | T1496 | The client monopolizes the network's storage resources to the detriment of others. | Per-owner rate-limiting keyed on the Ed25519 pubkey and write admission conditioned on a proof of work (argon2id). |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Ledger SQLite par-owner + quotas/baux | T1499.003 | — | SC-6 |
-| Rate-limiting par-owner (pubkey Ed25519) | T1496 | D3-ITF | SC-5 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1496 | — | SC-5 |
-| Contrôles CTID (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
-| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| Per-owner SQLite ledger + quotas/leases | T1499.003 | — | SC-6 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1496 | D3-ITF | SC-5 |
+| Self-certifying PoW argon2id identity (anti-Sybil) | T1496 | — | SC-5 |
+| CTID controls (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| D3FEND techniques (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |

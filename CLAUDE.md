@@ -82,6 +82,9 @@ User side — a node is trusted for *availability*, never *confidentiality*.
 
 ## Toolchain & conventions
 
+- **English only.** Every artifact in this repo is written in English — code, comments, commit
+  messages, and all documentation (`*.md`, READMEs, the `security/` threat model, design docs).
+  No exceptions; translate any non-English contribution before committing.
 - **Formatting** prefer spaces over tabulation
 - **Module path is `revika`** (bare).
 - **Go 1.26** (`go 1.26` in `go.mod`). System `go` is older; leave `GOTOOLCHAIN` at its default

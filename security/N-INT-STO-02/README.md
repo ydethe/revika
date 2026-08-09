@@ -1,26 +1,26 @@
-# N-INT-STO-02 — Fourniture d'un shard corrompu
+# N-INT-STO-02 — Serving a corrupted shard
 
-- **Cible** : Nœuds
-- **Catégorie** : Intégrité › Stockage
-- **Identifiant** : N-INT-STO-02
+- **Target**: Nodes
+- **Category**: Integrity › Storage
+- **Identifier**: N-INT-STO-02
 
 ## Description
-À la lecture, le nœud renvoie un shard dont le contenu ne correspond pas à l'identifiant demandé, sabotant la reconstruction erasure-coded.
+On read, the node returns a shard whose content does not match the requested identifier, sabotaging the erasure-coded reconstruction.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Data Manipulation: Transmitted Data Manipulation | T1565.002 | Le nœud sert en transit, à la lecture, un contenu falsifié qui ne correspond pas à l'identifiant de shard demandé. | Vérification par recomputation du hash de contenu à la réception : un shard qui ne re-hashe pas vers l'ID demandé est rejeté. |
-| Inhibit System Recovery | T1490 | En fournissant des shards corrompus, le nœud cherche à empêcher la reconstruction erasure-coded du fichier. | Codage Reed-Solomon (tout `k` parmi `k+m` reconstruit) + réparation obligatoire : la lecture bascule sur d'autres shards valides et régénère les manquants. |
+| Data Manipulation: Transmitted Data Manipulation | T1565.002 | The node serves in transit, on read, falsified content that does not match the requested shard identifier. | Verification by recomputing the content hash on receipt: a shard that does not re-hash to the requested ID is rejected. |
+| Inhibit System Recovery | T1490 | By serving corrupted shards, the node seeks to prevent the erasure-coded reconstruction of the file. | Reed-Solomon coding (any `k` of `k+m` reconstructs) + mandatory repair: the read falls back to other valid shards and regenerates the missing ones. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Recompute du hash à la réception | T1565.002 | D3-FH | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1490 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-12 |
-| Contrôles CTID (neo4j) | T1490 | — | AC-2, AC-3, AC-6, CM-2, CM-6, CM-7, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
-| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |
-| Techniques D3FEND (neo4j) | T1490 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Recompute the hash on receipt | T1565.002 | D3-FH | SI-7 |
+| Reed-Solomon k=4/m=2 coding + repair | T1490 | — | SC-36 |
+| CTID controls (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-12 |
+| CTID controls (neo4j) | T1490 | — | AC-2, AC-3, AC-6, CM-2, CM-6, CM-7, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
+| D3FEND techniques (neo4j) | T1565.002 | D3-OSM | — |
+| D3FEND techniques (neo4j) | T1490 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

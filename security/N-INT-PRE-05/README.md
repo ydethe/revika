@@ -1,24 +1,24 @@
-# N-INT-PRE-05 — Falsification de preuves de disponibilité
+# N-INT-PRE-05 — Falsification of availability proofs
 
-- **Cible** : Nœuds
-- **Catégorie** : Intégrité › Preuves
-- **Identifiant** : N-INT-PRE-05
+- **Target**: Nodes
+- **Category**: Integrity › Proofs
+- **Identifier**: N-INT-PRE-05
 
 ## Description
-Un nœud fournit une preuve mensongère qu'il est disponible et joignable pour servir une donnée qu'il ne peut en réalité pas fournir.
+A node provides a deceitful proof that it is available and reachable to serve data that it cannot in fact provide.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Masquerading | T1036 | Le nœud se déclare joignable et apte à servir une donnée qu'il ne peut effectivement pas fournir. | Probes de disponibilité exigeant le renvoi réel du shard vérifié par hash, et non une simple attestation déclarative. |
-| Impersonation | T1656 | Analogue : le nœud usurpe le statut d'un dépositaire fonctionnel dans le calcul de placement/réparation. | Réparation obligatoire déclenchée dès qu'une probe échoue, régénérant les shards depuis les k survivants sur d'autres nœuds. |
+| Masquerading | T1036 | The node declares itself reachable and able to serve data that it cannot effectively provide. | Availability probes requiring the actual return of the hash-verified shard, and not a mere declarative attestation. |
+| Impersonation | T1656 | Analogue: the node usurps the status of a functional custodian in the placement/repair computation. | Mandatory repair triggered as soon as a probe fails, regenerating the shards from the k survivors on other nodes. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Sondes + défis de possession | T1036 | — | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1656 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4 |
-| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Probes + proof-of-possession challenges | T1036 | — | SI-7 |
+| Reed-Solomon coding k=4/m=2 + repair | T1656 | — | SC-36 |
+| CTID controls (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4 |
+| D3FEND techniques (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

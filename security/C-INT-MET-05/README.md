@@ -1,25 +1,25 @@
-# C-INT-MET-05 — Fausse liste de destinataires
+# C-INT-MET-05 — False recipient list
 
-- **Cible** : Clients
-- **Catégorie** : Intégrité › Métadonnées
-- **Identifiant** : C-INT-MET-05
+- **Target**: Clients
+- **Category**: Integrity › Metadata
+- **Identifier**: C-INT-MET-05
 
 ## Description
-La liste des destinataires d'un partage est falsifiée, ajoutant ou retirant des accès indûment.
+The recipient list of a share is falsified, improperly adding or removing access.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Data Manipulation: Stored Data Manipulation | T1565.001 | La liste des destinataires d'un partage est modifiée pour ajouter ou retirer des accès indûment. | Capacités encapsulées individuellement en ML-KEM-768 par destinataire et liste de partage signée Ed25519, avec révocation gérée par le propriétaire. |
-| Impersonation | T1656 | Un attaquant s'ajoute comme destinataire légitime pour obtenir un accès non consenti. | Encapsulation de la capacité à la pubkey du seul destinataire visé, un accès non prévu ne pouvant déchiffrer la clé. |
+| Data Manipulation: Stored Data Manipulation | T1565.001 | The recipient list of a share is modified to improperly add or remove access. | Capabilities individually wrapped in ML-KEM-768 per recipient and an Ed25519-signed share list, with revocation managed by the owner. |
+| Impersonation | T1656 | An attacker adds themselves as a legitimate recipient to gain non-consented access. | Wrapping the capability to the pubkey of the intended recipient only, an unintended access being unable to decrypt the key. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Encapsulation ML-KEM-768 (cap wrapping) | T1565.001, T1656 | D3-MENCR | SC-12 |
-| Signatures / capacités Ed25519 | T1565.001 | D3-MAN | AU-10 |
-| Capacités TTL court + révocation | T1565.001 | — | AC-3 |
-| Contrôles CTID (neo4j) | T1565.001 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-7, SI-12, SI-16 |
-| Techniques D3FEND (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
+| ML-KEM-768 wrapping (cap wrapping) | T1565.001, T1656 | D3-MENCR | SC-12 |
+| Ed25519 signatures / capabilities | T1565.001 | D3-MAN | AU-10 |
+| Short-TTL capabilities + revocation | T1565.001 | — | AC-3 |
+| CTID controls (neo4j) | T1565.001 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-7, SI-12, SI-16 |
+| D3FEND techniques (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |

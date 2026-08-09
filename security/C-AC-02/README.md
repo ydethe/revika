@@ -1,23 +1,23 @@
-# C-AC-02 — Réutilisation d'un droit expiré
+# C-AC-02 — Reuse of an expired right
 
-- **Cible** : Clients
-- **Catégorie** : Contrôle d'accès
-- **Identifiant** : C-AC-02
+- **Target**: Clients
+- **Category**: Access control
+- **Identifier**: C-AC-02
 
 ## Description
-Un client réutilise un droit ou un jeton dont la validité a expiré.
+A client reuses a right or token whose validity has expired.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Use Alternate Authentication Material: Application Access Token | T1550.001 | Le client rejoue un jeton d'accès dont le TTL est dépassé (analogue P2P du rejeu d'un jeton applicatif). | Jetons d'accès signés à durée de vie limitée (TTL) vérifiée à chaque requête, avec nonces/horloges signés côté nœud pour l'anti-rejeu. |
+| Use Alternate Authentication Material: Application Access Token | T1550.001 | The client replays an access token whose TTL has elapsed (the P2P analogue of replaying an application token). | Signed access tokens with a limited time-to-live (TTL) verified on every request, with node-side signed nonces/clocks for anti-replay. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Capacités TTL court + révocation | T1550.001 | — | AC-3 |
-| Anti-rejeu nonce/horloge/seq + TTL | T1550.001 | — | SC-23 |
-| Contrôles CTID (neo4j) | T1550.001 | — | AC-16, AC-17, AC-19, AC-20, CM-2, CM-6, CM-10, CM-11, IA-2, IA-4, SC-8, SC-28, SI-4, SI-7, SI-12 |
-| Techniques D3FEND (neo4j) | T1550.001 | D3-OSM | — |
+| Short-TTL capabilities + revocation | T1550.001 | — | AC-3 |
+| Nonce/clock/seq anti-replay + TTL | T1550.001 | — | SC-23 |
+| CTID controls (neo4j) | T1550.001 | — | AC-16, AC-17, AC-19, AC-20, CM-2, CM-6, CM-10, CM-11, IA-2, IA-4, SC-8, SC-28, SI-4, SI-7, SI-12 |
+| D3FEND techniques (neo4j) | T1550.001 | D3-OSM | — |

@@ -1,25 +1,25 @@
-# N-INT-ID-01 — Usurpation d'identité
+# N-INT-ID-01 — Identity spoofing
 
-- **Cible** : Nœuds
-- **Catégorie** : Intégrité › Identité
-- **Identifiant** : N-INT-ID-01
+- **Target**: Nodes
+- **Category**: Integrity › Identity
+- **Identifier**: N-INT-ID-01
 
 ## Description
-Un nœud se fait passer pour un autre nœud (ou pour un propriétaire) afin de bénéficier de ses droits ou de sa réputation.
+A node passes itself off as another node (or as an owner) in order to benefit from its rights or its reputation.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Impersonation | T1656 | Le nœud prétend être un autre nœud ou un propriétaire pour hériter de ses droits ou de sa réputation. | Identités libp2p auto-certifiées et signatures Ed25519 : tout message/écriture est authentifié par la pubkey réelle, non usurpable sans la clé privée. |
-| Valid Accounts | T1078 | Analogue : l'attaquant exploite l'identité d'un pair légitime pour accéder à ses droits sur le réseau. | Transport libp2p chiffré/authentifié et capacités signées liées à la pubkey du titulaire, avec quotas et baux du ledger indexés sur l'owner Ed25519. |
+| Impersonation | T1656 | The node claims to be another node or an owner to inherit its rights or its reputation. | Self-certified libp2p identities and Ed25519 signatures: every message/write is authenticated by the real pubkey, not spoofable without the private key. |
+| Valid Accounts | T1078 | Analogue: the attacker exploits a legitimate peer's identity to access its rights on the network. | Encrypted/authenticated libp2p transport and signed capabilities bound to the holder's pubkey, with ledger quotas and leases indexed on the Ed25519 owner. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Signatures / capacités Ed25519 | T1656, T1078 | D3-MAN | AU-10 |
-| Transport libp2p chiffré / authentifié | T1078 | D3-MENCR | SC-8 |
-| Ledger SQLite par-owner + quotas/baux | T1078 | — | SC-6 |
-| Contrôles CTID (neo4j) | T1078 | — | AC-2, AC-3, AC-5, AC-6, CA-3, CA-7, CM-5, CM-6, CM-7, IA-2, IA-5, IA-12, RA-5, SA-3, SA-4, SA-8, SA-10, SA-11, SA-15, SA-17, SC-7, SC-28, SC-43, SI-4 |
-| Techniques D3FEND (neo4j) | T1078 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-UAP | — |
+| Ed25519 signatures / capabilities | T1656, T1078 | D3-MAN | AU-10 |
+| Encrypted / authenticated libp2p transport | T1078 | D3-MENCR | SC-8 |
+| Per-owner SQLite ledger + quotas/leases | T1078 | — | SC-6 |
+| CTID controls (neo4j) | T1078 | — | AC-2, AC-3, AC-5, AC-6, CA-3, CA-7, CM-5, CM-6, CM-7, IA-2, IA-5, IA-12, RA-5, SA-3, SA-4, SA-8, SA-10, SA-11, SA-15, SA-17, SC-7, SC-28, SC-43, SI-4 |
+| D3FEND techniques (neo4j) | T1078 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-UAP | — |

@@ -1,26 +1,26 @@
-# N-AC-03 — Servir des données après expiration
+# N-AC-03 — Serving data after expiry
 
-- **Cible** : Nœuds
-- **Catégorie** : Contrôle d'accès
-- **Identifiant** : N-AC-03
+- **Target**: Nodes
+- **Category**: Access control
+- **Identifier**: N-AC-03
 
 ## Description
-Un nœud continue de fournir des données au-delà de l'expiration du bail ou du jeton correspondant.
+A node keeps providing data beyond the expiry of the corresponding lease or token.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Use Alternate Authentication Material: Application Access Token | T1550.001 | Un jeton d'accès signé arrivé à expiration est rejoué pour prolonger indûment l'accès aux shards. | Vérification stricte du TTL et de l'horodatage signé du jeton à chaque requête, rejet de tout jeton expiré. |
-| Valid Accounts | T1078 | Un bail (lease) expiré continue de justifier un accès qui aurait dû cesser. | Expiration des baux gérée par le ledger SQLite avec purge par le GC, refusant le service dès le dépassement du TTL. |
+| Use Alternate Authentication Material: Application Access Token | T1550.001 | A signed access token that has expired is replayed to unduly extend access to the shards. | Strict verification of the token's TTL and signed timestamp on every request, rejecting any expired token. |
+| Valid Accounts | T1078 | An expired lease keeps justifying access that should have ceased. | Lease expiry managed by the SQLite ledger with GC purge, refusing service as soon as the TTL is exceeded. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Anti-rejeu nonce/horloge/seq + TTL | T1550.001 | — | SC-23 |
-| Ledger SQLite par-owner + quotas/baux | T1078 | — | SC-6 |
-| Contrôles CTID (neo4j) | T1550.001 | — | AC-16, AC-17, AC-19, AC-20, CM-2, CM-6, CM-10, CM-11, IA-2, IA-4, SC-8, SC-28, SI-4, SI-7, SI-12 |
-| Contrôles CTID (neo4j) | T1078 | — | AC-2, AC-3, AC-5, AC-6, CA-3, CA-7, CM-5, CM-6, CM-7, IA-2, IA-5, IA-12, RA-5, SA-3, SA-4, SA-8, SA-10, SA-11, SA-15, SA-17, SC-7, SC-28, SC-43, SI-4 |
-| Techniques D3FEND (neo4j) | T1550.001 | D3-OSM | — |
-| Techniques D3FEND (neo4j) | T1078 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-UAP | — |
+| Anti-replay nonce/clock/seq + TTL | T1550.001 | — | SC-23 |
+| Per-owner SQLite ledger + quotas/leases | T1078 | — | SC-6 |
+| CTID controls (neo4j) | T1550.001 | — | AC-16, AC-17, AC-19, AC-20, CM-2, CM-6, CM-10, CM-11, IA-2, IA-4, SC-8, SC-28, SI-4, SI-7, SI-12 |
+| CTID controls (neo4j) | T1078 | — | AC-2, AC-3, AC-5, AC-6, CA-3, CA-7, CM-5, CM-6, CM-7, IA-2, IA-5, IA-12, RA-5, SA-3, SA-4, SA-8, SA-10, SA-11, SA-15, SA-17, SC-7, SC-28, SC-43, SI-4 |
+| D3FEND techniques (neo4j) | T1550.001 | D3-OSM | — |
+| D3FEND techniques (neo4j) | T1078 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-UAP | — |

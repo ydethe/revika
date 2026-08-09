@@ -1,29 +1,29 @@
-# N-ECO-02 — Participer uniquement aux opérations rémunératrices
+# N-ECO-02 — Participating only in remunerative operations
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces économiques
-- **Identifiant** : N-ECO-02
+- **Target**: Nodes
+- **Category**: Economic threats
+- **Identifier**: N-ECO-02
 
 ## Description
-Un nœud ne prend en charge que les tâches rentables et néglige les obligations non rémunérées (réparation, service à froid).
+A node only handles profitable tasks and neglects unpaid obligations (repair, cold serving).
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Inhibit System Recovery | T1490 | En négligeant la réparation obligatoire, le nœud empêche la régénération des shards et compromet le rétablissement de la redondance. | Réparation obligatoire pilotée par grant signé sur ciphertext déterministe, exécutée depuis d'autres nœuds via le codage d'effacement Reed-Solomon (`k=4`, `m=2`) sans dépendre du nœud défaillant. |
-| Service Stop | T1489 | Le nœud refuse sélectivement les opérations non rémunérées (service à froid), arrêtant de fait le service sur une partie des données. | Sondes de disponibilité détectant le non-service, baux (leases) à TTL dans le ledger et re-placement des shards vers des nœuds honorant leurs engagements. |
+| Inhibit System Recovery | T1490 | By neglecting mandatory repair, the node prevents the regeneration of shards and compromises the restoration of redundancy. | Mandatory repair driven by a signed grant on deterministic ciphertext, executed from other nodes via Reed-Solomon erasure coding (`k=4`, `m=2`) without depending on the failing node. |
+| Service Stop | T1489 | The node selectively refuses unpaid operations (cold serving), effectively stopping the service on part of the data. | Availability probes detecting non-service, TTL leases in the ledger and re-placement of shards towards nodes honouring their commitments. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1490 | — | SC-36 |
-| Grant de réparation signé | T1490 | D3-MAN | AC-3 |
-| Sondes + défis de possession | T1489 | — | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | T1489 | — | SC-6 |
-| Placement réparti sur owners indépendants | T1489 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1490 | — | AC-2, AC-6, CM-2, CM-6, CM-7, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
-| Contrôles CTID (neo4j) | T1489 | — | AC-2, AC-3, AC-4, AC-5, AC-6, CA-7, CM-5, CM-6, CM-7, IA-2, SC-7, SC-37, SC-46, SI-4 |
-| Techniques D3FEND (neo4j) | T1490 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
-| Techniques D3FEND (neo4j) | T1489 | D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-OSM, D3-OTF, D3-UAP | — |
+| Reed-Solomon coding k=4/m=2 + repair | T1490 | — | SC-36 |
+| Signed repair grant | T1490 | D3-MAN | AC-3 |
+| Probes + proof-of-possession challenges | T1489 | — | SI-7 |
+| Per-owner SQLite ledger + quotas/leases | T1489 | — | SC-6 |
+| Placement spread across independent owners | T1489 | — | SC-36 |
+| CTID controls (neo4j) | T1490 | — | AC-2, AC-6, CM-2, CM-6, CM-7, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
+| CTID controls (neo4j) | T1489 | — | AC-2, AC-3, AC-4, AC-5, AC-6, CA-7, CM-5, CM-6, CM-7, IA-2, SC-7, SC-37, SC-46, SI-4 |
+| D3FEND techniques (neo4j) | T1490 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| D3FEND techniques (neo4j) | T1489 | D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-OSM, D3-OTF, D3-UAP | — |

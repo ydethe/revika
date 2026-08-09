@@ -1,25 +1,25 @@
-# N-CONF-04 — Observation des flux réseau
+# N-CONF-04 — Observation of network flows
 
-- **Cible** : Nœuds
-- **Catégorie** : Confidentialité › Données
-- **Identifiant** : N-CONF-04
+- **Target**: Nodes
+- **Category**: Confidentiality › Data
+- **Identifier**: N-CONF-04
 
 ## Description
-L'analyse du trafic entrant/sortant d'un nœud (volumes, destinations, timing) révèle des informations sur les échanges même lorsque le contenu transporté est chiffré.
+Analysing a node's inbound/outbound traffic (volumes, destinations, timing) reveals information about the exchanges even when the transported content is encrypted.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Network Sniffing | T1040 | Capture et analyse du trafic entrant/sortant du nœud (volumes, timing) malgré un contenu chiffré. | Transport libp2p chiffré et authentifié ne véhiculant que du ciphertext opaque adressé par hash, sans plaintext ni métadonnée de fichier exploitable. |
-| Gather Victim Network Information | T1590 | Collecte des destinations et des débits pour cartographier les échanges du nœud. | NAT traversal libp2p et dispersion des shards par codage d'effacement sur nœuds indépendants réduisant la corrélation flux ↔ fichier. |
+| Network Sniffing | T1040 | Capture and analysis of the node's inbound/outbound traffic (volumes, timing) despite encrypted content. | Encrypted and authenticated libp2p transport carrying only opaque ciphertext addressed by hash, with no plaintext nor exploitable file metadata. |
+| Gather Victim Network Information | T1590 | Collection of destinations and throughputs to map the node's exchanges. | libp2p NAT traversal and dispersion of shards by erasure coding across independent nodes reducing flow ↔ file correlation. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Transport libp2p chiffré / authentifié | T1040 | D3-MENCR | SC-8 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1590 | — | SC-36 |
-| Placement réparti sur owners indépendants | T1590 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1040 | — | AC-16, AC-17, AC-18, AC-19, CM-7, IA-2, IA-5, SC-4, SI-4, SI-7, SI-12 |
-| Techniques D3FEND (neo4j) | T1040 | D3-OSM | — |
+| Encrypted / authenticated libp2p transport | T1040 | D3-MENCR | SC-8 |
+| Reed-Solomon coding k=4/m=2 + repair | T1590 | — | SC-36 |
+| Distributed placement across independent owners | T1590 | — | SC-36 |
+| CTID controls (neo4j) | T1040 | — | AC-16, AC-17, AC-18, AC-19, CM-7, IA-2, IA-5, SC-4, SI-4, SI-7, SI-12 |
+| D3FEND techniques (neo4j) | T1040 | D3-OSM | — |

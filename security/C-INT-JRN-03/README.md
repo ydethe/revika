@@ -1,25 +1,25 @@
-# C-INT-JRN-03 — Bruit massif
+# C-INT-JRN-03 — Massive noise
 
-- **Cible** : Clients
-- **Catégorie** : Intégrité › Journaux
-- **Identifiant** : C-INT-JRN-03
+- **Target**: Clients
+- **Category**: Integrity › Journal
+- **Identifier**: C-INT-JRN-03
 
 ## Description
-Le journal est noyé sous un volume massif d'événements sans intérêt pour masquer une action.
+The log is drowned under a massive volume of irrelevant events to mask an action.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Impair Defenses: Disable or Modify Tools | T1562.001 | Le bruit massif d'événements masque les indicateurs de l'action réelle. | Rate-limiter la génération d'événements par-owner (clé sur la pubkey Ed25519) pour brider les flots destinés à noyer le journal. |
-| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Le volume d'événements sature la capacité de journalisation/analyse. | Appliquer quotas par-owner et limites `ResourceManager`/`ConnManager` pour plafonner le débit d'entrées émises. |
+| Impair Defenses: Disable or Modify Tools | T1562.001 | The massive event noise masks the indicators of the real action. | Rate-limiting event generation per-owner (keyed on the Ed25519 pubkey) to throttle the floods intended to drown the log. |
+| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | The event volume saturates the logging/analysis capacity. | Applying per-owner quotas and `ResourceManager`/`ConnManager` limits to cap the rate of emitted entries. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | T1562.001 | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | T1499.003 | — | SC-6 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1562.001 | D3-ITF | SC-5 |
+| Per-owner SQLite ledger + quotas/leases | T1499.003 | — | SC-6 |
 | ConnectionGater / ResourceManager / ConnManager | T1499.003 | D3-NTF | SC-7 |
-| Contrôles CTID (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
-| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| CTID controls (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| D3FEND techniques (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |

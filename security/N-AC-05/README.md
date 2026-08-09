@@ -1,26 +1,26 @@
-# N-AC-05 — Falsifier l'identité d'un demandeur
+# N-AC-05 — Falsifying a requester's identity
 
-- **Cible** : Nœuds
-- **Catégorie** : Contrôle d'accès
-- **Identifiant** : N-AC-05
+- **Target**: Nodes
+- **Category**: Access control
+- **Identifier**: N-AC-05
 
 ## Description
-Un nœud attribue à une requête une identité de demandeur différente pour contourner les contrôles d'accès.
+A node assigns a request a different requester identity to bypass access controls.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Impersonation | T1656 | Une requête se voit attribuer une identité de demandeur usurpée afin de bénéficier des droits d'un autre owner. | Liaison cryptographique de chaque requête à une pubkey Ed25519 auto-certifiante, l'identité ne pouvant être affirmée qu'en prouvant la possession de la clé privée. |
-| Masquerading | T1036 | Le nœud présente une identité de demandeur falsifiée pour franchir les contrôles d'accès. | Jetons d'accès signés liés à l'identité du demandeur et vérifiés à la source, empêchant toute réattribution d'identité côté nœud. |
-| Forge Web Credentials | T1606 | Une preuve d'identité de demandeur est forgée pour se faire passer pour un owner autorisé. | Authentification par signature Ed25519 sur nonce, infalsifiable sans la clé privée, plutôt que par un identifiant déclaratif. |
+| Impersonation | T1656 | A request is assigned a spoofed requester identity in order to benefit from another owner's rights. | Cryptographic binding of each request to a self-certifying Ed25519 pubkey, the identity only being assertable by proving possession of the private key. |
+| Masquerading | T1036 | The node presents a falsified requester identity to pass the access controls. | Signed access tokens bound to the requester's identity and verified at the source, preventing any identity reassignment on the node side. |
+| Forge Web Credentials | T1606 | A proof of requester identity is forged to pass as an authorised owner. | Authentication by Ed25519 signature over a nonce, unforgeable without the private key, rather than by a declarative identifier. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Signatures / capacités Ed25519 | T1656, T1036, T1606 | D3-MAN | AU-10 |
-| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
-| Contrôles CTID (neo4j) | T1606 | — | AC-2, AC-3, AC-5, AC-6, SC-17, SI-2 |
-| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
-| Techniques D3FEND (neo4j) | T1606 | D3-EAL, D3-EDL, D3-LFP, D3-UAP | — |
+| Ed25519 signatures / capabilities | T1656, T1036, T1606 | D3-MAN | AU-10 |
+| CTID controls (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
+| CTID controls (neo4j) | T1606 | — | AC-2, AC-3, AC-5, AC-6, SC-17, SI-2 |
+| D3FEND techniques (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| D3FEND techniques (neo4j) | T1606 | D3-EAL, D3-EDL, D3-LFP, D3-UAP | — |

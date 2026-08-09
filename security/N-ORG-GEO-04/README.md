@@ -1,28 +1,28 @@
-# N-ORG-GEO-04 — Répartition géographique fictive
+# N-ORG-GEO-04 — Fictitious geographic distribution
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces organisationnelles › Géolocalisation
-- **Identifiant** : N-ORG-GEO-04
+- **Target**: Nodes
+- **Category**: Organisational threats › Geolocation
+- **Identifier**: N-ORG-GEO-04
 
 ## Description
-Un opérateur simule une dispersion géographique de ses nœuds qui n'existe pas physiquement.
+An operator simulates a geographic dispersion of its nodes that does not exist physically.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Masquerading | T1036 | L'opérateur fabrique une dispersion géographique fictive pour satisfaire les contraintes de répartition. | Vérifier la dispersion réelle par sondes de latence/topologie indépendantes plutôt que par les localisations déclarées. |
-| Multi-hop Proxy | T1090.003 | Des proxys multi-sauts font apparaître des nœuds à des localisations distinctes qui n'existent pas. | Triangulation RTT et corrélation d'AS/sous-réseau pour démasquer des points de sortie relayés. |
-| Virtual Private Server | T1583.003 | Des instances VPS réparties simulent un déploiement dispersé sous contrôle d'un seul opérateur. | Placement keyé sur la diversité réseau mesurée + quotas par-owner, et codage d'effacement empêchant que tout `k` réside chez un même opérateur. |
+| Masquerading | T1036 | The operator fabricates a fictitious geographic dispersion to satisfy the distribution constraints. | Verify the real dispersion via independent latency/topology probes rather than by the declared locations. |
+| Multi-hop Proxy | T1090.003 | Multi-hop proxies make nodes appear at distinct locations that do not exist. | RTT triangulation and AS/subnet correlation to unmask relayed exit points. |
+| Virtual Private Server | T1583.003 | Distributed VPS instances simulate a dispersed deployment under the control of a single operator. | Placement keyed on measured network diversity + per-owner quotas, and erasure coding preventing all `k` from residing with the same operator. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Diversité de placement mesurée par le réseau | T1036, T1090.003, T1583.003 | — | SC-36 |
-| Ledger SQLite par-owner + quotas/baux | T1583.003 | — | SC-6 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1583.003 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
-| Contrôles CTID (neo4j) | T1090.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
-| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
-| Techniques D3FEND (neo4j) | T1090.003 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |
+| Network-measured placement diversity | T1036, T1090.003, T1583.003 | — | SC-36 |
+| Per-owner SQLite ledger + quotas/leases | T1583.003 | — | SC-6 |
+| Reed-Solomon k=4/m=2 coding + repair | T1583.003 | — | SC-36 |
+| CTID controls (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
+| CTID controls (neo4j) | T1090.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
+| D3FEND techniques (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| D3FEND techniques (neo4j) | T1090.003 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |

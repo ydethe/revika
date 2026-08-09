@@ -1,28 +1,28 @@
 # N-ORG-GEO-02 — VPN/proxy
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces organisationnelles › Géolocalisation
-- **Identifiant** : N-ORG-GEO-02
+- **Target**: Nodes
+- **Category**: Organisational threats › Geolocation
+- **Identifier**: N-ORG-GEO-02
 
 ## Description
-Un nœud masque sa localisation réelle via VPN ou proxy, faussant la diversité géographique perçue.
+A node masks its real location via VPN or proxy, falsifying the perceived geographic diversity.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Multi-hop Proxy | T1090.003 | Le nœud passe par un VPN ou un proxy multi-sauts pour masquer sa localisation réelle et fausser la diversité perçue. | Estimer la position par triangulation de latence/RTT et corrélation d'AS/sous-réseau observés, plutôt que par l'adresse annoncée. |
-| Virtual Private Server | T1583.003 | Le nœud est hébergé sur un VPS afin de présenter une localisation d'apparence différente de la sienne. | Détection de plages IP d'hébergeurs/VPS connus et placement keyé sur la diversité réseau réellement mesurée. |
-| Masquerading | T1036 | L'ensemble simule une diversité géographique qui n'existe pas physiquement. | Codage d'effacement dispersant les shards sur des owners distincts, de sorte qu'une fausse diversité ne concentre pas tout `k` au même endroit réel. |
+| Multi-hop Proxy | T1090.003 | The node routes through a VPN or a multi-hop proxy to mask its real location and falsify the perceived diversity. | Estimate the position by latency/RTT triangulation and correlation of observed AS/subnet, rather than by the announced address. |
+| Virtual Private Server | T1583.003 | The node is hosted on a VPS in order to present a location that appears different from its own. | Detection of known hoster/VPS IP ranges and placement keyed on the actually-measured network diversity. |
+| Masquerading | T1036 | The whole simulates a geographic diversity that does not exist physically. | Erasure coding dispersing the shards over distinct owners, so that a fake diversity does not concentrate all `k` at the same real place. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Diversité de placement mesurée par le réseau | T1090.003, T1583.003 | — | SC-36 |
-| Placement réparti sur owners indépendants | T1036 | — | SC-36 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1036 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1090.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
-| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
-| Techniques D3FEND (neo4j) | T1090.003 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |
-| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Network-measured placement diversity | T1090.003, T1583.003 | — | SC-36 |
+| Placement spread over independent owners | T1036 | — | SC-36 |
+| Reed-Solomon k=4/m=2 coding + repair | T1036 | — | SC-36 |
+| CTID controls (neo4j) | T1090.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
+| CTID controls (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4, SI-7 |
+| D3FEND techniques (neo4j) | T1090.003 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |
+| D3FEND techniques (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

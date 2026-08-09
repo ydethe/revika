@@ -1,25 +1,25 @@
-# C-CONF-03 — Observation des temps de réponse
+# C-CONF-03 — Observing response times
 
-- **Cible** : Clients
-- **Catégorie** : Confidentialité
-- **Identifiant** : C-CONF-03
+- **Target**: Clients
+- **Category**: Confidentiality
+- **Identifier**: C-CONF-03
 
 ## Description
-L'analyse des latences des opérations client révèle des informations telles que la présence en cache, la taille ou le chemin d'accès.
+Analysing the latencies of client operations reveals information such as cache presence, size, or access path.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Network Sniffing | T1040 | L'observateur mesure les latences des requêtes de shards sur le réseau libp2p (analogue de canal auxiliaire temporel) pour déduire taille et cache. | Transport chiffré/authentifié et récupération parallèle des `k` shards Reed-Solomon lissant les temps de réponse observables. |
-| Gather Victim Host Information | T1592 | Les écarts de latence révèlent l'état de cache et le chemin d'accès côté hôte. | Rate-limiting par-pair (`internal/net/defense.go`) et normalisation des réponses limitant le signal temporel exploitable. |
+| Network Sniffing | T1040 | The observer measures shard-request latencies over the libp2p network (a timing side-channel analogue) to infer size and cache. | Encrypted/authenticated transport and parallel retrieval of the `k` Reed-Solomon shards, smoothing the observable response times. |
+| Gather Victim Host Information | T1592 | Latency variations reveal the cache state and access path on the host side. | Per-peer rate-limiting (`internal/net/defense.go`) and response normalization, limiting the exploitable timing signal. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Transport libp2p chiffré / authentifié | T1040 | D3-MENCR | SC-8 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1040 | — | SC-36 |
-| Rate-limiting par-owner (pubkey Ed25519) | T1592 | D3-ITF | SC-5 |
-| Contrôles CTID (neo4j) | T1040 | — | AC-16, AC-17, AC-18, AC-19, CM-7, IA-2, IA-5, SC-4, SI-4, SI-7, SI-12 |
-| Techniques D3FEND (neo4j) | T1040 | D3-OSM | — |
+| Encrypted / authenticated libp2p transport | T1040 | D3-MENCR | SC-8 |
+| Reed-Solomon coding k=4/m=2 + repair | T1040 | — | SC-36 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1592 | D3-ITF | SC-5 |
+| CTID controls (neo4j) | T1040 | — | AC-16, AC-17, AC-18, AC-19, CM-7, IA-2, IA-5, SC-4, SI-4, SI-7, SI-12 |
+| D3FEND techniques (neo4j) | T1040 | D3-OSM | — |

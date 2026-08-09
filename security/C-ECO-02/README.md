@@ -1,26 +1,26 @@
-# C-ECO-02 — Multiplication d'opérations
+# C-ECO-02 — Operation multiplication
 
-- **Cible** : Clients
-- **Catégorie** : Menaces économiques
-- **Identifiant** : C-ECO-02
+- **Target**: Clients
+- **Category**: Economic threats
+- **Identifier**: C-ECO-02
 
 ## Description
-Un client répète des opérations à grande échelle pour tirer un avantage économique disproportionné.
+A client repeats operations at large scale to gain a disproportionate economic advantage.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | La répétition d'opérations à grande échelle sature les nœuds servants. | Rate-limiting par-pair / par-owner (pubkey Ed25519) et limites de connexions `ConnManager`/`ResourceManager`. |
-| Resource Hijacking | T1496 | Le client détourne un volume de service disproportionné à son profit. | Quotas et baux TTL du ledger par-owner, avec admission des écritures sous preuve de travail imposant un coût CPU par opération. |
+| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Repeating operations at large scale saturates the serving nodes. | Per-peer / per-owner rate-limiting (Ed25519 pubkey) and `ConnManager`/`ResourceManager` connection limits. |
+| Resource Hijacking | T1496 | The client diverts a disproportionate volume of service to its own benefit. | Per-owner ledger quotas and TTL leases, with write admission under proof of work imposing a CPU cost per operation. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1499.003 | D3-ITF | SC-5 |
 | ConnectionGater / ResourceManager / ConnManager | T1499.003 | D3-NTF | SC-7 |
-| Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1496 | — | SC-5 |
-| Contrôles CTID (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
-| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
+| Per-owner SQLite ledger + quotas/leases | T1496 | — | SC-6 |
+| Self-certifying PoW argon2id identity (anti-Sybil) | T1496 | — | SC-5 |
+| CTID controls (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| D3FEND techniques (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |

@@ -1,28 +1,28 @@
-# C-ECO-03 — Création/suppression répétées
+# C-ECO-03 — Repeated creation/deletion
 
-- **Cible** : Clients
-- **Catégorie** : Menaces économiques
-- **Identifiant** : C-ECO-03
+- **Target**: Clients
+- **Category**: Economic threats
+- **Identifier**: C-ECO-03
 
 ## Description
-Un client alterne créations et suppressions pour exploiter les coûts asymétriques des opérations.
+A client alternates creations and deletions to exploit the asymmetric costs of operations.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Le cycle rapide création/suppression exploite l'asymétrie de coût pour épuiser les nœuds. | Rate-limiting par-owner et quotas/baux TTL du ledger amortissant le churn, avec garbage collection différée. |
-| Data Destruction | T1485 | Les suppressions répétées visent à imposer un coût de réparation/nettoyage disproportionné. | Codage d'effacement Reed-Solomon + réparation déterministe sur ciphertext, et journal d'audit append-only signé traçant chaque suppression. |
+| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | The rapid creation/deletion cycle exploits the cost asymmetry to exhaust the nodes. | Per-owner rate-limiting and ledger TTL quotas/leases absorbing the churn, with deferred garbage collection. |
+| Data Destruction | T1485 | Repeated deletions aim to impose a disproportionate repair/cleanup cost. | Reed-Solomon erasure coding + deterministic repair on ciphertext, and a signed append-only audit log tracing every deletion. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | T1499.003 | — | SC-6 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1485 | — | SC-36 |
-| Journaux append-only chaînés + seq signés | T1485 | — | AU-9 |
-| Contrôles CTID (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
-| Contrôles CTID (neo4j) | T1485 | — | AC-3, AC-6, CM-2, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
-| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
-| Techniques D3FEND (neo4j) | T1485 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1499.003 | D3-ITF | SC-5 |
+| Per-owner SQLite ledger + quotas/leases | T1499.003 | — | SC-6 |
+| Reed-Solomon coding k=4/m=2 + repair | T1485 | — | SC-36 |
+| Chained append-only logs + signed seq | T1485 | — | AU-9 |
+| CTID controls (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| CTID controls (neo4j) | T1485 | — | AC-3, AC-6, CM-2, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
+| D3FEND techniques (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
+| D3FEND techniques (neo4j) | T1485 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

@@ -1,28 +1,28 @@
-# N-DISP-04 — Ralentissement volontaire
+# N-DISP-04 — Deliberate slowdown
 
-- **Cible** : Nœuds
-- **Catégorie** : Disponibilité
-- **Identifiant** : N-DISP-04
+- **Target**: Nodes
+- **Category**: Availability
+- **Identifier**: N-DISP-04
 
 ## Description
-Un nœud dégrade délibérément ses temps de réponse pour nuire à la performance globale sans se déclarer hors ligne.
+A node deliberately degrades its response times to harm overall performance without declaring itself offline.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Endpoint Denial of Service | T1499 | Analogue P2P : le nœud dégrade volontairement sa latence de service sans se retirer, nuisant à la disponibilité perçue. | Sondes de disponibilité mesurant la latence, avec basculement des lectures vers des pairs plus rapides grâce à la redondance Reed-Solomon. |
-| Service Exhaustion Flood | T1499.002 | Le ralentissement simule une saturation de service pour rendre les réponses inexploitables en pratique. | Rate-limiting par-pair / par-owner (clé sur pubkey Ed25519) et `ResourceManager`/`ConnManager` de `internal/net/defense.go` bornant l'impact d'un pair lent. |
+| Endpoint Denial of Service | T1499 | P2P analogue: the node deliberately degrades its service latency without withdrawing, harming perceived availability. | Availability probes measuring latency, with reads failing over to faster peers thanks to Reed-Solomon redundancy. |
+| Service Exhaustion Flood | T1499.002 | The slowdown simulates a service saturation to make the responses practically unusable. | Per-peer / per-owner rate-limiting (keyed on the Ed25519 pubkey) and the `ResourceManager`/`ConnManager` of `internal/net/defense.go` bounding the impact of a slow peer. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Sondes + défis de possession | T1499 | — | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1499 | — | SC-36 |
-| Rate-limiting par-owner (pubkey Ed25519) | T1499.002 | D3-ITF | SC-5 |
+| Probes + possession challenges | T1499 | — | SI-7 |
+| Reed-Solomon coding k=4/m=2 + repair | T1499 | — | SC-36 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1499.002 | D3-ITF | SC-5 |
 | ConnectionGater / ResourceManager / ConnManager | T1499.002 | D3-NTF | SC-7 |
-| Contrôles CTID (neo4j) | T1499 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
-| Contrôles CTID (neo4j) | T1499.002 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
-| Techniques D3FEND (neo4j) | T1499 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
-| Techniques D3FEND (neo4j) | T1499.002 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
+| CTID controls (neo4j) | T1499 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| CTID controls (neo4j) | T1499.002 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-4, SI-15 |
+| D3FEND techniques (neo4j) | T1499 | D3-EAL, D3-EDL, D3-ITF, D3-OSM, D3-OTF | — |
+| D3FEND techniques (neo4j) | T1499.002 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |

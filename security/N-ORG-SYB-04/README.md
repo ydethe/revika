@@ -1,27 +1,27 @@
-# N-ORG-SYB-04 — Contrôle d'une majorité régionale
+# N-ORG-SYB-04 — Control of a regional majority
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces organisationnelles › Sybil / collusion
-- **Identifiant** : N-ORG-SYB-04
+- **Target**: Nodes
+- **Category**: Organisational threats › Sybil / collusion
+- **Identifier**: N-ORG-SYB-04
 
 ## Description
-Un acteur contrôle assez de nœuds dans une région pour dominer les décisions ou le stockage local.
+An actor controls enough nodes in a region to dominate the decisions or the local storage.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Establish Accounts | T1585 | L'acteur amasse assez d'identités de nœuds dans une région pour y dominer placement et stockage. | Preuve de travail sur l'identité (argon2id) + quotas par-owner : concentrer un poids régional coûte du CPU et reste plafonné par le ledger. |
-| Botnet | T1583.005 | Le parc régional concentré fonctionne comme un botnet dominant les décisions locales. | Politique de placement imposant une diversité inter-owner et inter-région, contrôlée par sous-réseau/AS observé via le `ConnectionGater`. |
-| Trusted Relationship | T1199 | Les nœuds régionaux coordonnés forment une relation de confiance abusée pour capter le stockage local. | Codage d'effacement dispersant les shards hors d'une seule région : aucun `k` complet ne peut résider dans la zone dominée. |
+| Establish Accounts | T1585 | The actor amasses enough node identities in a region to dominate placement and storage there. | Proof of work on the identity (argon2id) + per-owner quotas: concentrating a regional weight costs CPU and stays capped by the ledger. |
+| Botnet | T1583.005 | The concentrated regional fleet operates as a botnet dominating local decisions. | Placement policy imposing inter-owner and inter-region diversity, controlled by observed subnet/AS via the `ConnectionGater`. |
+| Trusted Relationship | T1199 | The coordinated regional nodes form a trusted relationship abused to capture local storage. | Erasure coding dispersing the shards outside a single region: no complete `k` can reside in the dominated area. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1585 | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | T1585 | — | SC-6 |
-| Diversité de placement mesurée par le réseau | T1583.005 | — | SC-36 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1199 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1199 | — | AC-3, AC-4, AC-6, AC-8, CM-6, CM-7, SC-7, SC-46 |
-| Techniques D3FEND (neo4j) | T1199 | D3-EAL, D3-EDL, D3-ITF, D3-LFP, D3-OTF, D3-UAP | — |
+| Self-certifying argon2id PoW identity (anti-Sybil) | T1585 | — | SC-5 |
+| Per-owner SQLite ledger + quotas/leases | T1585 | — | SC-6 |
+| Network-measured placement diversity | T1583.005 | — | SC-36 |
+| Reed-Solomon k=4/m=2 coding + repair | T1199 | — | SC-36 |
+| CTID controls (neo4j) | T1199 | — | AC-3, AC-4, AC-6, AC-8, CM-6, CM-7, SC-7, SC-46 |
+| D3FEND techniques (neo4j) | T1199 | D3-EAL, D3-EDL, D3-ITF, D3-LFP, D3-OTF, D3-UAP | — |

@@ -1,21 +1,21 @@
-# C-INT-JRN-01 — Empêcher un audit
+# C-INT-JRN-01 — Preventing an audit
 
-- **Cible** : Clients
-- **Catégorie** : Intégrité › Journaux
-- **Identifiant** : C-INT-JRN-01
+- **Target**: Clients
+- **Category**: Integrity › Journal
+- **Identifier**: C-INT-JRN-01
 
 ## Description
-Un acteur empêche la tenue ou la lecture des journaux nécessaires à un audit côté client.
+An actor prevents the keeping or reading of the logs needed for an audit on the client side.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Impair Defenses: Disable or Modify Tools | T1562.001 | L'acteur désactive ou entrave le mécanisme de journalisation, ou bloque le flux d'événements d'audit, pour priver l'auditeur d'indicateurs. | Journaux d'audit append-only signés et chaînés (hash-chain) avec numérotation séquentielle : arrêt, falsification ou blocage crée une rupture de chaîne ou un trou de numéro de séquence détectable. |
-| Indicator Removal: Clear Linux or Mac System Logs | T1070.002 | Les journaux locaux nécessaires à l'audit client sont effacés. | Rendre le journal append-only et chaîné par hash, de sorte qu'une suppression casse la chaîne et soit prouvable. |
+| Impair Defenses: Disable or Modify Tools | T1562.001 | The actor disables or hinders the logging mechanism, or blocks the audit event stream, to deprive the auditor of indicators. | Append-only, signed and chained (hash-chain) audit logs with sequential numbering: stopping, tampering or blocking creates a chain break or a sequence-number gap that is detectable. |
+| Indicator Removal: Clear Linux or Mac System Logs | T1070.002 | The local logs needed for the client audit are erased. | Making the log append-only and hash-chained, so that a deletion breaks the chain and is provable. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Journaux append-only chaînés + seq signés | T1562.001, T1070.002 | — | AU-9 |
+| Append-only chained logs + signed seq | T1562.001, T1070.002 | — | AU-9 |

@@ -1,26 +1,26 @@
-# N-INT-STO-01 — Altération d'un shard
+# N-INT-STO-01 — Shard tampering
 
-- **Cible** : Nœuds
-- **Catégorie** : Intégrité › Stockage
-- **Identifiant** : N-INT-STO-01
+- **Target**: Nodes
+- **Category**: Integrity › Storage
+- **Identifier**: N-INT-STO-01
 
 ## Description
-Un nœud modifie le contenu d'un shard qu'il héberge, corrompant la donnée qu'il est censé restituer à l'identique (adressée par hash de contenu).
+A node modifies the content of a shard it hosts, corrupting the data it is supposed to return identically (content-hash addressed).
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Data Manipulation: Stored Data Manipulation | T1565.001 | Le nœud altère au repos le contenu d'un shard qu'il stocke, brisant sa correspondance avec le hash de contenu qui l'adresse. | Adressage par hash de contenu : toute altération est détectée à la lecture par recomputation du hash, disqualifiant le shard corrompu. |
-| Data Destruction | T1485 | En corrompant irrémédiablement le shard, le nœud détruit de fait la portion de donnée qu'il devait conserver. | Codage d'effacement Reed-Solomon (`k=4`, `m=2`) + réparation obligatoire sur ciphertext déterministe régénérant le shard perdu depuis les autres. |
+| Data Manipulation: Stored Data Manipulation | T1565.001 | The node tampers at rest with the content of a shard it stores, breaking its correspondence with the content hash that addresses it. | Content-hash addressing: any tampering is detected on read by recomputing the hash, disqualifying the corrupted shard. |
+| Data Destruction | T1485 | By irreparably corrupting the shard, the node effectively destroys the portion of data it was meant to keep. | Reed-Solomon erasure coding (`k=4`, `m=2`) + mandatory repair on deterministic ciphertext regenerating the lost shard from the others. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Adressage par hash de contenu | T1565.001 | D3-FH | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1485 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-12, SI-16 |
-| Contrôles CTID (neo4j) | T1485 | — | AC-3, AC-6, CM-2, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
-| Techniques D3FEND (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
-| Techniques D3FEND (neo4j) | T1485 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Content-hash addressing | T1565.001 | D3-FH | SI-7 |
+| Reed-Solomon k=4/m=2 coding + repair | T1485 | — | SC-36 |
+| CTID controls (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-12, SI-16 |
+| CTID controls (neo4j) | T1485 | — | AC-3, AC-6, CM-2, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4, SI-7 |
+| D3FEND techniques (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
+| D3FEND techniques (neo4j) | T1485 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

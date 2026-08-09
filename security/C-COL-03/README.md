@@ -1,28 +1,28 @@
-# C-COL-03 — Partage de clés
+# C-COL-03 — Key sharing
 
-- **Cible** : Clients
-- **Catégorie** : Collusion
-- **Identifiant** : C-COL-03
+- **Target**: Clients
+- **Category**: Collusion
+- **Identifier**: C-COL-03
 
 ## Description
-Des clients partagent des clés pour mutualiser indûment des accès ou des identités.
+Clients share keys to improperly pool accesses or identities.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Use Alternate Authentication Material | T1550 | Les clients partagent des clés pour mutualiser des accès hors du cadre prévu. | Partage prévu uniquement par encapsulation ML-KEM-768 à la pubkey du destinataire, capacités révocables à TTL et rotation des clés. |
-| Valid Accounts | T1078 | Les clients mutualisent une même identité/clé de stockage pour agir sous une identité partagée. | Identité auto-certifiante liée à une clé Ed25519 unique via preuve de travail, avec journal d'audit signé et chaîné traçant les usages. |
+| Use Alternate Authentication Material | T1550 | Clients share keys to pool accesses outside the intended framework. | Sharing designed only through ML-KEM-768 encapsulation to the recipient's pubkey, revocable TTL capabilities and key rotation. |
+| Valid Accounts | T1078 | Clients pool a single storage identity/key to act under a shared identity. | Self-certifying identity bound to a unique Ed25519 key via proof of work, with a signed, chained audit log tracing usage. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Encapsulation ML-KEM-768 (cap wrapping) | T1550 | D3-MENCR | SC-12 |
-| Capacités TTL court + révocation | T1550 | — | AC-3 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1078 | — | SC-5 |
-| Journaux append-only chaînés + seq signés | T1078 | — | AU-9 |
-| Contrôles CTID (neo4j) | T1550 | — | AC-2, AC-5, AC-6, CM-5, CM-6, IA-2 |
-| Contrôles CTID (neo4j) | T1078 | — | AC-2, AC-3, AC-5, AC-6, CA-3, CA-7, CM-5, CM-6, CM-7, IA-2, IA-5, IA-12, RA-5, SA-3, SA-4, SA-8, SA-10, SA-11, SA-15, SA-17, SC-7, SC-28, SC-43, SI-4 |
-| Techniques D3FEND (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |
-| Techniques D3FEND (neo4j) | T1078 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-UAP | — |
+| ML-KEM-768 encapsulation (cap wrapping) | T1550 | D3-MENCR | SC-12 |
+| Short-TTL capabilities + revocation | T1550 | — | AC-3 |
+| Self-certifying PoW argon2id identity (anti-Sybil) | T1078 | — | SC-5 |
+| Chained append-only logs + signed seq | T1078 | — | AU-9 |
+| CTID controls (neo4j) | T1550 | — | AC-2, AC-5, AC-6, CM-5, CM-6, IA-2 |
+| CTID controls (neo4j) | T1078 | — | AC-2, AC-3, AC-5, AC-6, CA-3, CA-7, CM-5, CM-6, CM-7, IA-2, IA-5, IA-12, RA-5, SA-3, SA-4, SA-8, SA-10, SA-11, SA-15, SA-17, SC-7, SC-28, SC-43, SI-4 |
+| D3FEND techniques (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |
+| D3FEND techniques (neo4j) | T1078 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-UAP | — |

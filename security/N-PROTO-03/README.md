@@ -1,27 +1,27 @@
-# N-PROTO-03 — Redirection vers de faux pairs
+# N-PROTO-03 — Redirection to fake peers
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces protocolaires
-- **Identifiant** : N-PROTO-03
+- **Target**: Nodes
+- **Category**: Protocol threats
+- **Identifier**: N-PROTO-03
 
 ## Description
-Un nœud oriente les requêtes de découverte vers des pairs contrôlés par l'attaquant.
+A node directs discovery requests towards peers controlled by the attacker.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Adversary-in-the-Middle | T1557 | Les réponses de découverte sont empoisonnées pour rediriger la victime vers des pairs contrôlés par l'attaquant. | Vérification par adressage-hash de contenu des shards obtenus quel que soit le pair, un pair malveillant ne pouvant fournir de ciphertext valide. |
-| Rogue Domain Controller | T1207 | Les faux pairs annoncés se présentent comme des fournisseurs légitimes des données recherchées, en analogue P2P d'un contrôleur illégitime. | Codage d'effacement Reed-Solomon (`k=4`, `m=2`) permettant de reconstruire depuis d'autres pairs et réparation obligatoire contournant les pairs défaillants. |
-| Acquire Infrastructure: Server | T1583.004 | L'attaquant déploie des nœuds dédiés pour capter les requêtes de découverte. | Identités auto-certifiantes par PoW et `ConnectionGater` avec blocklist par pair/sous-réseau limitant l'insertion de nœuds hostiles. |
+| Adversary-in-the-Middle | T1557 | Discovery responses are poisoned to redirect the victim towards peers controlled by the attacker. | Verification by content-hash addressing of the shards obtained regardless of the peer, a malicious peer being unable to provide valid ciphertext. |
+| Rogue Domain Controller | T1207 | The announced fake peers present themselves as legitimate providers of the sought data, as a P2P analogue of an illegitimate controller. | Reed-Solomon erasure coding (`k=4`, `m=2`) allowing reconstruction from other peers and mandatory repair bypassing failing peers. |
+| Acquire Infrastructure: Server | T1583.004 | The attacker deploys dedicated nodes to capture discovery requests. | Self-certifying PoW identities and `ConnectionGater` with a per-peer/subnet blocklist limiting the insertion of hostile nodes. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Adressage par hash de contenu | T1557 | D3-FH | SI-7 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1207 | — | SC-36 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1583.004 | — | SC-5 |
+| Content-hash addressing | T1557 | D3-FH | SI-7 |
+| Reed-Solomon k=4/m=2 coding + repair | T1207 | — | SC-36 |
+| Self-certifying argon2id PoW identity (anti-Sybil) | T1583.004 | — | SC-5 |
 | ConnectionGater / ResourceManager / ConnManager | T1583.004 | D3-NTF | SC-7 |
-| Contrôles CTID (neo4j) | T1557 | — | AC-3, AC-4, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-7, CM-8, RA-5, SC-4, SC-7, SC-8, SC-23, SC-46, SI-3, SI-4, SI-12, SI-15 |
-| Techniques D3FEND (neo4j) | T1557 | D3-EAL, D3-EDL, D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |
+| CTID controls (neo4j) | T1557 | — | AC-3, AC-4, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-7, CM-8, RA-5, SC-4, SC-7, SC-8, SC-23, SC-46, SI-3, SI-4, SI-12, SI-15 |
+| D3FEND techniques (neo4j) | T1557 | D3-EAL, D3-EDL, D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |

@@ -1,28 +1,28 @@
-# N-PROTO-04 — Logiciel modifié
+# N-PROTO-04 — Modified software
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces protocolaires
-- **Identifiant** : N-PROTO-04
+- **Target**: Nodes
+- **Category**: Protocol threats
+- **Identifier**: N-PROTO-04
 
 ## Description
-Un opérateur exécute une version altérée du logiciel de nœud qui dévie du protocole attendu.
+An operator runs an altered version of the node software that deviates from the expected protocol.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Compromise Host Software Binary | T1554 | L'opérateur exécute un binaire de nœud modifié qui s'écarte du protocole revika attendu. | Modèle de nœud « dumb, untrusted » : la confidentialité repose sur le chiffrement client-side et l'adressage-hash, un nœud dévoyé ne voyant que du ciphertext opaque. |
-| Supply Chain Compromise: Compromise Software Supply Chain | T1195.002 | Une version altérée du logiciel est distribuée puis déployée par des opérateurs. | Reproductibilité de build et vérification d'intégrité des artefacts, avec toolchain Go épinglée (`go 1.26`) et dépendances pinnées. |
-| Impair Defenses: Disable or Modify Tools | T1562.001 | Le logiciel modifié désactive les contrôles de conformité que le nœud devrait appliquer. | Conception qui ne fait pas dépendre la sécurité du bon comportement d'un nœud : effacement Reed-Solomon + réparation obligatoire tolèrent un nœud déviant. |
+| Compromise Host Software Binary | T1554 | The operator runs a modified node binary that departs from the expected revika protocol. | "Dumb, untrusted" node model: confidentiality rests on client-side encryption and hash addressing, a rogue node seeing only opaque ciphertext. |
+| Supply Chain Compromise: Compromise Software Supply Chain | T1195.002 | An altered version of the software is distributed then deployed by operators. | Build reproducibility and integrity verification of artefacts, with a pinned Go toolchain (`go 1.26`) and pinned dependencies. |
+| Impair Defenses: Disable or Modify Tools | T1562.001 | The modified software disables the compliance checks the node should apply. | Design that does not make security depend on the good behaviour of a node: Reed-Solomon erasure coding + mandatory repair tolerate a deviant node. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Nœud « dumb/untrusted » + re-vérification côté User | T1554 | — | SA-8 |
-| Build reproductible / chaîne d'appro. épinglée | T1195.002 | — | SR-4 |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1562.001 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1554 | — | CM-2, CM-5, CM-6, IA-9, SI-3, SI-7, SR-4, SR-5, SR-11 |
-| Contrôles CTID (neo4j) | T1195.002 | — | CA-2, CA-7, CM-7, CM-11, RA-5, RA-10, SA-22, SI-2, SR-5, SR-11 |
-| Techniques D3FEND (neo4j) | T1554 | D3-EAL, D3-EDL, D3-FA, D3-LAM, D3-NTA, D3-PA, D3-PM | — |
-| Techniques D3FEND (neo4j) | T1195.002 | D3-NTA | — |
+| "Dumb/untrusted" node + User-side re-verification | T1554 | — | SA-8 |
+| Reproducible build / pinned supply chain | T1195.002 | — | SR-4 |
+| Reed-Solomon k=4/m=2 coding + repair | T1562.001 | — | SC-36 |
+| CTID controls (neo4j) | T1554 | — | CM-2, CM-5, CM-6, IA-9, SI-3, SI-7, SR-4, SR-5, SR-11 |
+| CTID controls (neo4j) | T1195.002 | — | CA-2, CA-7, CM-7, CM-11, RA-5, RA-10, SA-22, SI-2, SR-5, SR-11 |
+| D3FEND techniques (neo4j) | T1554 | D3-EAL, D3-EDL, D3-FA, D3-LAM, D3-NTA, D3-PA, D3-PM | — |
+| D3FEND techniques (neo4j) | T1195.002 | D3-NTA | — |

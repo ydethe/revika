@@ -1,27 +1,27 @@
-# N-ORG-SYB-01 — Création de faux nœuds
+# N-ORG-SYB-01 — Creation of fake nodes
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces organisationnelles › Sybil / collusion
-- **Identifiant** : N-ORG-SYB-01
+- **Target**: Nodes
+- **Category**: Organisational threats › Sybil / collusion
+- **Identifier**: N-ORG-SYB-01
 
 ## Description
-Un attaquant crée de nombreuses identités de nœuds pour peser artificiellement sur le réseau.
+An attacker creates many node identities to artificially weigh on the network.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Establish Accounts | T1585 | L'attaquant fabrique en masse des identités de nœuds pour multiplier son poids apparent dans le réseau. | Identité de stockage auto-certifiante par preuve de travail (argon2id, `internal/cap/pow.go`) : chaque identité coûte du CPU à minter, freinant la fabrication de masse. |
-| Create Account | T1136 | Analogue : chaque faux nœud correspond à la création d'une nouvelle identité libp2p/Ed25519. | Admission des écritures conditionnée à une difficulté PoW ≥ celle du nœud, plus quotas par-owner dans le ledger SQLite. |
-| Botnet | T1583.005 | Le parc d'identités contrôlées agit comme un botnet pour saturer discovery et placement. | Limites de connexions (`ResourceManager` + `ConnManager`) et rate-limiting par-pair/par-owner keyé sur la pubkey Ed25519 dans `internal/net/defense.go`. |
+| Establish Accounts | T1585 | The attacker mass-fabricates node identities to multiply their apparent weight in the network. | Self-certifying storage identity by proof of work (argon2id, `internal/cap/pow.go`): each identity costs CPU to mint, slowing mass fabrication. |
+| Create Account | T1136 | Analogue: each fake node corresponds to the creation of a new libp2p/Ed25519 identity. | Write admission conditioned on a PoW difficulty ≥ that of the node, plus per-owner quotas in the SQLite ledger. |
+| Botnet | T1583.005 | The fleet of controlled identities acts as a botnet to saturate discovery and placement. | Connection limits (`ResourceManager` + `ConnManager`) and per-peer/per-owner rate-limiting keyed on the Ed25519 pubkey in `internal/net/defense.go`. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1585, T1136 | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | T1136 | — | SC-6 |
+| Self-certifying argon2id PoW identity (anti-Sybil) | T1585, T1136 | — | SC-5 |
+| Per-owner SQLite ledger + quotas/leases | T1136 | — | SC-6 |
 | ConnectionGater / ResourceManager / ConnManager | T1583.005 | D3-NTF | SC-7 |
-| Rate-limiting par-owner (pubkey Ed25519) | T1583.005 | D3-ITF | SC-5 |
-| Contrôles CTID (neo4j) | T1136 | — | AC-2, AC-3, AC-4, AC-5, AC-6, AC-20, CM-5, CM-6, CM-7, IA-2, IA-5, SC-7, SC-46, SI-4, SI-7 |
-| Techniques D3FEND (neo4j) | T1136 | D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-OSM, D3-OTF, D3-UAP | — |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1583.005 | D3-ITF | SC-5 |
+| CTID controls (neo4j) | T1136 | — | AC-2, AC-3, AC-4, AC-5, AC-6, AC-20, CM-5, CM-6, CM-7, IA-2, IA-5, SC-7, SC-46, SI-4, SI-7 |
+| D3FEND techniques (neo4j) | T1136 | D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-OSM, D3-OTF, D3-UAP | — |

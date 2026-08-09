@@ -1,29 +1,29 @@
-# N-PROTO-01 — Injection de faux messages Gossip
+# N-PROTO-01 — Injection of fake Gossip messages
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces protocolaires
-- **Identifiant** : N-PROTO-01
+- **Target**: Nodes
+- **Category**: Protocol threats
+- **Identifier**: N-PROTO-01
 
 ## Description
-Un nœud injecte dans le canal de gossip des messages forgés pour propager de fausses informations de contrôle.
+A node injects forged messages into the gossip channel to propagate false control information.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Data Manipulation: Transmitted Data Manipulation | T1565.002 | Des messages de contrôle forgés sont injectés dans le canal de gossip pour altérer la vision partagée du réseau. | Signature Ed25519 de tout message de contrôle et rejet des messages non authentifiés, avec numéros de séquence/nonces anti-rejeu. |
-| Application Layer Protocol | T1071 | L'attaquant abuse du protocole libp2p de gossip pour diffuser des informations de contrôle illégitimes. | Protocoles libp2p versionnés sur transport chiffré/authentifié, n'acceptant que des messages conformes émis par des pairs authentifiés. |
-| Impersonation | T1656 | Les faux messages se font passer pour émanant d'un pair honnête afin d'être relayés. | Liaison de chaque message à la pubkey auto-certifiante de son émetteur, empêchant l'usurpation d'origine. |
+| Data Manipulation: Transmitted Data Manipulation | T1565.002 | Forged control messages are injected into the gossip channel to alter the shared view of the network. | Ed25519 signature of every control message and rejection of unauthenticated messages, with anti-replay sequence numbers/nonces. |
+| Application Layer Protocol | T1071 | The attacker abuses the libp2p gossip protocol to spread illegitimate control information. | Versioned libp2p protocols over an encrypted/authenticated transport, accepting only conforming messages emitted by authenticated peers. |
+| Impersonation | T1656 | The fake messages pass themselves off as coming from an honest peer in order to be relayed. | Binding each message to the self-certifying pubkey of its emitter, preventing origin spoofing. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Signatures / capacités Ed25519 | T1565.002, T1656 | D3-MAN | AU-10 |
-| Anti-rejeu nonce/horloge/seq + TTL | T1565.002 | — | SC-23 |
-| Protocoles versionnés + fail-closed | T1071 | — | SI-10 |
-| Transport libp2p chiffré / authentifié | T1071 | D3-MENCR | SC-8 |
-| Contrôles CTID (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
-| Contrôles CTID (neo4j) | T1071 | — | AC-4, CA-7, CM-2, CM-6, CM-7, SC-7, SC-10, SC-20, SC-21, SC-22, SC-23, SC-31, SC-37, SI-3, SI-4 |
-| Techniques D3FEND (neo4j) | T1565.002 | D3-OSM | — |
-| Techniques D3FEND (neo4j) | T1071 | D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |
+| Ed25519 signatures / capabilities | T1565.002, T1656 | D3-MAN | AU-10 |
+| Anti-replay nonce/clock/seq + TTL | T1565.002 | — | SC-23 |
+| Versioned protocols + fail-closed | T1071 | — | SI-10 |
+| Encrypted / authenticated libp2p transport | T1071 | D3-MENCR | SC-8 |
+| CTID controls (neo4j) | T1565.002 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, SC-4, SI-4, SI-7, SI-12 |
+| CTID controls (neo4j) | T1071 | — | AC-4, CA-7, CM-2, CM-6, CM-7, SC-7, SC-10, SC-20, SC-21, SC-22, SC-23, SC-31, SC-37, SI-3, SI-4 |
+| D3FEND techniques (neo4j) | T1565.002 | D3-OSM | — |
+| D3FEND techniques (neo4j) | T1071 | D3-FA, D3-ITF, D3-NTA, D3-OSM, D3-OTF, D3-PA, D3-PM | — |

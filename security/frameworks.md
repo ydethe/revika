@@ -1,57 +1,57 @@
-# Correspondance des mesures de défense avec les cadres reconnus
+# Mapping of defence measures to recognised frameworks
 
-Ce document est la **source unique de vérité** reliant chaque *primitive de défense*
-récurrente de revika à :
+This document is the **single source of truth** linking each recurring revika
+*defence primitive* to:
 
-- une technique défensive **MITRE D3FEND** (cadre *primaire* : dual défensif d'ATT&CK, au
-  grain du mécanisme) ;
-- un contrôle **NIST SP 800-53 Rev 5** (cadre *secondaire / de complétude* : capte ce que
-  D3FEND ne couvre pas, p. ex. le stockage réparti erasure-coded via SC-36).
+- a **MITRE D3FEND** defensive technique (*primary* framework: the defensive dual of ATT&CK, at
+  the mechanism granularity);
+- a **NIST SP 800-53 Rev 5** control (*secondary / completeness* framework: captures what
+  D3FEND does not cover, e.g. erasure-coded distributed storage via SC-36).
 
-Chaque fiche `security/<ID>/README.md` porte, sous sa table ATT&CK, une table compacte
-`## Correspondance cadres de défense` dont les colonnes `D3FEND` et `NIST 800-53` **reprennent
-exactement** les identifiants ci-dessous. Une même primitive reçoit donc toujours les mêmes IDs.
+Each `security/<ID>/README.md` sheet carries, below its ATT&CK table, a compact
+`## Defence framework mapping` table whose `D3FEND` and `NIST 800-53` columns **reproduce
+exactly** the identifiers below. A given primitive therefore always receives the same IDs.
 
-- `—` : le cadre n'a pas de technique/contrôle correspondant (choix état de l'art P2P assumé,
-  cf. [Architecture.md](../Architecture.md)), ce n'est pas une erreur de mapping.
-- Tous les IDs (ATT&CK, D3FEND, NIST) sont **validés en CI** par `tools/check_attack_ids.py`
-  contre les référentiels officiels.
+- `—`: the framework has no corresponding technique/control (a deliberate state-of-the-art P2P
+  choice, cf. [Architecture.md](../Architecture.md)); this is not a mapping error.
+- All IDs (ATT&CK, D3FEND, NIST) are **validated in CI** by `tools/check_attack_ids.py`
+  against the official reference catalogues.
 
-## Table maîtresse
+## Master table
 
-| # | Primitive de défense (libellé fiche) | D3FEND | NIST 800-53 | Justification |
+| # | Defence primitive (sheet label) | D3FEND | NIST 800-53 | Rationale |
 | --- | --- | --- | --- | --- |
-| P1 | Chiffrement client-side AES-256-GCM | D3-MENCR | SC-28 | Chiffrement AEAD du contenu côté User avant émission ; les nœuds ne stockent que du ciphertext au repos. Compl. SC-13. |
-| P2 | Encapsulation ML-KEM-768 (cap wrapping) | D3-MENCR | SC-12 | KEM-DEM PQC encapsulant la clé AES vers la pubkey du destinataire ; établissement/gestion de clé, jamais côté nœud. Compl. SC-13. |
-| P3 | Signatures / capacités Ed25519 | D3-MAN | AU-10 | Authentification de message par signature ; non-répudiation de l'émetteur. Compl. SI-7, IA-5. |
-| P4 | Adressage par hash de contenu | D3-FH | SI-7 | Intégrité par empreinte : toute altération casse la correspondance CID↔contenu. D3-FH = fit partiel (hachage). |
-| P5 | Recompute du hash à la réception | D3-FH | SI-7 | Vérification d'intégrité avant service/déchiffrement. D3-FH = fit partiel. |
-| P6 | Codage Reed-Solomon k=4/m=2 + réparation | — | SC-36 | Traitement/stockage réparti tolérant aux pertes ; réparation = reconstitution. Compl. CP-10. D3FEND ne modélise pas l'erasure coding. |
-| P7 | Journaux append-only chaînés + seq signés | — | AU-9 | Protection de l'information d'audit contre réécriture/omission. Compl. AU-10. |
-| P8 | Anti-rejeu nonce/horloge/seq + TTL | — | SC-23 | Authenticité de session/échange : rejet des messages rejoués ou hors fenêtre. |
-| P9 | Identité auto-certifiante PoW argon2id (anti-Sybil) | — | SC-5 | Admission des écritures conditionnée à une PoW : renchérit floods et création massive d'identités (défense de disponibilité). Ancrage approximatif — l'anti-Sybil P2P proprement dit reste hors cadres. |
-| P10 | Rate-limiting par-owner (pubkey Ed25519) | D3-ITF | SC-5 | Filtrage/plafonnement du trafic entrant par identité ; protection anti-DoS. |
-| P11 | ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 | Filtrage de trafic + blocklist par pair/sous-réseau ; protection de périmètre. Compl. SC-5. |
-| P12 | Capacités TTL court + révocation | — | AC-3 | Renouvellement/révocation forçant la ré-autorisation ; application d'accès. Compl. IA-5. |
-| P13 | Ledger SQLite par-owner + quotas/baux | — | SC-6 | Quotas et baux TTL bornant les ressources par owner ; arbitre unique de propriété. Compl. AC-3. |
-| P14 | Sondes + défis de possession | — | SI-7 | Vérification d'intégrité/possession par challenge-response ; déclenche la réparation. Compl. CP-10. |
-| P15 | DHT `/revika` + diversité des pairs | — | SC-36 | Découverte/propagation redondante répartie ; pas de point unique. |
-| P16 | Placement réparti sur owners indépendants | — | SC-36 | Répartition sur pubkeys distinctes ; aucun sous-ensemble < k ne compromet. |
-| P17 | Transport libp2p chiffré / authentifié | D3-MENCR | SC-8 | Confidentialité + intégrité en transit ; pairs authentifiés. |
-| P18 | Protocoles versionnés + fail-closed | — | SI-10 | Validation stricte des entrées/transitions ; rejet par défaut du non-spécifié. Compl. SC-7. |
-| P19 | Manifeste signé Ed25519 versionné | D3-MAN | SI-7 | Authentification + intégrité du manifeste ; le numéro de version détecte le rollback. Compl. AU-10. |
-| P20 | Grant de réparation signé | D3-MAN | AC-3 | Autorisation signée de reconstruction sur ciphertext déterministe. |
-| P21 | Métadonnées d'effacement signées (`stripe.Descriptor`) | D3-MAN | SI-7 | Descripteur de stripe signé ; falsification invalide la signature. |
-| P22 | Diversité de placement mesurée par le réseau | — | SC-36 | Diversité géo/topologique dérivée de sondes RTT/AS observés, imposée au placement. |
-| P23 | Nœud « dumb/untrusted » + re-vérification côté User | — | SA-8 | Principe d'ingénierie : la sécurité ne dépend pas du bon comportement du nœud. Compl. SI-7. |
-| P24 | Isolation des clés côté client (`.revika/keys`) | — | SC-12 | Clés jamais transmises hors machine ; permissions restreintes. Compl. SC-28. |
-| P25 | Chunking taille fixe / normalisation des shards | — | SC-4 | Normalisation limitant l'analyse de corrélation/trafic sur les ressources partagées. |
-| P26 | Build reproductible / chaîne d'appro. épinglée | — | SR-4 | Provenance et pinning (toolchain `go 1.26`, dépendances). Compl. SR-11. |
-| P27 | Corroboration croisée inter-pairs du ledger | — | AU-6 | Réconciliation/attestations corroborées entre pairs contre l'équivocation. Compl. AU-9. |
+| P1 | Client-side AES-256-GCM encryption | D3-MENCR | SC-28 | AEAD encryption of content on the User side before emission; nodes only store ciphertext at rest. Compl. SC-13. |
+| P2 | ML-KEM-768 encapsulation (cap wrapping) | D3-MENCR | SC-12 | PQC KEM-DEM encapsulating the AES key to the recipient's pubkey; key establishment/management, never node-side. Compl. SC-13. |
+| P3 | Ed25519 signatures / capabilities | D3-MAN | AU-10 | Message authentication by signature; non-repudiation of the sender. Compl. SI-7, IA-5. |
+| P4 | Content-hash addressing | D3-FH | SI-7 | Integrity by fingerprint: any tampering breaks the CID↔content correspondence. D3-FH = partial fit (hashing). |
+| P5 | Hash recompute on receipt | D3-FH | SI-7 | Integrity verification before serving/decryption. D3-FH = partial fit. |
+| P6 | Reed-Solomon coding k=4/m=2 + repair | — | SC-36 | Loss-tolerant distributed processing/storage; repair = reconstitution. Compl. CP-10. D3FEND does not model erasure coding. |
+| P7 | Chained append-only logs + signed seq | — | AU-9 | Protection of audit information against rewriting/omission. Compl. AU-10. |
+| P8 | Anti-replay nonce/clock/seq + TTL | — | SC-23 | Session/exchange authenticity: rejection of replayed or out-of-window messages. |
+| P9 | Self-certifying PoW argon2id identity (anti-Sybil) | — | SC-5 | Write admission conditioned on a PoW: raises the cost of floods and massive identity creation (availability defence). Approximate anchoring — proper P2P anti-Sybil remains outside the frameworks. |
+| P10 | Per-owner rate-limiting (Ed25519 pubkey) | D3-ITF | SC-5 | Filtering/capping of incoming traffic by identity; anti-DoS protection. |
+| P11 | ConnectionGater / ResourceManager / ConnManager | D3-NTF | SC-7 | Traffic filtering + peer/subnet blocklist; perimeter protection. Compl. SC-5. |
+| P12 | Short-TTL capabilities + revocation | — | AC-3 | Renewal/revocation forcing re-authorisation; access enforcement. Compl. IA-5. |
+| P13 | Per-owner SQLite ledger + quotas/leases | — | SC-6 | Quotas and TTL leases bounding resources per owner; sole arbiter of ownership. Compl. AC-3. |
+| P14 | Probes + possession challenges | — | SI-7 | Integrity/possession verification by challenge-response; triggers repair. Compl. CP-10. |
+| P15 | `/revika` DHT + peer diversity | — | SC-36 | Redundant distributed discovery/propagation; no single point. |
+| P16 | Distributed placement across independent owners | — | SC-36 | Distribution across distinct pubkeys; no subset < k compromises anything. |
+| P17 | Encrypted / authenticated libp2p transport | D3-MENCR | SC-8 | Confidentiality + integrity in transit; authenticated peers. |
+| P18 | Versioned protocols + fail-closed | — | SI-10 | Strict validation of inputs/transitions; default rejection of the unspecified. Compl. SC-7. |
+| P19 | Versioned Ed25519-signed manifest | D3-MAN | SI-7 | Manifest authentication + integrity; the version number detects rollback. Compl. AU-10. |
+| P20 | Signed repair grant | D3-MAN | AC-3 | Signed authorisation of reconstruction over deterministic ciphertext. |
+| P21 | Signed erasure metadata (`stripe.Descriptor`) | D3-MAN | SI-7 | Signed stripe descriptor; tampering invalidates the signature. |
+| P22 | Network-measured placement diversity | — | SC-36 | Geo/topological diversity derived from observed RTT/AS probes, enforced on placement. |
+| P23 | "dumb/untrusted" node + User-side re-verification | — | SA-8 | Engineering principle: security does not depend on the node behaving correctly. Compl. SI-7. |
+| P24 | Client-side key isolation (`.revika/keys`) | — | SC-12 | Keys never transmitted off the machine; restricted permissions. Compl. SC-28. |
+| P25 | Fixed-size chunking / shard normalisation | — | SC-4 | Normalisation limiting correlation/traffic analysis over shared resources. |
+| P26 | Reproducible build / pinned supply chain | — | SR-4 | Provenance and pinning (`go 1.26` toolchain, dependencies). Compl. SR-11. |
+| P27 | Cross-peer corroboration of the ledger | — | AU-6 | Reconciliation/attestations corroborated between peers against equivocation. Compl. AU-9. |
 
-## Légende D3FEND
+## D3FEND legend
 
-| ID | Technique | Tactique |
+| ID | Technique | Tactic |
 | --- | --- | --- |
 | D3-MENCR | Message Encryption | Harden |
 | D3-FE | File Encryption | Harden |
@@ -60,9 +60,9 @@ exactement** les identifiants ci-dessous. Une même primitive reçoit donc toujo
 | D3-NTF | Network Traffic Filtering | Isolate |
 | D3-ITF | Inbound Traffic Filtering | Isolate |
 
-## Légende NIST SP 800-53 Rev 5
+## NIST SP 800-53 Rev 5 legend
 
-| ID | Contrôle |
+| ID | Control |
 | --- | --- |
 | AC-3 | Access Enforcement |
 | AU-6 | Audit Record Review, Analysis, and Reporting |
@@ -86,11 +86,11 @@ exactement** les identifiants ci-dessous. Une même primitive reçoit donc toujo
 | SR-4 | Provenance |
 | SR-11 | Component Authenticity |
 
-## Angles morts assumés
+## Accepted blind spots
 
-- **Confidentialité par erasure coding** (P6/P16) : les cadres traitent le fragmentaire comme de
-  la *disponibilité* (SC-36), pas de la *confidentialité* — c'est bien une confidentialité par
-  fragmentation, propre à revika.
-- **Anti-Sybil par preuve de travail** (P9) : aucun contrôle NIST/technique D3FEND dédié ;
-  SC-5 n'en capte que le volet anti-flood. Relève des couches anti-Sybil/réputation/économiques
-  encore différées (cf. Architecture.md §5).
+- **Confidentiality by erasure coding** (P6/P16): the frameworks treat fragmentation as
+  *availability* (SC-36), not *confidentiality* — yet this really is confidentiality by
+  fragmentation, specific to revika.
+- **Anti-Sybil by proof of work** (P9): no dedicated NIST control / D3FEND technique;
+  SC-5 captures only its anti-flood facet. Belongs to the anti-Sybil/reputation/economic layers
+  still deferred (cf. Architecture.md §5).

@@ -1,25 +1,25 @@
-# N-ECO-01 — Déclarer une capacité fictive
+# N-ECO-01 — Declaring fictitious capacity
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces économiques
-- **Identifiant** : N-ECO-01
+- **Target**: Nodes
+- **Category**: Economic threats
+- **Identifier**: N-ECO-01
 
 ## Description
-Un nœud annonce une capacité de stockage supérieure à sa capacité réelle pour attirer des placements.
+A node advertises a storage capacity greater than its real capacity to attract placements.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Masquerading | T1036 | Le nœud présente un attribut de capacité falsifié pour paraître mieux doté qu'il ne l'est et capter des placements. | Ne pas se fier aux annonces : valider la détention réelle par sondes de disponibilité (`internal/repair`) recomputant le hash de contenu des shards, et plafonner via le quota par-owner du ledger SQLite. |
-| Impersonation | T1656 | Analogue P2P : le nœud se fait passer pour un pair honnête et bien provisionné afin d'obtenir la confiance de la politique de placement. | Placement keyé sur la pubkey Ed25519 auto-certifiée et vérification périodique par challenge de possession (adressage par hash) plutôt que sur les déclarations du pair. |
+| Masquerading | T1036 | The node presents a falsified capacity attribute to appear better provisioned than it is and capture placements. | Do not trust advertisements: validate actual holding through availability probes (`internal/repair`) that recompute the content hash of shards, and cap via the per-owner quota of the SQLite ledger. |
+| Impersonation | T1656 | P2P analogue: the node passes itself off as an honest, well-provisioned peer in order to gain the trust of the placement policy. | Placement keyed on the self-certified Ed25519 pubkey and periodic verification via proof-of-possession challenge (hash addressing) rather than on the peer's declarations. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Sondes + défis de possession | T1036, T1656 | — | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | T1036 | — | SC-6 |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1656 | — | SC-5 |
-| Contrôles CTID (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4 |
-| Techniques D3FEND (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| Probes + proof-of-possession challenges | T1036, T1656 | — | SI-7 |
+| Per-owner SQLite ledger + quotas/leases | T1036 | — | SC-6 |
+| Self-certifying PoW argon2id identity (anti-Sybil) | T1656 | — | SC-5 |
+| CTID controls (neo4j) | T1036 | — | AC-2, AC-3, AC-6, CA-7, CM-2, CM-6, CM-7, IA-9, SI-3, SI-4 |
+| D3FEND techniques (neo4j) | T1036 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |

@@ -1,25 +1,25 @@
-# N-DISP-06 — Blocage du gossip
+# N-DISP-06 — Blocking gossip
 
-- **Cible** : Nœuds
-- **Catégorie** : Disponibilité
-- **Identifiant** : N-DISP-06
+- **Target**: Nodes
+- **Category**: Availability
+- **Identifier**: N-DISP-06
 
 ## Description
-Un nœud n'assure pas la propagation des messages de gossip, empêchant la diffusion des informations de contrôle.
+A node fails to propagate gossip messages, preventing the dissemination of control information.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Impair Defenses: Disable or Modify Tools | T1562.001 | Le nœud bloque le relais des messages de gossip, étouffant la diffusion des informations de contrôle et de santé du réseau. | Propagation redondante via la DHT Kademlia et multiples pairs, de sorte qu'un relais défaillant ne coupe pas la diffusion. |
-| Network Denial of Service | T1498 | La non-propagation prive une portion du réseau des mises à jour de contrôle, dégradant la coordination. | Sondes de disponibilité détectant les pairs qui ne relaient pas et re-router via le placement multi-nœuds. |
+| Impair Defenses: Disable or Modify Tools | T1562.001 | The node blocks the relaying of gossip messages, stifling the dissemination of the network's control and health information. | Redundant propagation via the Kademlia DHT and multiple peers, so that a faulty relay does not cut off dissemination. |
+| Network Denial of Service | T1498 | The non-propagation deprives a portion of the network of control updates, degrading coordination. | Availability probes detecting peers that do not relay and re-routing via multi-node placement. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| DHT /revika + diversité des pairs | T1562.001 | — | SC-36 |
-| Sondes + défis de possession | T1498 | — | SI-7 |
-| Placement réparti sur owners indépendants | T1498 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1498 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
-| Techniques D3FEND (neo4j) | T1498 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |
+| DHT /revika + peer diversity | T1562.001 | — | SC-36 |
+| Probes + possession challenges | T1498 | — | SI-7 |
+| Distributed placement across independent owners | T1498 | — | SC-36 |
+| CTID controls (neo4j) | T1498 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-15 |
+| D3FEND techniques (neo4j) | T1498 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |

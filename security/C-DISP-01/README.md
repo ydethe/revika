@@ -1,27 +1,27 @@
 # C-DISP-01 — Flood
 
-- **Cible** : Clients
-- **Catégorie** : Disponibilité
-- **Identifiant** : C-DISP-01
+- **Target**: Clients
+- **Category**: Availability
+- **Identifier**: C-DISP-01
 
 ## Description
-Un client malveillant inonde le réseau de requêtes pour dégrader la disponibilité pour les autres.
+A malicious client floods the network with requests to degrade availability for others.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Le déluge de requêtes applicatives épuise les nœuds et dégrade le service pour les autres. | Appliquer un rate-limiting par-pair / par-owner (clé sur la pubkey Ed25519) et les quotas du ledger pour plafonner le débit de requêtes. |
-| Network Denial of Service: Direct Network Flood | T1498.001 | L'inondation directe du réseau sature la bande passante et la capacité de traitement des nœuds. | Wirer les défenses de `internal/net/defense.go` (`ResourceManager` + `ConnManager`) et bloquer les pairs/sous-réseaux abusifs via `ConnectionGater`. |
+| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | The deluge of application requests exhausts the nodes and degrades the service for others. | Apply per-peer / per-owner rate-limiting (keyed on the Ed25519 pubkey) and the ledger quotas to cap the request rate. |
+| Network Denial of Service: Direct Network Flood | T1498.001 | Directly flooding the network saturates the nodes' bandwidth and processing capacity. | Wire the defences of `internal/net/defense.go` (`ResourceManager` + `ConnManager`) and block abusive peers/subnets via `ConnectionGater`. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | T1499.003 | — | SC-6 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1499.003 | D3-ITF | SC-5 |
+| Per-owner SQLite ledger + quotas/leases | T1499.003 | — | SC-6 |
 | ConnectionGater / ResourceManager / ConnManager | T1498.001 | D3-NTF | SC-7 |
-| Contrôles CTID (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
-| Contrôles CTID (neo4j) | T1498.001 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-15 |
-| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
-| Techniques D3FEND (neo4j) | T1498.001 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |
+| CTID controls (neo4j) | T1499.003 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| CTID controls (neo4j) | T1498.001 | — | AC-3, AC-4, CA-7, CM-6, CM-7, SI-15 |
+| D3FEND techniques (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
+| D3FEND techniques (neo4j) | T1498.001 | D3-EAL, D3-EDL, D3-ITF, D3-OTF | — |

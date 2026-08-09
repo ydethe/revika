@@ -1,27 +1,27 @@
-# N-CONF-02 — Analyse des accès
+# N-CONF-02 — Access analysis
 
-- **Cible** : Nœuds
-- **Catégorie** : Confidentialité › Données
-- **Identifiant** : N-CONF-02
+- **Target**: Nodes
+- **Category**: Confidentiality › Data
+- **Identifier**: N-CONF-02
 
 ## Description
-L'observation des motifs de lecture/écriture sur les shards (fréquence, séquence, taille) permet de déduire des informations sur les fichiers ou l'activité d'un utilisateur sans jamais déchiffrer les données.
+Observing the read/write patterns on the shards (frequency, sequence, size) makes it possible to infer information about the files or a user's activity without ever decrypting the data.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Automated Collection | T1119 | Le nœud journalise et collecte automatiquement les accès pour en dériver des motifs de fréquence/séquence/taille. | Chunking de taille fixe + adressage par hash de contenu masquent la structure logique et la taille réelle des fichiers derrière des shards uniformes. |
-| Data from Local System | T1005 | Exploitation des métadonnées d'accès locales (ordre et rythme des lectures/écritures) comme canal auxiliaire. | Codage d'effacement Reed-Solomon dispersant les accès sur au moins `k+m` nœuds indépendants : aucun nœud n'observe la séquence complète d'un fichier. |
+| Automated Collection | T1119 | The node logs and automatically collects accesses to derive frequency/sequence/size patterns from them. | Fixed-size chunking + content-hash addressing mask the logical structure and the real size of files behind uniform shards. |
+| Data from Local System | T1005 | Exploitation of local access metadata (order and rhythm of reads/writes) as a side channel. | Reed-Solomon erasure coding dispersing accesses across at least `k+m` independent nodes: no node observes the complete sequence of a file. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Chunking taille fixe / normalisation des shards | T1119 | — | SC-4 |
-| Adressage par hash de contenu | T1119 | D3-FH | SI-7 |
-| Placement réparti sur owners indépendants | T1005 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1119 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, SC-36, SI-4, SI-12 |
-| Contrôles CTID (neo4j) | T1005 | — | AC-2, AC-3, AC-6, AC-16, AC-23, CM-12, CP-9, SA-8, SC-13, SC-28, SC-38, SI-3, SI-4 |
-| Techniques D3FEND (neo4j) | T1119 | D3-OSM | — |
-| Techniques D3FEND (neo4j) | T1005 | D3-EAL, D3-EDL, D3-FA, D3-JFAPA, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-RAPA, D3-UAP, D3-UDTA | — |
+| Fixed-size chunking / shard normalisation | T1119 | — | SC-4 |
+| Content-hash addressing | T1119 | D3-FH | SI-7 |
+| Distributed placement across independent owners | T1005 | — | SC-36 |
+| CTID controls (neo4j) | T1119 | — | AC-16, AC-17, AC-18, AC-19, AC-20, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, SC-36, SI-4, SI-12 |
+| CTID controls (neo4j) | T1005 | — | AC-2, AC-3, AC-6, AC-16, AC-23, CM-12, CP-9, SA-8, SC-13, SC-28, SC-38, SI-3, SI-4 |
+| D3FEND techniques (neo4j) | T1119 | D3-OSM | — |
+| D3FEND techniques (neo4j) | T1005 | D3-EAL, D3-EDL, D3-FA, D3-JFAPA, D3-LAM, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-RAPA, D3-UAP, D3-UDTA | — |

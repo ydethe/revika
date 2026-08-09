@@ -1,23 +1,23 @@
-# C-ECO-04 — Tentative d'obtenir gratuitement des ressources
+# C-ECO-04 — Attempt to obtain resources for free
 
-- **Cible** : Clients
-- **Catégorie** : Menaces économiques
-- **Identifiant** : C-ECO-04
+- **Target**: Clients
+- **Category**: Economic threats
+- **Identifier**: C-ECO-04
 
 ## Description
-Un client cherche à consommer stockage et bande passante sans s'acquitter de la contrepartie attendue.
+A client seeks to consume storage and bandwidth without paying the expected consideration.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Resource Hijacking | T1496 | Le client consomme stockage et bande passante sans fournir la contrepartie attendue. | Admission des écritures sous preuve de travail (coût CPU par identité), quotas par-owner du ledger et rate-limiting/`ConnManager` bornant la bande passante par pair. |
+| Resource Hijacking | T1496 | The client consumes storage and bandwidth without providing the expected consideration. | Write admission under proof of work (CPU cost per identity), per-owner ledger quotas and rate-limiting/`ConnManager` bounding per-peer bandwidth. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Identité auto-certifiante PoW argon2id (anti-Sybil) | T1496 | — | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |
-| Rate-limiting par-owner (pubkey Ed25519) | T1496 | D3-ITF | SC-5 |
+| Self-certifying PoW argon2id identity (anti-Sybil) | T1496 | — | SC-5 |
+| Per-owner SQLite ledger + quotas/leases | T1496 | — | SC-6 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1496 | D3-ITF | SC-5 |
 | ConnectionGater / ResourceManager / ConnManager | T1496 | D3-NTF | SC-7 |

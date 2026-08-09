@@ -1,25 +1,25 @@
-# C-DISP-04 — Demandes massives de reconstruction
+# C-DISP-04 — Mass reconstruction requests
 
-- **Cible** : Clients
-- **Catégorie** : Disponibilité
-- **Identifiant** : C-DISP-04
+- **Target**: Clients
+- **Category**: Availability
+- **Identifier**: C-DISP-04
 
 ## Description
-Un client déclenche des reconstructions erasure-coded en masse pour saturer le calcul et la bande passante.
+A client triggers mass erasure-coded reconstructions to saturate computation and bandwidth.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Les demandes massives de reconstruction Reed-Solomon saturent CPU et bande passante des nœuds. | Conditionner la réparation à un grant de réparation signé (`stripe`) et rate-limiter les reconstructions par-owner. |
-| Resource Hijacking | T1496 | L'attaquant détourne le calcul et la bande passante des nœuds via des reconstructions inutiles. | Encadrer par quotas et baux TTL du ledger, en réservant les reconstructions au processus de réparation légitime. |
+| Endpoint Denial of Service: Application Exhaustion Flood | T1499.003 | Mass Reed-Solomon reconstruction requests saturate the nodes' CPU and bandwidth. | Condition repair on a signed repair grant (`stripe`) and rate-limit reconstructions per-owner. |
+| Resource Hijacking | T1496 | The attacker hijacks the nodes' computation and bandwidth through needless reconstructions. | Bound via the ledger quotas and TTL leases, reserving reconstructions for the legitimate repair process. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Grant de réparation signé | T1499.003 | D3-MAN | AC-3 |
-| Rate-limiting par-owner (pubkey Ed25519) | T1499.003 | D3-ITF | SC-5 |
-| Ledger SQLite par-owner + quotas/baux | T1496 | — | SC-6 |
-| Contrôles CTID (neo4j) | T1499.003 | — | AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
-| Techniques D3FEND (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |
+| Signed repair grant | T1499.003 | D3-MAN | AC-3 |
+| Per-owner rate-limiting (Ed25519 pubkey) | T1499.003 | D3-ITF | SC-5 |
+| Per-owner SQLite ledger + quotas/leases | T1496 | — | SC-6 |
+| CTID controls (neo4j) | T1499.003 | — | AC-4, CA-7, CM-6, CM-7, SC-7, SI-4, SI-15 |
+| D3FEND techniques (neo4j) | T1499.003 | D3-EAL, D3-EDL, D3-OSM, D3-OTF | — |

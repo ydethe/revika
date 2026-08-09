@@ -1,29 +1,29 @@
-# N-ECO-03 — Quitter après récompense
+# N-ECO-03 — Leaving after reward
 
-- **Cible** : Nœuds
-- **Catégorie** : Menaces économiques
-- **Identifiant** : N-ECO-03
+- **Target**: Nodes
+- **Category**: Economic threats
+- **Identifier**: N-ECO-03
 
 ## Description
-Un nœud collecte les récompenses puis quitte le réseau sans honorer ses engagements de conservation.
+A node collects rewards then leaves the network without honouring its retention commitments.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Data Destruction | T1485 | Analogue : le départ brutal du nœud rend indisponibles (« détruit ») les shards qu'il conservait. | Codage d'effacement Reed-Solomon (tout `k` reconstruit) + réparation obligatoire régénérant les shards perdus sur ciphertext déterministe reproduisant leur adresse de contenu. |
-| Service Stop | T1489 | Le nœud cesse tout service après encaissement, interrompant l'accès aux données hébergées. | Baux (leases) à TTL et sondes de disponibilité détectant la sortie, déclenchant le re-placement vers d'autres owners avant expiration de la redondance. |
+| Data Destruction | T1485 | Analogue: the node's abrupt departure makes the shards it held unavailable ("destroyed"). | Reed-Solomon erasure coding (any `k` reconstruct) + mandatory repair regenerating lost shards on deterministic ciphertext reproducing their content address. |
+| Service Stop | T1489 | The node ceases all service after cashing in, interrupting access to the hosted data. | TTL leases and availability probes detecting the exit, triggering re-placement towards other owners before redundancy expires. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Codage Reed-Solomon k=4/m=2 + réparation | T1485 | — | SC-36 |
-| Adressage par hash de contenu | T1485 | D3-FH | SI-7 |
-| Ledger SQLite par-owner + quotas/baux | T1489 | — | SC-6 |
-| Sondes + défis de possession | T1489 | — | SI-7 |
-| Placement réparti sur owners indépendants | T1489 | — | SC-36 |
-| Contrôles CTID (neo4j) | T1485 | — | AC-3, AC-6, CM-2, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4 |
-| Contrôles CTID (neo4j) | T1489 | — | AC-2, AC-3, AC-4, AC-5, AC-6, CA-7, CM-5, CM-6, CM-7, IA-2, SC-7, SC-37, SC-46, SI-4 |
-| Techniques D3FEND (neo4j) | T1485 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
-| Techniques D3FEND (neo4j) | T1489 | D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-OSM, D3-OTF, D3-UAP | — |
+| Reed-Solomon coding k=4/m=2 + repair | T1485 | — | SC-36 |
+| Content-hash addressing | T1485 | D3-FH | SI-7 |
+| Per-owner SQLite ledger + quotas/leases | T1489 | — | SC-6 |
+| Probes + proof-of-possession challenges | T1489 | — | SI-7 |
+| Placement spread across independent owners | T1489 | — | SC-36 |
+| CTID controls (neo4j) | T1485 | — | AC-3, AC-6, CM-2, CP-2, CP-7, CP-9, CP-10, SI-3, SI-4 |
+| CTID controls (neo4j) | T1489 | — | AC-2, AC-3, AC-4, AC-5, AC-6, CA-7, CM-5, CM-6, CM-7, IA-2, SC-7, SC-37, SC-46, SI-4 |
+| D3FEND techniques (neo4j) | T1485 | D3-EAL, D3-EDL, D3-FA, D3-LFP, D3-NTA, D3-OSM, D3-PA, D3-PM, D3-UAP | — |
+| D3FEND techniques (neo4j) | T1489 | D3-EAL, D3-EDL, D3-ITF, D3-LAM, D3-LFP, D3-OSM, D3-OTF, D3-UAP | — |

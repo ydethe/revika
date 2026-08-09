@@ -1,25 +1,25 @@
-# C-COL-02 — Collusion avec des nœuds
+# C-COL-02 — Collusion with nodes
 
-- **Cible** : Clients
-- **Catégorie** : Collusion
-- **Identifiant** : C-COL-02
+- **Target**: Clients
+- **Category**: Collusion
+- **Identifier**: C-COL-02
 
 ## Description
-Un client s'entend avec des nœuds pour obtenir un traitement de faveur ou tromper les audits.
+A client colludes with nodes to obtain preferential treatment or deceive audits.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Trusted Relationship | T1199 | Le client exploite une entente avec des nœuds pour obtenir un traitement de faveur. | Modèle de nœud « dumb » et non fiable : ils ne voient que du ciphertext opaque adressé par hash, sans pouvoir accorder de privilège sur le contenu. |
-| Impair Defenses: Disable or Modify Cloud Logs | T1562.008 | La collusion vise à falsifier ou masquer les journaux d'audit des nœuds. | Journaux d'audit append-only signés et chaînés (hash-chain) détectant réécriture/omission, et vérification indépendante des shards par recomputation du hash. |
+| Trusted Relationship | T1199 | The client exploits an arrangement with nodes to obtain preferential treatment. | "Dumb", untrusted node model: they see only opaque ciphertext addressed by hash, and cannot grant any privilege over the content. |
+| Impair Defenses: Disable or Modify Cloud Logs | T1562.008 | The collusion aims to falsify or hide the nodes' audit logs. | Signed, chained (hash-chain) append-only audit logs that detect rewriting/omission, and independent shard verification by recomputing the hash. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Nœud « dumb/untrusted » + re-vérification côté User | T1199 | — | SA-8 |
-| Journaux append-only chaînés + seq signés | T1562.008 | — | AU-9 |
-| Recompute du hash à la réception | T1562.008 | D3-FH | SI-7 |
-| Contrôles CTID (neo4j) | T1199 | — | AC-3, AC-4, AC-6, AC-8, CM-6, CM-7, SC-7, SC-46 |
-| Techniques D3FEND (neo4j) | T1199 | D3-EAL, D3-EDL, D3-ITF, D3-LFP, D3-OTF, D3-UAP | — |
+| "Dumb/untrusted" node + User-side re-verification | T1199 | — | SA-8 |
+| Chained append-only logs + signed seq | T1562.008 | — | AU-9 |
+| Hash recomputation on receipt | T1562.008 | D3-FH | SI-7 |
+| CTID controls (neo4j) | T1199 | — | AC-3, AC-4, AC-6, AC-8, CM-6, CM-7, SC-7, SC-46 |
+| D3FEND techniques (neo4j) | T1199 | D3-EAL, D3-EDL, D3-ITF, D3-LFP, D3-OTF, D3-UAP | — |

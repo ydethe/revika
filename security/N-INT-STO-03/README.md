@@ -1,26 +1,26 @@
-# N-INT-STO-03 — Fourniture d'une ancienne version (rollback)
+# N-INT-STO-03 — Serving an old version (rollback)
 
-- **Cible** : Nœuds
-- **Catégorie** : Intégrité › Stockage
-- **Identifiant** : N-INT-STO-03
+- **Target**: Nodes
+- **Category**: Integrity › Storage
+- **Identifier**: N-INT-STO-03
 
 ## Description
-Le nœud sert délibérément une version périmée d'un shard ou d'un manifeste, faisant régresser l'état visible par le client.
+The node deliberately serves a stale version of a shard or a manifest, regressing the state visible to the client.
 
-## Techniques MITRE ATT&CK et défenses
+## MITRE ATT&CK techniques and defences
 
-| Technique ATT&CK | ID | Application à ce scénario | Mesure de défense |
+| ATT&CK Technique | ID | Application to this scenario | Defence measure |
 | --- | --- | --- | --- |
-| Data Manipulation: Stored Data Manipulation | T1565.001 | Le nœud restitue une révision antérieure (rollback) d'un shard ou manifeste au lieu de l'état courant, manipulant la donnée servie. | Manifestes signés Ed25519 portant un numéro de version/séquence : un rollback est détecté par régression du numéro signé côté client. |
-| Use Alternate Authentication Material | T1550 | Analogue de rejeu : réservir une version passée valablement signée revient à rejouer un état authentifié périmé. | Nonces/numéros de séquence signés et jetons à TTL borné : un état expiré ou hors-séquence est refusé, cassant le rejeu. |
+| Data Manipulation: Stored Data Manipulation | T1565.001 | The node returns an earlier revision (rollback) of a shard or manifest instead of the current state, manipulating the served data. | Ed25519-signed manifests carrying a version/sequence number: a rollback is detected by a regression of the signed number on the client side. |
+| Use Alternate Authentication Material | T1550 | Replay analogue: re-serving a validly-signed past version amounts to replaying a stale authenticated state. | Signed nonces/sequence numbers and bounded-TTL tokens: an expired or out-of-sequence state is refused, breaking the replay. |
 
-## Correspondance cadres de défense
+## Defence framework mapping
 
-| Mesure de défense | Technique ATT&CK | D3FEND | NIST 800-53 |
+| Defence measure | ATT&CK Technique | D3FEND | NIST 800-53 |
 | --- | --- | --- | --- |
-| Manifeste signé Ed25519 versionné | T1565.001 | D3-MAN | SI-7 |
-| Anti-rejeu nonce/horloge/seq + TTL | T1550 | — | SC-23 |
-| Contrôles CTID (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-12, SI-16 |
-| Contrôles CTID (neo4j) | T1550 | — | AC-2, AC-3, AC-5, AC-6, CM-5, CM-6, IA-2 |
-| Techniques D3FEND (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
-| Techniques D3FEND (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |
+| Versioned Ed25519-signed manifest | T1565.001 | D3-MAN | SI-7 |
+| Anti-replay nonce/clock/seq + TTL | T1550 | — | SC-23 |
+| CTID controls (neo4j) | T1565.001 | — | AC-3, AC-16, AC-17, AC-18, AC-19, AC-20, CA-7, CM-2, CM-6, CM-8, CP-6, CP-7, CP-9, CP-10, SC-4, SC-7, SC-28, SC-36, SI-4, SI-12, SI-16 |
+| CTID controls (neo4j) | T1550 | — | AC-2, AC-3, AC-5, AC-6, CM-5, CM-6, IA-2 |
+| D3FEND techniques (neo4j) | T1565.001 | D3-EAL, D3-EDL, D3-OSM | — |
+| D3FEND techniques (neo4j) | T1550 | D3-EAL, D3-EDL, D3-LAM, D3-LFP, D3-UAP | — |
