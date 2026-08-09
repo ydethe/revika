@@ -209,6 +209,21 @@ func (g *blocklistGater) counts() (peers, subnets int) {
 	return len(g.peers), len(g.subnets)
 }
 
+// list snapshots the blocked peer IDs and subnets, for the admin dashboard. The
+// returned slices are freshly allocated so the caller can sort/render them
+// without holding the lock. Peer order is unspecified (map iteration); the caller
+// sorts for a stable page.
+func (g *blocklistGater) list() (peers []peer.ID, subnets []*net.IPNet) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	peers = make([]peer.ID, 0, len(g.peers))
+	for p := range g.peers {
+		peers = append(peers, p)
+	}
+	subnets = append([]*net.IPNet(nil), g.subnets...)
+	return peers, subnets
+}
+
 // blockedAddr reports whether a's IP falls in any blocklisted subnet. Addresses
 // with no IP component (or that fail to parse) are not blocked here — peer-ID
 // gating still applies once the peer authenticates.
@@ -374,6 +389,11 @@ func (b *Blocklister) counts() (peers, subnets int) { return b.gater.counts() }
 // Blocked reports whether p is currently blocked. Exposed for tests and callers
 // that want to avoid redundant work on an already-banned peer.
 func (b *Blocklister) Blocked(p peer.ID) bool { return b.gater.blockedPeer(p) }
+
+// List snapshots the currently blocked peer IDs and subnets (operator-static plus
+// runtime auto-bans, unioned), for the admin dashboard. The slices are freshly
+// allocated; peer order is unspecified, so the caller sorts for a stable view.
+func (b *Blocklister) List() (peers []peer.ID, subnets []*net.IPNet) { return b.gater.list() }
 
 // Block bans peer p for the given reason: it is added to the live gater, appended
 // to the persistent auto-blocklist, and its current connections are closed. It is

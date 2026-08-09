@@ -109,6 +109,8 @@ after `NewHost`; construction happens before the host exists, so the gater is bu
 the host adopts it via `DefenseConfig.Blocklister`. `revika-node -blocklist-auto <file>` sets
 the path (default `<data>/blocklist.auto`, `off` disables persistence). `Block` only ever
 appends peer IDs — identity is the unit the detector acts on; subnet rules stay operator policy.
+`List()` snapshots the current blocked peers + subnets (read-only), which the `/admin`
+dashboard renders in its blocklist panel.
 
 These are *connection/flow* caps that complement the ledger's *storage* cap (per-owner
 quota). The remaining *flow* cap — per-owner rate limiting on the write verbs — now ships
@@ -463,9 +465,11 @@ policy (`SetPoW`), the maintenance policy (`SetMaintenance`, the effective
 repair/rebalance cadence this node runs and advertises), the served stream-protocol
 versions (`SetProtocols`, fed `Server.Protocols()` so `/status` and `/metrics` report
 the wire versions this node speaks), the storage-load reporter
-(`SetLoadSource`, feeding the capacity/free/load fields), and the peer geolocator
-(`SetGeolocator`, powering the `/nodes` map) are optional. `Serve(ctx, addr)`
-runs it with graceful shutdown; `Handler()` exposes the mux for tests. Endpoints:
+(`SetLoadSource`, feeding the capacity/free/load fields), the peer geolocator
+(`SetGeolocator`, powering the `/admin` map), and the connection blocklist
+(`SetBlocklister`, surfacing the refused peers/subnets on `/admin`) are optional.
+`Serve(ctx, addr)` runs it with graceful shutdown; `Handler()` exposes the mux for
+tests. Endpoints:
 
 - `GET /healthz` — liveness.
 - `GET /readyz` — readiness (DHT routing table non-empty when the DHT is on; always
@@ -478,18 +482,32 @@ runs it with graceful shutdown; `Handler()` exposes the mux for tests. Endpoints
   (connected peers, routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
   `bootstrap` mirrors `listen_addrs` with the node's `/p2p/<peer-id>` appended — each entry is
   ready to paste into `revika-ctl -bootstrap`.
-- `GET /nodes` — an operator-facing **HTML dashboard** of currently connected peers
-  (`nodes_page.go`): a two-panel layout — a detailed peer table (peer ID, connection
-  direction, chosen IP + scope pill, estimated location, remote multiaddrs) beside a
-  Leaflet/OpenStreetMap map with a marker per located peer. `nodeGeos` gathers the view
-  from `Network().Peers()`/`ConnsToPeer`, preferring a global remote IP over a private
-  one for placement and classifying it (`global`/`local`/`unknown`). Positions come from
-  an optional [`geoip.Locator`](../geoip/README.md) wired by `SetGeolocator` (nil = off,
-  the default — the page then shows a hint to start the node with `-geoip=ip-api`). Only
-  global IPs are geolocated; a LAN/loopback peer is marked `local` and never plotted.
-  Peer-supplied strings reach the page only through `html/template` escaping (the table)
+- `GET /admin` — an operator-facing **HTML dashboard** for this node
+  (`admin_page.go`), with four panel groups:
+  - **Self** — the full `/status` snapshot rendered as HTML: identity/version/uptime,
+    DHT + peer counts, the PoW admission and repair/rebalance maintenance policy, the
+    served protocols and listen/bootstrap addresses, plus a storage & GC panel (shards,
+    bytes used, quota, capacity/free/load, GC counters, and the per-owner accounting
+    table) — the same data as `/status`, for eyeballing without a JSON tool.
+  - **Blocklist** — the peer IDs and subnets the connection gater currently refuses
+    (operator-static entries unioned with the abuse detector's runtime auto-bans), read
+    from the `Blocklister` wired by `SetBlocklister` (absent = the panel says none is
+    configured). Read-only: it displays the set, never mutates it.
+  - **Stored shards** — the shards this node holds, drawn from the ledger stripe index
+    (`Ledger.Stripes`): content-hash shard ID plus the erasure context (`k`/`m`, sibling
+    count), sorted by ID and capped at `adminShardCap` (500) rows with a truncation note.
+  - **Nodes + map** — a detailed peer table (peer ID, connection direction, chosen IP +
+    scope pill, estimated location, remote multiaddrs) beside a Leaflet/OpenStreetMap map
+    with a marker per located peer. `nodeGeos` gathers the view from
+    `Network().Peers()`/`ConnsToPeer`, preferring a global remote IP over a private one
+    for placement and classifying it (`global`/`local`/`unknown`). Positions come from an
+    optional [`geoip.Locator`](../geoip/README.md) wired by `SetGeolocator` (nil = off,
+    the default — the page then shows a hint to start the node with `-geoip=ip-api`). Only
+    global IPs are geolocated; a LAN/loopback peer is marked `local` and never plotted.
+
+  Peer-supplied strings reach the page only through `html/template` escaping (the tables)
   or JS `textContent` (the map popups), never as raw HTML. Leaflet + the OSM tiles load
-  from public CDNs, so the map needs outbound internet; the list works offline.
+  from public CDNs, so the map needs outbound internet; every other panel works offline.
 - `GET /metrics` — Prometheus text exposition of the same snapshot, including
   `revika_build_info{version,build_date}`, `revika_protocol_info{protocol}` (one line per
   served stream protocol), `revika_bootstrap_info{addr}`,

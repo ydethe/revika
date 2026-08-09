@@ -258,7 +258,7 @@ internal/
   fsmeta/    capture/restore live-file attributes ⇄ pipeline.Metadata (Linux + portable split);
              shared by revika-ctl and provider
   geoip/     coarse IP→position estimation behind a pluggable Locator (IPAPILocator now,
-             opt-in; offline MaxMind .mmdb planned) for the node's /nodes dashboard map
+             opt-in; offline MaxMind .mmdb planned) for the node's /admin dashboard map
   provider/  framework-neutral OS filesystem-integration API (Provider iface) mapping macOS File
              Provider / Windows Cloud Filter / Linux GVfs; Manifest impl over the manifest DAG with
              stable ItemIDs, DAG-diff change enumeration, and a RootStore seam for the (planned) DHT

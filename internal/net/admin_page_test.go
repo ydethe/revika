@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"html/template"
+	"net"
 	"net/netip"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"revika/internal/geoip"
+	"revika/internal/store"
 )
 
 // fakeLocator is a deterministic Locator for tests: a fixed position for any
@@ -36,62 +38,133 @@ func mustNodesJSON(t *testing.T, nodes []NodeGeo) template.JS {
 	return template.JS(b)
 }
 
-func TestNodesPageNoPeers(t *testing.T) {
+func TestAdminPageNoPeers(t *testing.T) {
 	// A fresh fixture host has no connected peers and no geolocator configured.
 	_, _, ts := newMetricsFixture(t)
-	code, body := getBody(t, ts.URL+"/nodes")
+	code, body := getBody(t, ts.URL+"/admin")
 	if code != 200 {
-		t.Fatalf("/nodes = %d, want 200", code)
+		t.Fatalf("/admin = %d, want 200", code)
 	}
 	for _, want := range []string{
-		"connected nodes",              // page title/header
+		"revika · admin",               // page title/header
+		"Self · status",                // the self view (full /status snapshot)
 		"No peers currently connected", // empty-list state
 		"-geoip=ip-api",                // the geolocation-disabled hint
 		`id="map"`,                     // the map panel is present
+		"Stored shards",                // the ledger-stripe shard panel
+		"Blocklist",                    // the blocklist panel
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("/nodes body missing %q", want)
+			t.Errorf("/admin body missing %q", want)
 		}
 	}
 }
 
-// TestNodesPageSelf confirms the node serving the page lists itself, chipped
+// TestAdminPageSelf confirms the node serving the page lists itself, chipped
 // apart from its peers, even when no peer is connected.
-func TestNodesPageSelf(t *testing.T) {
+func TestAdminPageSelf(t *testing.T) {
 	ms, _, ts := newMetricsFixture(t)
-	code, body := getBody(t, ts.URL+"/nodes")
+	code, body := getBody(t, ts.URL+"/admin")
 	if code != 200 {
-		t.Fatalf("/nodes = %d, want 200", code)
+		t.Fatalf("/admin = %d, want 200", code)
 	}
 	if !strings.Contains(body, ms.h.ID().String()) {
-		t.Errorf("/nodes did not list this node's own peer ID %s", ms.h.ID())
+		t.Errorf("/admin did not list this node's own peer ID %s", ms.h.ID())
 	}
 	if !strings.Contains(body, `pill self">this node`) {
-		t.Errorf("/nodes missing the \"this node\" chip distinguishing the serving node")
+		t.Errorf("/admin missing the \"this node\" chip distinguishing the serving node")
 	}
 	// The self row's JSON must carry the self flag so the map can mark it too.
 	if !strings.Contains(body, `"self":true`) {
-		t.Errorf("/nodes map JSON missing the self flag")
+		t.Errorf("/admin map JSON missing the self flag")
+	}
+	// The self view renders the /status snapshot: the PoW admission line must show
+	// the fixture's difficulty (12) and the served protocols must appear.
+	if !strings.Contains(body, "Argon2id") {
+		t.Errorf("/admin self view missing the proof-of-work admission line")
 	}
 }
 
-func TestNodesPageContentType(t *testing.T) {
+func TestAdminPageContentType(t *testing.T) {
 	_, _, ts := newMetricsFixture(t)
-	resp, err := ts.Client().Get(ts.URL + "/nodes")
+	resp, err := ts.Client().Get(ts.URL + "/admin")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Fatalf("/nodes Content-Type = %q, want text/html", ct)
+		t.Fatalf("/admin Content-Type = %q, want text/html", ct)
 	}
 }
 
-// TestNodesPageLivePeer exercises the real gathering path: a second host connects
+// TestAdminPageShards confirms a shard with recorded stripe context shows up in
+// the stored-shards panel, drawn from the ledger stripe index.
+func TestAdminPageShards(t *testing.T) {
+	_, led, ts := newMetricsFixture(t)
+	now := time.Now()
+	var id, sib store.ShardID
+	id[0], sib[0] = 0xab, 0xcd
+	owner := []byte("owner-pubkey-00000000000000000000")
+	if _, err := led.AddOwner(id, owner, 100, now); err != nil {
+		t.Fatalf("AddOwner: %v", err)
+	}
+	if err := led.PutStripe(id, 4, 2, []store.ShardID{id, sib}, []byte("grant")); err != nil {
+		t.Fatalf("PutStripe: %v", err)
+	}
+	code, body := getBody(t, ts.URL+"/admin")
+	if code != 200 {
+		t.Fatalf("/admin = %d, want 200", code)
+	}
+	if !strings.Contains(body, id.String()) {
+		t.Errorf("/admin stored-shards panel missing shard ID %s", id)
+	}
+}
+
+// TestAdminPageBlocklist confirms a configured blocklist surfaces its banned peer
+// on the page, and that with no Blocklister the panel says so.
+func TestAdminPageBlocklist(t *testing.T) {
+	ms, _, ts := newMetricsFixture(t)
+
+	// No Blocklister wired yet: the panel reports none configured.
+	_, body := getBody(t, ts.URL+"/admin")
+	if !strings.Contains(body, "No blocklist configured") {
+		t.Errorf("/admin should report no blocklist before one is set")
+	}
+
+	// Mint a real peer ID to ban (hand-written IDs may not decode across libp2p
+	// versions) and seed the blocklist with both a peer and a subnet.
+	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})
+	if err != nil {
+		t.Fatalf("mint peer: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+	banned := h.ID()
+
+	_, sub, err := net.ParseCIDR("203.0.113.0/24")
+	if err != nil {
+		t.Fatalf("parse cidr: %v", err)
+	}
+	bl, err := NewBlocklister(nil, []*net.IPNet{sub}, "", nil)
+	if err != nil {
+		t.Fatalf("new blocklister: %v", err)
+	}
+	bl.Block(banned, "test")
+	ms.SetBlocklister(bl)
+
+	_, body = getBody(t, ts.URL+"/admin")
+	if !strings.Contains(body, banned.String()) {
+		t.Errorf("/admin blocklist panel missing banned peer %s", banned)
+	}
+	if !strings.Contains(body, "203.0.113.0/24") {
+		t.Errorf("/admin blocklist panel missing banned subnet")
+	}
+}
+
+// TestAdminPageLivePeer exercises the real gathering path: a second host connects
 // to the fixture over loopback and must appear in the list. The connection is a
 // non-global (127.0.0.1) address, so the peer is classified "local" and never
 // located, even though a geolocator is configured.
-func TestNodesPageLivePeer(t *testing.T) {
+func TestAdminPageLivePeer(t *testing.T) {
 	ctx := context.Background()
 	ms, _, ts := newMetricsFixture(t)
 	ms.SetGeolocator(fakeLocator{loc: geoip.Location{Lat: 1, Lon: 2, City: "Nowhere"}})
@@ -109,24 +182,24 @@ func TestNodesPageLivePeer(t *testing.T) {
 	// poll briefly so the test is not sensitive to scheduling.
 	var body string
 	for range 40 {
-		_, body = getBody(t, ts.URL+"/nodes")
+		_, body = getBody(t, ts.URL+"/admin")
 		if strings.Contains(body, peer2.ID().String()) {
 			break
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	if !strings.Contains(body, peer2.ID().String()) {
-		t.Fatalf("/nodes never listed connected peer %s", peer2.ID())
+		t.Fatalf("/admin never listed connected peer %s", peer2.ID())
 	}
 	if !strings.Contains(body, "local</span>") {
 		t.Errorf("expected the loopback peer to be marked local (non-global, so not located)")
 	}
 }
 
-// TestNodesTemplateRender drives the template directly with a synthetic located
+// TestAdminTemplateRender drives the template directly with a synthetic located
 // node and a local one, since two loopback hosts only ever connect over
 // non-global (127.0.0.1) addresses and so never produce a located marker.
-func TestNodesTemplateRender(t *testing.T) {
+func TestAdminTemplateRender(t *testing.T) {
 	located := NodeGeo{
 		ID:        "12D3KooWLocatedPeerExample",
 		Direction: "outbound",
@@ -143,7 +216,7 @@ func TestNodesTemplateRender(t *testing.T) {
 		IP:        "192.168.1.4",
 		Scope:     "local",
 	}
-	page := nodesPage{
+	page := adminPage{
 		PeerID:     "12D3KooWSelf",
 		Version:    "test-1.0.0",
 		Generated:  "2026-08-08T00:00:00Z",
@@ -152,9 +225,15 @@ func TestNodesTemplateRender(t *testing.T) {
 		GeoEnabled: true,
 		Nodes:      []NodeGeo{located, local},
 		NodesJSON:  mustNodesJSON(t, []NodeGeo{located, local}),
+		Status: Status{
+			PeerID:    "12D3KooWSelf",
+			Version:   "test-1.0.0",
+			Protocols: []string{"/revika/shard/1.2.0"},
+			Storage:   StorageInfo{Shards: 3, BytesUsed: 4096},
+		},
 	}
 	var buf bytes.Buffer
-	if err := nodesTmpl.Execute(&buf, page); err != nil {
+	if err := adminTmpl.Execute(&buf, page); err != nil {
 		t.Fatalf("execute template: %v", err)
 	}
 	out := buf.String()
@@ -166,6 +245,8 @@ func TestNodesTemplateRender(t *testing.T) {
 		"203.0.113.7",
 		`"located":true`, // the map JSON carries the located flag
 		`"lat":48.85`,
+		"/revika/shard/1.2.0", // self view lists the served protocol
+		"4.0 KiB",             // human-readable bytes-used in the self view
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered page missing %q", want)
@@ -177,9 +258,9 @@ func TestNodesTemplateRender(t *testing.T) {
 	}
 }
 
-// TestNodesTemplateEscaping confirms a hostile peer-supplied string cannot inject
+// TestAdminTemplateEscaping confirms a hostile peer-supplied string cannot inject
 // markup: html/template must escape it in the table cell.
-func TestNodesTemplateEscaping(t *testing.T) {
+func TestAdminTemplateEscaping(t *testing.T) {
 	evil := NodeGeo{
 		ID:        "<script>alert(1)</script>",
 		Direction: "unknown",
@@ -187,9 +268,9 @@ func TestNodesTemplateEscaping(t *testing.T) {
 		IP:        "198.51.100.9",
 		Scope:     "global",
 	}
-	page := nodesPage{Total: 1, Nodes: []NodeGeo{evil}, NodesJSON: mustNodesJSON(t, []NodeGeo{evil})}
+	page := adminPage{Total: 1, Nodes: []NodeGeo{evil}, NodesJSON: mustNodesJSON(t, []NodeGeo{evil})}
 	var buf bytes.Buffer
-	if err := nodesTmpl.Execute(&buf, page); err != nil {
+	if err := adminTmpl.Execute(&buf, page); err != nil {
 		t.Fatalf("execute template: %v", err)
 	}
 	if strings.Contains(buf.String(), "<script>alert(1)</script>") {

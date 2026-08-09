@@ -35,10 +35,13 @@ const metricsShutdownTimeout = 5 * time.Second
 //	               admission policy), storage accounting, and the node's view of
 //	               the network (peer cartography)
 //	GET /metrics   Prometheus text-exposition metrics
-//	GET /nodes     rich HTML dashboard of this node and its connected peers: a
-//	               detailed list panel (the serving node leads, chipped apart) and
-//	               a geographic map (OpenStreetMap via Leaflet) plotting each node
-//	               at its estimated position (SetGeolocator)
+//	GET /admin     rich HTML operator dashboard for this node: a self view (the
+//	               full /status snapshot rendered as HTML), the active connection
+//	               blocklist (SetBlocklister), the shards this node stores (from the
+//	               ledger stripe index), a detailed peer list (the serving node
+//	               leads, chipped apart), and a geographic map (OpenStreetMap via
+//	               Leaflet) plotting each node at its estimated position
+//	               (SetGeolocator)
 //
 // It reads live state from the host, the ledger, and (optionally) the DHT
 // Discovery; it holds no state of its own beyond the start time and version.
@@ -60,7 +63,8 @@ type MetricsServer struct {
 	rebalance RebalanceInfo // rebalance maintenance policy this node runs (and advertises)
 	loadSrc   LoadSource    // optional: reports storage capacity/load for rebalancing (§3.4)
 	protocols []string      // versioned libp2p stream protocols this node serves
-	geo       geoip.Locator // optional: estimates a peer's position for the /nodes map (nil = positions unknown)
+	geo       geoip.Locator // optional: estimates a peer's position for the /admin map (nil = positions unknown)
+	blocklist *Blocklister  // optional: the live connection blocklist, surfaced on /admin (nil = not shown)
 	log       *slog.Logger
 }
 
@@ -108,11 +112,19 @@ func (m *MetricsServer) SetProtocols(ps []protocol.ID) {
 	sort.Strings(m.protocols)
 }
 
-// SetGeolocator attaches the position estimator the /nodes dashboard uses to
+// SetGeolocator attaches the position estimator the /admin dashboard uses to
 // place connected peers on its map. Optional; left unset (nil), the map renders
 // with no markers and the list still shows every peer — positions simply read
 // "unknown". Call before Serve.
 func (m *MetricsServer) SetGeolocator(g geoip.Locator) { m.geo = g }
+
+// SetBlocklister attaches the live connection blocklist so the /admin dashboard
+// can display the peer IDs and subnets this node currently refuses (operator
+// static entries unioned with the abuse detector's runtime auto-bans). Optional;
+// left unset (nil), the blocklist panel reports that no blocklist is configured.
+// It is read-only — the dashboard shows the set, it never mutates it. Call before
+// Serve.
+func (m *MetricsServer) SetBlocklister(b *Blocklister) { m.blocklist = b }
 
 // SetMaintenance records the repair and rebalancing policy this node runs so it
 // is reported on /status and (via the params protocol) advertised to joining
@@ -131,7 +143,7 @@ func (m *MetricsServer) Handler() http.Handler {
 	mux.HandleFunc("/readyz", m.handleReadyz)
 	mux.HandleFunc("/status", m.handleStatus)
 	mux.HandleFunc("/metrics", m.handleMetrics)
-	mux.HandleFunc("/nodes", m.handleNodes)
+	mux.HandleFunc("/admin", m.handleAdmin)
 	return mux
 }
 

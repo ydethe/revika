@@ -1,5 +1,5 @@
 // Package geoip estimates the approximate geographic position of an IP address
-// for the node's operator-facing /nodes dashboard (internal/net MetricsServer).
+// for the node's operator-facing /admin dashboard (internal/net MetricsServer).
 //
 // It is deliberately a small, pluggable seam: the network layer depends only on
 // the Locator interface, so the position source can be swapped without touching

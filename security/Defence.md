@@ -540,7 +540,7 @@ Consistent with Architecture.md §5 and [`frameworks.md`](./frameworks.md#accept
   [C-COL-01/02](./C-COL-01/) remain **partial or deferred**.
 - **Verifiable geolocation (P22)** — placement diversity measured by the network
   (observed RTT/AS) is planned but not enforcing; [N-ORG-GEO-*](./N-ORG-GEO-01/) is
-  **deferred**. The current `geoip` (`internal/geoip`) serves the `/nodes` dashboard map, not
+  **deferred**. The current `geoip` (`internal/geoip`) serves the `/admin` dashboard map, not
   a proof of location.
 - **Read rate limiting** — `GET`/`HAS`/`PROBE` are not yet capped;
   [C-DISP-05](./C-DISP-05/), [C-CONF-03](./C-CONF-03/) remain partially exposed.

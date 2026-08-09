@@ -1,7 +1,7 @@
 # internal/geoip
 
 Coarse, best-effort geographic estimation of an IP address, for the node's
-operator-facing `/nodes` dashboard (see [`internal/net`](../net/README.md)'s
+operator-facing `/admin` dashboard (see [`internal/net`](../net/README.md)'s
 `MetricsServer`). This is *cartography for operators*, never part of the storage or
 trust path — a node stays a dumb, content-blind blob store; where its peers sit on a
 map is purely observational.
@@ -61,5 +61,5 @@ disables geolocation and the dashboard renders peers without map markers.
 `geoip_test.go` covers `IsGlobal`'s classification table, that `Locate` skips
 non-global IPs with no network call, the fetch + cache path (asserting exactly one
 upstream hit across two lookups), and that an upstream failure resolves to
-not-located. The `/nodes` rendering that consumes this package is tested in
-`internal/net` (`nodes_page_test.go`).
+not-located. The `/admin` rendering that consumes this package is tested in
+`internal/net` (`admin_page_test.go`).
