@@ -30,4 +30,15 @@ SEED_PORT="${SEED_PORT:-4001}"
 # Mint the key via revika-ctl (stdout = Peer ID only). Build once via `go run`.
 peerid="$(cd "$ROOT" && go run ./cmd/revika-ctl nodekey -o "$KEY_PATH")"
 
+# revika-ctl mints the key 0600 (owner-only), but docker-compose bind-mounts it
+# read-only into the seed container, which runs as the unprivileged distroless
+# "nonroot" user (uid 65532) — a different uid than whoever ran this script on the
+# host. A bind mount keeps the host file's ownership and mode, so a 0600 key owned
+# by the host user is unreadable by the container's nonroot, and the seed dies with
+# "read identity /data/keys/node.key: permission denied". Relax it to 0644 so the
+# container can read it. This is safe: the key is an EPHEMERAL, git-ignored,
+# dev-only throwaway (issue #13 forbids a *committed* key, not a locally world-
+# readable one) and is never reused anywhere real.
+chmod 0644 "$KEY_PATH"
+
 printf '/dns4/%s/tcp/%s/p2p/%s\n' "$SEED_HOST" "$SEED_PORT" "$peerid"
