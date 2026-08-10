@@ -72,7 +72,10 @@ User side — a node is trusted for *availability*, never *confidentiality*.
   per-owner write-verb *rate* cap (`net.OwnerRateLimiter`, `internal/net/ratelimit.go`; a token
   bucket keyed on the Ed25519 owner refusing over-rate PUT/DELETE with `statusRateLimited`,
   grant-authorized repair/rebalance writes exempt; `-write-rate/-write-burst`, off by default),
-  and an optional repair possession-verify (`net.RepairStore.SetVerifyPossession`,
+  an application-level PUT concurrency semaphore (`Server.SetPutConcurrency`,
+  `-put-concurrency`, default 32) bounding concurrent in-flight PUTs so peak shard-buffer
+  allocation stays at `limit × 64 MiB` regardless of the rcmgr's per-scope limit; over-cap
+  PUTs are refused with `statusRateLimited` (transient, client may retry), and an optional repair possession-verify (`net.RepairStore.SetVerifyPossession`,
   `-repair-verify`) that upgrades `repair.Check`'s per-shard survival test from a trusted
   `Store.Has` presence byte to a proof-of-retrieval fetch + content-address self-verify, catching
   a node that lies about holding a shard. Two further *local* defences harden the system against
@@ -94,8 +97,8 @@ User side — a node is trusted for *availability*, never *confidentiality*.
   the box (issue #22) — `-quota 0` restores the old unlimited ceiling and is logged as a warning
   (with unlimited quota there is nothing for Axis B to graduate). Both are **local** (never inherited from bootstrap) and their
   effective configuration is surfaced on `/status` (`defense` object), `/metrics`
-  (`revika_subnet_rate_limit_*`, `revika_quota_ramp_*` gauges), and the `/admin` "Self · defenses"
-  panel. Read-verb (`GET`/`HAS`/`PROBE`) *per-owner* rate
+  (`revika_subnet_rate_limit_*`, `revika_put_concurrency_*`, `revika_quota_ramp_*` gauges), and
+  the `/admin` "Self · defenses" panel. Read-verb (`GET`/`HAS`/`PROBE`) *per-owner* rate
   limiting is still TODO (Axis A already caps the read verbs per subnet). Note ban-by-identity is
   weak while identities are free to mint — proof-of-work identities raise the re-mint cost and
   Axis B makes a fresh identity worth little, but global anti-Sybil, reputation, and economic
@@ -138,7 +141,7 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -blocklist-auto -rebalance-abuse-tolerance
                           #   -rebalance-abuse-coalesce -rebalance-abuse-strikes
                           #   -rebalance-abuse-decay -conn-low -conn-high -conn-grace
-                          #   -write-rate -write-burst -repair-verify
+                          #   -write-rate -write-burst -put-concurrency -repair-verify
                           #   -subnet-rate -subnet-burst -subnet-prefix4 -subnet-prefix6
                           #   -quota-ramp -quota-initial
                           #   -pow-difficulty -geoip -log-format -log-level -v)

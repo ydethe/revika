@@ -158,7 +158,8 @@ func run() error {
 		subnetPrefix6 = flag.Int("subnet-prefix6", 56, "Axis A: IPv6 prefix length aggregating source IPs into one -subnet-rate bucket (default /56)")
 		quotaRamp     = flag.Duration("quota-ramp", defaultQuotaRamp, "Axis B: graduate a new owner's effective storage quota from -quota-initial of -quota up to full over this age (ON by default; 0 = no ramp, full quota immediately). Only bites when a per-owner -quota is set. A fresh identity starts weak, so minting a new one to evade a ban buys little write capacity; the owner's first shard is always admitted. LOCAL defence, never inherited")
 		quotaInitial  = flag.Float64("quota-initial", 0.05, "Axis B: fraction (0,1) of -quota a brand-new owner may use at age zero, ramping linearly to full over -quota-ramp (ignored when -quota-ramp is 0 or -quota is 0)")
-		powDiff       = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
+		putConcurrency = flag.Int("put-concurrency", 32, "max concurrent in-flight PUT operations (each may allocate up to 64 MiB for the shard buffer); over-cap PUTs are rejected with statusRateLimited so the client can retry. 0 = no application-level cap (bounded only by the libp2p resource manager). LOCAL defence, never inherited")
+		powDiff        = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
 		publicIP      = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
 		listen        multiFlag
 		bootstrap     multiFlag
@@ -458,6 +459,18 @@ func run() error {
 		log.Info("write-rate limiting enabled", "event", "ratelimit.enabled", "rate_per_s", *writeRate, "burst", burst)
 	}
 
+	// PUT concurrency cap (local defence, never inherited): an application-level
+	// semaphore that bounds the number of PUT operations in flight simultaneously,
+	// keeping peak shard-buffer allocation at -put-concurrency × 64 MiB even when
+	// the rcmgr's per-scope limit is wider. Over-cap PUTs are refused with
+	// statusRateLimited so the client can retry after a slot frees up.
+	var putConcInfo net.PutConcurrencyInfo
+	if *putConcurrency > 0 {
+		srv.SetPutConcurrency(*putConcurrency)
+		putConcInfo = net.PutConcurrencyInfo{Enabled: true, Limit: *putConcurrency}
+		log.Info("PUT concurrency cap enabled", "event", "put_concurrency.enabled", "limit", *putConcurrency)
+	}
+
 	// Axis A — identity-agnostic per-subnet flow cap (local defence, never
 	// inherited): a token bucket keyed on the source IP subnet that meters every
 	// shard/probe request before the frame is parsed, so a flood from one network
@@ -492,6 +505,7 @@ func run() error {
 	defenseInfo := net.DefenseInfo{
 		SubnetRateLimit: subnetInfo,
 		WriteRateLimit:  writeInfo,
+		PutConcurrency:  putConcInfo,
 		QuotaRamp:       quotaRampInfo,
 	}
 

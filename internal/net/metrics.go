@@ -213,21 +213,34 @@ type Status struct {
 // DefenseInfo reports a node's *local* abuse-control configuration — the flow and
 // storage-capability caps that are chosen per node and never inherited from
 // bootstrap (unlike the PoW/repair/rebalance cluster policy above). It gathers the
-// three levers a node runs against flooding and Sybil abuse:
+// four levers a node runs against flooding and Sybil abuse:
 //
 //   - SubnetRateLimit (Axis A): an identity-agnostic per-subnet request-rate cap
 //     that bounds a flood from one network location regardless of how many owner
 //     identities it mints.
 //   - WriteRateLimit: a per-owner token bucket on the write verbs (PUT/DELETE).
+//   - PutConcurrency: an application-level semaphore bounding concurrent in-flight
+//     PUTs, keeping peak shard-buffer allocations at limit×MaxShardSize.
 //   - QuotaRamp (Axis B): an age-graduated per-owner storage quota, so a freshly
 //     minted (e.g. re-minted-after-ban) identity starts near-powerless.
 //
 // Each sub-policy carries its own Enabled flag so the surface distinguishes "off"
 // from "on with these parameters".
 type DefenseInfo struct {
-	SubnetRateLimit SubnetLimitInfo `json:"subnet_rate_limit"` // Axis A
-	WriteRateLimit  WriteLimitInfo  `json:"write_rate_limit"`
-	QuotaRamp       QuotaRampInfo   `json:"quota_ramp"` // Axis B
+	SubnetRateLimit SubnetLimitInfo    `json:"subnet_rate_limit"` // Axis A
+	WriteRateLimit  WriteLimitInfo     `json:"write_rate_limit"`
+	PutConcurrency  PutConcurrencyInfo `json:"put_concurrency"`
+	QuotaRamp       QuotaRampInfo      `json:"quota_ramp"` // Axis B
+}
+
+// PutConcurrencyInfo is the application-level PUT concurrency cap: at most Limit
+// PUT operations may be in-flight simultaneously, bounding peak shard-buffer
+// allocations to Limit×MaxShardSize (64 MiB). Enabled is false when no cap is
+// configured (default), in which case concurrent PUTs are bounded only by the
+// libp2p resource manager.
+type PutConcurrencyInfo struct {
+	Enabled bool `json:"enabled"`
+	Limit   int  `json:"limit"` // max concurrent in-flight PUTs (0 when disabled)
 }
 
 // SubnetLimitInfo is the Axis A per-subnet flow cap: a token bucket keyed on the
@@ -516,6 +529,8 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	metric("revika_write_rate_limit_enabled", "Whether the per-owner write-verb rate cap is enforced (1 = on).", "gauge", float64(b2i(st.Defense.WriteRateLimit.Enabled)))
 	metric("revika_write_rate_limit_rate", "Per-owner write rate cap in writes/second (0 when disabled).", "gauge", st.Defense.WriteRateLimit.Rate)
 	metric("revika_write_rate_limit_burst", "Per-owner write burst allowance in writes (0 when disabled).", "gauge", st.Defense.WriteRateLimit.Burst)
+	metric("revika_put_concurrency_enabled", "Whether the application-level PUT concurrency cap is enforced (1 = on).", "gauge", float64(b2i(st.Defense.PutConcurrency.Enabled)))
+	metric("revika_put_concurrency_limit", "Max concurrent in-flight PUT operations allowed; each may allocate up to MaxShardSize (64 MiB). 0 when disabled.", "gauge", float64(st.Defense.PutConcurrency.Limit))
 	metric("revika_quota_ramp_enabled", "Whether the Axis B age-graduated per-owner quota is in force (1 = on).", "gauge", float64(b2i(st.Defense.QuotaRamp.Enabled)))
 	metric("revika_quota_ramp_seconds", "Axis B age at which a new owner reaches its full quota, in seconds (0 = no ramp).", "gauge", st.Defense.QuotaRamp.Ramp.Seconds())
 	metric("revika_quota_ramp_initial_fraction", "Axis B fraction of the full quota a brand-new owner may use at age zero.", "gauge", st.Defense.QuotaRamp.InitialFraction)

@@ -543,6 +543,8 @@ const adminHTML = `<!DOCTYPE html>
         <dd>{{with .Status.Defense.SubnetRateLimit}}{{if .Enabled}}<span class="pill on">{{printf "%.0f" .Rate}}/s · burst {{printf "%.0f" .Burst}}</span> · /{{.Prefix4}} v4 · /{{.Prefix6}} v6{{else}}<span class="pill off">disabled</span>{{end}}{{end}}</dd>
         <dt title="Per-owner token bucket on PUT/DELETE">Write-verb cap (per owner)</dt>
         <dd>{{with .Status.Defense.WriteRateLimit}}{{if .Enabled}}<span class="pill on">{{printf "%.0f" .Rate}}/s · burst {{printf "%.0f" .Burst}}</span>{{else}}<span class="pill off">disabled</span>{{end}}{{end}}</dd>
+        <dt title="Application-level semaphore bounding concurrent in-flight PUTs; each may allocate up to 64 MiB">PUT concurrency cap</dt>
+        <dd>{{with .Status.Defense.PutConcurrency}}{{if .Enabled}}<span class="pill on">{{.Limit}} concurrent</span>{{else}}<span class="pill off">disabled</span>{{end}}{{end}}</dd>
         <dt title="Axis B: a new owner's quota ramps up with age">Quota ramp (Axis B)</dt>
         <dd>{{with .Status.Defense.QuotaRamp}}{{if .Enabled}}<span class="pill on">{{pct .InitialFraction}} → full over {{.Ramp}}</span>{{else}}<span class="pill off">{{if $.Status.Storage.QuotaBytes}}disabled{{else}}n/a — no quota set{{end}}</span>{{end}}{{end}}</dd>
       </dl>

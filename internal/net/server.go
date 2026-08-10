@@ -104,6 +104,14 @@ type Server struct {
 	// ±5-minute replay window that the timestamp check alone leaves open; the cache
 	// is bounded in memory by the window size (see authcache.go).
 	tokenCache *authCache
+
+	// putSem, when non-nil, is an application-level semaphore bounding concurrent
+	// in-flight PUT operations. Each in-flight PUT allocates up to MaxShardSize
+	// (64 MiB) for the shard payload, so the cap bounds peak memory to
+	// n×MaxShardSize even when the rcmgr's per-scope limits are wider. A PUT that
+	// cannot acquire a slot is rejected with ErrRateLimited (transient — the client
+	// may retry). Nil means no cap. Set via SetPutConcurrency before Register.
+	putSem chan struct{}
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -198,6 +206,18 @@ func (srv *Server) SetRateLimiter(l *OwnerRateLimiter) { srv.limiter = l }
 // Call before Register; a nil limiter (the default) meters nothing.
 func (srv *Server) SetSubnetRateLimiter(l *SubnetRateLimiter) { srv.subnetLimiter = l }
 
+// SetPutConcurrency installs an application-level semaphore capping the number of
+// PUT operations that may be in-flight at once. Each in-flight PUT allocates up to
+// MaxShardSize (64 MiB) for the shard payload, so bounding concurrency keeps peak
+// allocations at n×MaxShardSize regardless of the rcmgr's per-scope limit. A PUT
+// that cannot acquire a slot is rejected with ErrRateLimited so the client can
+// retry. n ≤ 0 disables the cap (default). Call before Register.
+func (srv *Server) SetPutConcurrency(n int) {
+	if n > 0 {
+		srv.putSem = make(chan struct{}, n)
+	}
+}
+
 // enforcePoW reports whether owner satisfies the node's proof-of-work admission
 // policy, returning ErrUnauthorized if not. A zero minimum difficulty accepts
 // any owner (the check is disabled).
@@ -284,6 +304,22 @@ func (srv *Server) handleShard(s network.Stream) {
 
 func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 	start := time.Now()
+
+	// Concurrency cap: acquire a slot before allocating the shard buffer so the
+	// total live allocation is bounded to cap×MaxShardSize. Reject immediately if
+	// all slots are taken — queuing would itself be a DoS vector — so the client
+	// gets ErrRateLimited and retries later.
+	if srv.putSem != nil {
+		select {
+		case srv.putSem <- struct{}{}:
+			defer func() { <-srv.putSem }()
+		default:
+			srv.log.Debug("shard put: concurrency cap reached", "event", "shard.put.rejected", "reason", "put_concurrency_cap", "peer", peer)
+			srv.replyErr(s, ErrRateLimited)
+			return
+		}
+	}
+
 	data, err := readBlob(s, MaxShardSize)
 	if err != nil {
 		srv.log.Debug("shard put: read blob", "peer", peer, "err", err)
