@@ -89,6 +89,7 @@ services:
       context: .
       target: node
     image: revika-node
+    restart: unless-stopped
     command:
       - -data=/data
       - -listen=/ip4/0.0.0.0/tcp/4001
@@ -110,6 +111,7 @@ services:
       context: .
       target: node
     image: revika-node
+    restart: unless-stopped
     depends_on: [seed]
     command:
       - -data=/data
@@ -127,6 +129,7 @@ services:
       context: .
       target: node
     image: revika-node
+    restart: unless-stopped
     depends_on: [seed]
     command:
       - -data=/data
@@ -149,6 +152,7 @@ services:
       context: .
       target: node
     image: revika-node
+    restart: unless-stopped
     depends_on: [seed]
     command:
       - -data=/data
@@ -167,6 +171,7 @@ services:
       context: .
       target: node
     image: revika-node
+    restart: unless-stopped
     depends_on: [seed]
     command:
       - -data=/data

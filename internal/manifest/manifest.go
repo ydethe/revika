@@ -246,6 +246,9 @@ func (c *ReadCap) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return fmt.Errorf("cap key: %w", err)
 	}
+	if len(jc.Shards) > maxManifestShardsPerChunk {
+		return fmt.Errorf("cap: shard count %d exceeds limit %d", len(jc.Shards), maxManifestShardsPerChunk)
+	}
 	shards := make([]store.ShardID, len(jc.Shards))
 	for i, s := range jc.Shards {
 		id, err := decodeShardID(s)

@@ -164,6 +164,18 @@ func run() error {
 	flag.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr with /p2p/<id> (repeatable)")
 	flag.Parse()
 
+	// If no -bootstrap peer was given on the command line, look for a text file
+	// at <data>/bootstrap (one multiaddr per line; '#' comments and blank lines
+	// are skipped). This lets an operator write the peer list once on disk
+	// instead of repeating it on every restart or in every process-manager unit.
+	// An explicit -bootstrap flag always takes precedence (the file is ignored
+	// when the flag was given).
+	if len(bootstrap) == 0 {
+		if addrs, err := readBootstrapFile(filepath.Join(*dataDir, "bootstrap")); err == nil {
+			bootstrap = addrs
+		}
+	}
+
 	// Role is decided purely by whether the operator named a bootstrap peer. A
 	// *seed* node (no -bootstrap) is the network's first node and is authoritative:
 	// it declares the whole cluster policy — proof-of-work admission, repair, and
@@ -911,4 +923,26 @@ func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog
 	}
 	stats.Record(freed, rep.DroppedRecords, rep.OrphanBlobs, time.Now())
 	return curr
+}
+
+// readBootstrapFile reads a text file of bootstrap multiaddrs, one per line.
+// '#' comments and blank lines are ignored. Returns nil, nil when the file
+// does not exist so callers can treat absence as "no static peers configured".
+func readBootstrapFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var addrs []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		addrs = append(addrs, line)
+	}
+	return addrs, nil
 }
