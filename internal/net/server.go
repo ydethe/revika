@@ -44,6 +44,11 @@ type Server struct {
 	announcer Announcer
 	ledger    *ledger.Ledger
 
+	// ctx is the node's process-lifetime context. Handlers use it so that in-flight
+	// store operations cancel promptly on shutdown rather than running until the
+	// 60 s stream timeout expires. Set via SetContext before Register.
+	ctx context.Context
+
 	// Proof-of-work admission policy. When powMin > 0, an owner identity
 	// presented on a write must satisfy powMin leading zero bits under powPuzzle
 	// (Argon2id), or the write is refused — raising the cost of minting a fresh
@@ -108,6 +113,19 @@ func NewServer(s store.Store, log *slog.Logger) *Server {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Server{store: s, log: log}
+}
+
+// SetContext wires the node's process-lifetime context into stream handlers so
+// in-flight operations cancel on shutdown. Call before Register.
+func (srv *Server) SetContext(ctx context.Context) { srv.ctx = ctx }
+
+// handlerCtx returns the context to use for a handler invocation. It falls back
+// to context.Background() when no shutdown context has been wired (e.g. in tests).
+func (srv *Server) handlerCtx() context.Context {
+	if srv.ctx != nil {
+		return srv.ctx
+	}
+	return context.Background()
 }
 
 // SetAnnouncer attaches a DHT announcer so accepted shards are advertised as
@@ -239,7 +257,7 @@ func (srv *Server) handleShard(s network.Stream) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := srv.handlerCtx()
 	switch op(opByte) {
 	case opPut:
 		srv.handlePut(ctx, s, peer)
@@ -418,6 +436,11 @@ func (srv *Server) announce(id store.ShardID) {
 		return
 	}
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				srv.log.Error("announce panicked", "event", "goroutine.panic", "label", "announce", "panic", fmt.Sprintf("%v", r))
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), provideTimeout)
 		defer cancel()
 		if err := srv.announcer.Announce(ctx, id); err != nil {
@@ -577,7 +600,7 @@ func (srv *Server) handleProbe(s network.Stream) {
 		_ = s.Reset()
 		return
 	}
-	data, err := srv.store.Get(context.Background(), id)
+	data, err := srv.store.Get(srv.handlerCtx(), id)
 	if err != nil {
 		// The node cannot answer the challenge for a shard it does not hold — the
 		// RX-side signal of a failed possession proof (a mover's proof-gated release

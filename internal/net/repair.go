@@ -2,6 +2,7 @@ package net
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
 	"sync"
@@ -37,6 +38,7 @@ import (
 //   AC-3  (Access Enforcement)                  — each regenerated write is authorized by the stripe's signed grant.
 type RepairStore struct {
 	*DHTStore
+	host  host.Host   // direct host reference for Probe dials
 	local store.Store // the repairing node's own blobs; consulted before the DHT
 	disc  *Discovery
 	desc  stripe.Descriptor
@@ -47,7 +49,8 @@ type RepairStore struct {
 	// address self-verify (a lying node cannot forge bytes that hash to the ID).
 	// Off (the default) keeps the cheap presence-byte check. Set with
 	// SetVerifyPossession; a local hit short-circuits either way (we hold it).
-	verify bool
+	verify   bool
+	useProbe bool // when true, additionally challenges a provider via ProbeProtocol
 
 	mu   sync.Mutex
 	next int
@@ -57,7 +60,7 @@ type RepairStore struct {
 // repairing node's own blob store, may be nil) then the DHT, placing regenerated
 // shards via disc-discovered nodes and authorizing them with grant.
 func NewRepairStore(h host.Host, local store.Store, disc *Discovery, d stripe.Descriptor, grant []byte) *RepairStore {
-	return &RepairStore{DHTStore: NewDHTStore(h, disc), local: local, disc: disc, desc: d, grant: grant}
+	return &RepairStore{DHTStore: NewDHTStore(h, disc), host: h, local: local, disc: disc, desc: d, grant: grant}
 }
 
 var _ store.Store = (*RepairStore)(nil)
@@ -70,6 +73,16 @@ var _ store.Store = (*RepairStore)(nil)
 // (revika-node -repair-verify) and, being a local defence, never inherited from
 // bootstrap. Call before driving repair.Check/Repair.
 func (r *RepairStore) SetVerifyPossession(v bool) { r.verify = v }
+
+// SetUseProbe enables the Probe-protocol layer on top of the fetch-verify
+// survival check (requires verify=true): after downloading and hash-verifying a
+// remote shard, the repairer also issues a fresh-nonce possession challenge
+// (/revika/probe/1.0.0) to a DHT provider. A provider that can serve valid bytes
+// but fails the nonce challenge is counted missing, so the shard is regenerated.
+// This adds nonce-freshness to the fetch guarantee: a node that cached a shard
+// temporarily cannot precompute the probe response for a novel nonce. Costs one
+// extra round-trip per remote shard check. Call before driving repair.Check/Repair.
+func (r *RepairStore) SetUseProbe(v bool) { r.useProbe = v }
 
 // Delete is not meaningful for repair.
 func (r *RepairStore) Delete(context.Context, store.ShardID) error { return ErrReadOnly }
@@ -90,7 +103,8 @@ func (r *RepairStore) Has(ctx context.Context, id store.ShardID) (bool, error) {
 		}
 	}
 	if r.verify {
-		if _, err := r.DHTStore.Get(ctx, id); err != nil {
+		data, err := r.DHTStore.Get(ctx, id)
+		if err != nil {
 			// Unavailable or corrupt everywhere the DHT can reach: treat as a missing
 			// shard so repair regenerates it. Any other error (context cancelled, a
 			// DHT lookup failure) is inconclusive and surfaced to the caller.
@@ -98,6 +112,15 @@ func (r *RepairStore) Has(ctx context.Context, id store.ShardID) (bool, error) {
 				return false, nil
 			}
 			return false, err
+		}
+		if r.useProbe {
+			if ok, _ := r.probeOne(ctx, id, data); !ok {
+				// Provider failed the nonce challenge: treat as missing so repair
+				// regenerates the shard. Probe errors (network, no providers) are
+				// silently converted to false rather than surfaced, so a transient
+				// connectivity issue does not trigger spurious regeneration.
+				return false, nil
+			}
 		}
 		return true, nil
 	}
@@ -112,6 +135,30 @@ func (r *RepairStore) Get(ctx context.Context, id store.ShardID) ([]byte, error)
 		}
 	}
 	return r.DHTStore.Get(ctx, id)
+}
+
+// probeOne finds one DHT provider for id and sends it a fresh-nonce Probe
+// challenge verified against data (the caller's copy of the shard bytes). Returns
+// (true, nil) only if the challenge is answered correctly. Any error or an absent
+// provider returns (false, nil) so the caller silently treats the shard as missing.
+func (r *RepairStore) probeOne(ctx context.Context, id store.ShardID, data []byte) (bool, error) {
+	providers, err := r.disc.FindProviders(ctx, id, 1)
+	if err != nil || len(providers) == 0 {
+		return false, nil
+	}
+	pi := providers[0]
+	if err := r.ensureConnected(ctx, pi); err != nil {
+		return false, nil
+	}
+	nonce := make([]byte, NonceSize)
+	if _, err := cryptorand.Read(nonce); err != nil {
+		return false, nil
+	}
+	ok, err := NewNetStore(r.host, pi.ID).Probe(ctx, id, data, nonce)
+	if err != nil {
+		return false, nil
+	}
+	return ok, nil
 }
 
 // Put places a regenerated shard on a storage node that does not already hold it,

@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -132,6 +133,8 @@ func run() error {
 		repairOn      = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
 		repairEvery   = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
 		repairVerify  = flag.Bool("repair-verify", false, "harden the repair survival check: confirm a remote shard by fetching and self-verifying it (hash==ID) instead of trusting the holder's presence byte, so a lying node cannot fake availability. Costs a shard download per remote check. LOCAL defence, never inherited")
+		repairProbe   = flag.Bool("repair-probe", false, "harden the repair survival check with a fresh-nonce Probe challenge after fetch+verify (requires -repair-verify). A node that served valid shard bytes but fails the nonce challenge is counted missing. More expensive: one extra round-trip per remote shard check. LOCAL defence, never inherited")
+		relayService  = flag.Bool("relay", false, "run as a circuit-relay v2 server for peers behind NAT (needs a public IP and sufficient bandwidth; implies NAT traversal)")
 		rebalanceOn   = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
 		rebalEvery    = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
 		rebalThresh   = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
@@ -210,6 +213,7 @@ func run() error {
 	}
 
 	startedAt := time.Now()
+	var wg sync.WaitGroup
 
 	// The process-lifetime context: cancelled on SIGINT/SIGTERM, it bounds the
 	// DHT and its background loops so they stop cleanly on shutdown.
@@ -292,11 +296,13 @@ func run() error {
 	}
 
 	h, err := net.NewHost(net.HostConfig{
-		ListenAddrs:  listen,
-		IdentityPath: filepath.Join(*dataDir, "keys", "node.key"),
-		PublicIP:     *publicIP,
-		Defense:      defense,
-		Log:          log,
+		ListenAddrs:        listen,
+		IdentityPath:       filepath.Join(*dataDir, "keys", "node.key"),
+		PublicIP:           *publicIP,
+		Defense:            defense,
+		EnableNATTraversal: true,
+		EnableRelayService: *relayService,
+		Log:                log,
 	})
 	if err != nil {
 		return err
@@ -504,13 +510,15 @@ func run() error {
 		if *advertiseOn {
 			disc.AdvertiseLoop(ctx)
 		}
-		go reprovideLoop(ctx, disc, blobs, log)
+		supervise(ctx, &wg, "reprovide", log, func() { reprovideLoop(ctx, disc, blobs, log) })
 		// Actively (and observably) discover peer storage nodes over the DHT.
-		go discoveryLoop(ctx, disc, log)
+		supervise(ctx, &wg, "discovery", log, func() { discoveryLoop(ctx, disc, log) })
 		// Repair needs the DHT to find sibling shards and place regenerated ones,
 		// so it only runs when the node participates in the DHT.
 		if effRepairOn {
-			go repairLoop(ctx, h, blobs, disc, led, log, effRepairEvery, *repairVerify)
+			supervise(ctx, &wg, "repair", log, func() {
+				repairLoop(ctx, h, blobs, disc, led, log, effRepairEvery, *repairVerify, *repairProbe)
+			})
 		}
 		// Rebalancing likewise needs the DHT: it discovers candidate targets and
 		// relies on provider records to keep a moved shard addressable.
@@ -530,10 +538,11 @@ func run() error {
 			rb.SetThreshold(effRebalThresh)
 			rb.SetCooldown(2 * effRebalEvery)
 			rb.SetAbuseMonitor(abuse)
-			go rebalanceLoop(ctx, rb, log, effRebalEvery)
+			supervise(ctx, &wg, "rebalance", log, func() { rebalanceLoop(ctx, rb, log, effRebalEvery) })
 		}
 	}
 
+	srv.SetContext(ctx)
 	srv.Register(h)
 
 	// Versioned stream protocols now installed on the host, for the startup banner
@@ -549,7 +558,7 @@ func run() error {
 	// enabled, expired leases), keeping disk and ledger aligned. Its activity is
 	// recorded into gcStats so the metrics server can report it.
 	gcStats := net.NewGCStats()
-	go gcLoop(ctx, blobs, led, log, *gcInterval, *gcExpired, gcStats)
+	supervise(ctx, &wg, "gc", log, func() { gcLoop(ctx, blobs, led, log, *gcInterval, *gcExpired, gcStats) })
 
 	// Metrics/status HTTP server (plain HTTP; front it with a TLS-terminating
 	// reverse proxy). disc is nil when the DHT is off, which the server handles.
@@ -570,11 +579,11 @@ func run() error {
 				defer c.Close()
 			}
 		}
-		go func() {
-			if err := ms.Serve(ctx, *metricsAddr); err != nil {
+		supervise(ctx, &wg, "metrics", log, func() {
+			if err := ms.Serve(ctx, *metricsAddr); err != nil && ctx.Err() == nil {
 				log.Error("metrics: server stopped", "err", err)
 			}
-		}()
+		})
 	}
 
 	addrs := make([]string, 0, len(h.Addrs()))
@@ -598,9 +607,17 @@ func run() error {
 		"metrics", *metricsAddr,
 	)
 
-	// Block until interrupted, then shut down cleanly.
+	// Block until interrupted, then drain background goroutines before returning
+	// so deferred cleanup (host, ledger, DHT) runs only after the loops have stopped.
 	<-ctx.Done()
 	log.Info("shutting down", "event", "node.stop")
+	drained := make(chan struct{})
+	go func() { wg.Wait(); close(drained) }()
+	select {
+	case <-drained:
+	case <-time.After(10 * time.Second):
+		log.Warn("shutdown: timed out waiting for goroutines", "event", "node.drain.timeout")
+	}
 	return nil
 }
 
@@ -719,7 +736,7 @@ func discoveryLoop(ctx context.Context, disc *net.Discovery, log *slog.Logger) {
 // first (and stores nothing when a sibling already reappeared) makes duplicate work
 // rare and always harmless — content-addressed Put and per-owner AddOwner are
 // idempotent.
-func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool) {
+func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool, useProbe bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -727,7 +744,7 @@ func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runRepair(ctx, h, blobs, disc, led, log, interval, verify)
+			runRepair(ctx, h, blobs, disc, led, log, interval, verify, useProbe)
 		}
 	}
 }
@@ -735,7 +752,7 @@ func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.D
 // runRepair performs one repair cycle. Stripe rows that describe the same stripe
 // (a node may hold several of a stripe's shards) are deduplicated so each stripe
 // is checked once.
-func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool) {
+func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool, useProbe bool) {
 	rows, err := led.Stripes()
 	if err != nil {
 		log.Warn("repair: list stripes", "err", err)
@@ -760,6 +777,7 @@ func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Di
 
 		rs := net.NewRepairStore(h, blobs, disc, desc, row.Grant)
 		rs.SetVerifyPossession(verify)
+		rs.SetUseProbe(useProbe)
 		man := pipeline.FileManifest{
 			Params: pipeline.Config{Params: erasure.Params{K: row.K, M: row.M}},
 			Chunks: []pipeline.ChunkRef{{Shards: desc.Shards}},
@@ -847,6 +865,60 @@ func sleepJitter(ctx context.Context, interval time.Duration) bool {
 	case <-t.C:
 		return true
 	}
+}
+
+// supervise runs fn in a goroutine that restarts it after a panic, with
+// exponential backoff. A clean return while ctx is still live (unexpected for a
+// loop) also triggers a restart. The goroutine stops permanently when ctx is
+// cancelled and fn returns.  wg is incremented before the goroutine starts so the
+// caller can drain all supervised goroutines on shutdown.
+func supervise(ctx context.Context, wg *sync.WaitGroup, label string, log *slog.Logger, fn func()) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		backoff := time.Second
+		const maxBackoff = 30 * time.Second
+		for {
+			panicked := runSafe(label, log, fn)
+			if ctx.Err() != nil {
+				return
+			}
+			// fn exited while ctx is still live: restart after backoff.
+			if panicked {
+				log.Error("goroutine panicked; restarting after backoff",
+					"event", "goroutine.restart", "label", label, "backoff", backoff)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+				backoff = min(backoff*2, maxBackoff)
+			} else {
+				log.Warn("goroutine exited unexpectedly; restarting",
+					"event", "goroutine.restart", "label", label)
+				backoff = time.Second // reset on clean-but-unexpected exit
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+			}
+		}
+	}()
+}
+
+// runSafe calls fn, catching any panic and logging it. Returns true if a panic
+// was recovered.
+func runSafe(label string, log *slog.Logger, fn func()) (panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("goroutine panicked", "event", "goroutine.panic",
+				"label", label, "panic", fmt.Sprintf("%v", r))
+			panicked = true
+		}
+	}()
+	fn()
+	return false
 }
 
 // gcLoop runs the garbage collector on a fixed cadence until ctx is cancelled.
