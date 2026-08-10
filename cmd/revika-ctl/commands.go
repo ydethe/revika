@@ -665,6 +665,7 @@ func cmdCp(args []string) error {
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
 	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing writes (default <workspace>/keys/user.sign.key)")
 	grantTTL := fs.Duration("grant-ttl", 0, "expiry of the repair grants attached to stored shards (0 = never)")
+	placementMode := fs.String("placement", "round-robin", "node-selection policy: round-robin (default, even rotation) or weighted (proportional to advertised free space)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -680,7 +681,7 @@ func cmdCp(args []string) error {
 
 	switch {
 	case isRvk(dst) && !isRvk(src):
-		return cpStore(ctx, ws, src, rvkPath(dst), *keyPath, *signKeyFlag, *node, *grantTTL)
+		return cpStore(ctx, ws, src, rvkPath(dst), *keyPath, *signKeyFlag, *node, *grantTTL, *placementMode)
 	case isRvk(src) && !isRvk(dst):
 		return cpRetrieve(ctx, ws, rvkPath(src), dst, *keyPath, *node)
 	case isRvk(src) && isRvk(dst):
@@ -693,7 +694,7 @@ func cmdCp(args []string) error {
 // cpStore stores the local src (a file, symlink, or directory) into the
 // namespace at dstRvk, grafting it into the -root and committing an advanced
 // RootPointer.
-func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFlag, node string, grantTTL time.Duration) error {
+func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFlag, node string, grantTTL time.Duration, placementMode string) error {
 	rootFile := ws.RootFile
 	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(signKeyFlag))
 	if err != nil {
@@ -721,6 +722,11 @@ func cpStore(ctx context.Context, ws *Workspace, src, dstRvk, keyPath, signKeyFl
 		return err
 	}
 	defer closer()
+	if ps, ok := s.(*net.PlacementStore); ok && placementMode == "weighted" {
+		ps.FetchAndUpdateCapacities(ctx)
+		const capacityUnitBytes = 1 << 30 // 1 GiB granularity
+		ps.SetCapacityWeighted(capacityUnitBytes)
+	}
 
 	root, err := currentRoot(ctx, s, cfg, prev, exists)
 	if err != nil {
@@ -1454,6 +1460,116 @@ func cmdRevoke(args []string) error {
 	fmt.Printf("Revoked rvk:%s — rotated caps under a fresh key, advanced root to seq %d\n", target, prev.Seq+1)
 	fmt.Printf("Reclaimed %d orphaned shard(s) (%d already absent, %d still shared, %d failed)\n", deleted, missing, kept, failed)
 	fmt.Println("Note: previously-shared caps can no longer read the current data; already-downloaded copies cannot be recalled.")
+	return nil
+}
+
+// --- renew ----------------------------------------------------------------
+
+// cmdRenew extends the lease on every shard in the named namespace path without
+// re-uploading data. On each shard's holding node, the server advances the expiry
+// by the lease TTL it was configured with on the original PUT. In single-node mode
+// (-node) all shards are renewed on that node directly. In DHT mode, each shard's
+// providers are discovered and the first responding provider renews the lease.
+// This is the client-side of the lease-renewal protocol (opRenew, issue #5).
+func cmdRenew(args []string) error {
+	fs := flag.NewFlagSet("renew", flag.ExitOnError)
+	node := addBackendFlags(fs)
+	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
+	keyPath := fs.String("key", "", "private key to open a sealed shared root")
+	signKeyFlag := fs.String("signkey", "", "your signing key (default <workspace>/keys/user.sign.key)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || !isRvk(fs.Arg(0)) {
+		return fmt.Errorf("usage: renew rvk:PATH")
+	}
+	target := rvkPath(fs.Arg(0))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	ws, err := resolveWorkspace(*rootFlag)
+	if err != nil {
+		return err
+	}
+	signer, err := loadOrCreateSignKey(ws, ws.signKeyPath(*signKeyFlag))
+	if err != nil {
+		return err
+	}
+	prev, exists, _, err := loadRoot(ws.RootFile, *keyPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("namespace root %s does not exist; nothing to renew", ws.RootFile)
+	}
+
+	eNode, eBootstrap := ws.backend(*node)
+
+	var (
+		readStore  store.Store
+		closeStore func()
+		renewer    func(ctx context.Context, id store.ShardID) bool
+	)
+
+	if eNode != "" {
+		// Single-node mode: use the same connection for reading and renewing.
+		h, pid, closer, herr := dialHost(ctx, eNode)
+		if herr != nil {
+			return herr
+		}
+		closeStore = closer
+		readStore = net.NewNetStore(h, pid)
+		signed := net.NewNetStoreSigned(h, pid, signer)
+		renewer = func(ctx context.Context, id store.ShardID) bool {
+			return signed.Renew(ctx, id) == nil
+		}
+	} else {
+		// DHT mode: join once, use for both manifest reading and renewing.
+		h, disc, closer, herr := joinDHT(ctx, eBootstrap)
+		if herr != nil {
+			return herr
+		}
+		closeStore = closer
+		readStore = net.NewDHTStore(h, disc)
+		renewer = func(ctx context.Context, id store.ShardID) bool {
+			providers, perr := disc.FindProviders(ctx, id, 3)
+			if perr != nil || len(providers) == 0 {
+				return false
+			}
+			for _, pi := range providers {
+				ns := net.NewNetStoreSigned(h, pi.ID, signer)
+				if ns.Renew(ctx, id) == nil {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	defer closeStore()
+
+	victim, err := manifest.Resolve(ctx, readStore, prev.Root, target)
+	if err != nil {
+		return fmt.Errorf("resolve rvk:%s: %w", target, err)
+	}
+	shards := map[store.ShardID]struct{}{}
+	if err := collectShards(ctx, readStore, victim, shards); err != nil {
+		return fmt.Errorf("enumerate shards of rvk:%s: %w", target, err)
+	}
+
+	var renewed, failed int
+	for id := range shards {
+		if renewer(ctx, id) {
+			renewed++
+		} else {
+			failed++
+		}
+	}
+	fmt.Fprintf(os.Stdout, "renewed %d shards", renewed)
+	if failed > 0 {
+		fmt.Fprintf(os.Stdout, ", %d shards could not be renewed", failed)
+	}
+	fmt.Fprintln(os.Stdout)
 	return nil
 }
 

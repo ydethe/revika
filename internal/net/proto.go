@@ -84,6 +84,7 @@ const (
 	opGet    op = 2
 	opHas    op = 3
 	opDelete op = 4
+	opRenew  op = 5
 )
 
 // status is the first byte of every response.

@@ -84,6 +84,8 @@ func main() {
 		err = cmdRm(args)
 	case "revoke":
 		err = cmdRevoke(args)
+	case "renew":
+		err = cmdRenew(args)
 	case "share":
 		err = cmdShare(args)
 	case "node":

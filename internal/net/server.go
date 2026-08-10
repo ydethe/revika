@@ -274,6 +274,8 @@ func (srv *Server) handleShard(s network.Stream) {
 		srv.handleHas(ctx, s, peer)
 	case opDelete:
 		srv.handleDelete(ctx, s, peer)
+	case opRenew:
+		srv.handleRenew(ctx, s, peer)
 	default:
 		srv.log.Debug("shard: unknown op", "peer", peer, "op", opByte)
 		srv.replyErr(s, fmt.Errorf("unknown op %d", opByte))
@@ -591,6 +593,47 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 	// owner (removed=true) and the blob was physically deleted, or the shard
 	// lives on for its other owners.
 	srv.log.Info("shard deleted", "event", "shard.delete", "peer", peer, "id", id, "removed", remaining == 0, "owners_left", remaining)
+	_ = writeByte(s, byte(statusOK))
+}
+
+func (srv *Server) handleRenew(ctx context.Context, s network.Stream, peer any) {
+	id, err := readID(s)
+	if err != nil {
+		srv.log.Debug("shard renew: read id", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	token, err := readBlob(s, authTokenSize)
+	if err != nil {
+		srv.log.Debug("shard renew: read token", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	now := time.Now()
+	owner, err := verifyToken(token, opRenew, id, s.Conn().LocalPeer(), now)
+	if err != nil {
+		srv.log.Debug("shard renew: unauthorized", "peer", peer, "id", id, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	// Replay check — same policy as PUT/DELETE.
+	var sig [cap.SignatureSize]byte
+	copy(sig[:], token[cap.SignPubKeySize+8:])
+	if srv.tokenCache.seen(sig, now) {
+		srv.log.Debug("shard renew: token replay rejected", "event", "shard.renew.rejected", "reason", "token_replay", "peer", peer, "id", id)
+		srv.replyErr(s, ErrUnauthorized)
+		return
+	}
+	if srv.ledger == nil {
+		_ = writeByte(s, byte(statusOK))
+		return
+	}
+	if err := srv.ledger.RenewLease(id, owner, now); err != nil {
+		srv.log.Debug("shard renew: renew lease", "peer", peer, "id", id, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	srv.log.Debug("shard renewed", "event", "shard.renew", "peer", peer, "id", id)
 	_ = writeByte(s, byte(statusOK))
 }
 

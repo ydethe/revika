@@ -312,6 +312,29 @@ func effectiveQuota(opts Options, firstSeenUnix int64, now time.Time) int64 {
 	return max(int64(float64(full)*ratio), 1)
 }
 
+// RenewLease extends the lease expiry for an existing owner claim on id. It
+// returns ErrUnauthorized when owner does not currently hold id (the caller
+// never owned or has already dropped it). When the ledger has no LeaseTTL
+// configured (TTL == 0), the lease has no expiry and RenewLease is a no-op.
+func (l *Ledger) RenewLease(id store.ShardID, owner []byte, now time.Time) error {
+	if l.opts.LeaseTTL == 0 {
+		return nil // no expiry configured; leases are perpetual
+	}
+	expiry := now.Add(l.opts.LeaseTTL).Unix()
+	res, err := l.db.Exec(
+		`UPDATE owners SET put_at=?, expiry=? WHERE shard_id=? AND owner=?`,
+		now.Unix(), expiry, id[:], owner,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrUnauthorized
+	}
+	return nil
+}
+
 // RemoveOwner drops owner's claim on id and returns how many owners remain. It
 // returns ErrUnauthorized (and makes no change) if owner never held id. When
 // remaining is 0 the caller should delete the blob and then call DropRecord.

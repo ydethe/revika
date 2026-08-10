@@ -145,6 +145,12 @@ type PlacementStore struct {
 	sel      placement.Selector
 	cand     []placement.Node
 	byNodeID map[placement.NodeID]peer.ID
+
+	// capacityUnit, when > 0, activates capacity-proportional weighted
+	// selection: nextTarget calls placement.WeightByFree(cand, capacityUnit)
+	// before each Pick, so a node with 2×capacityUnit free bytes gets roughly
+	// twice the shards. Set via SetCapacityWeighted.
+	capacityUnit int64
 }
 
 var (
@@ -185,6 +191,44 @@ func (p *PlacementStore) Nodes() []peer.ID { return p.nodes }
 // Call before storing; it is not safe to change concurrently with Put.
 func (p *PlacementStore) SetSelector(sel placement.Selector) { p.sel = sel }
 
+// UpdateCapacities refreshes the Free-bytes field on each candidate node from
+// the supplied map. A selector that weighs capacity (e.g. placement.Weighted
+// after placement.WeightByFree) will use these values on the next Pick. Nodes
+// absent from the map retain their prior Free value (zero = unknown).
+func (p *PlacementStore) UpdateCapacities(free map[placement.NodeID]int64) {
+	for i, n := range p.cand {
+		if f, ok := free[n.ID]; ok {
+			p.cand[i].Free = f
+		}
+	}
+}
+
+// FetchAndUpdateCapacities queries each candidate node's load report over
+// BalanceProtocol and updates their Free-bytes field so capacity-aware
+// selectors (placement.Weighted after placement.WeightByFree) have fresh data.
+// Nodes that fail to respond retain their prior value (zero = unknown).
+func (p *PlacementStore) FetchAndUpdateCapacities(ctx context.Context) {
+	for i, n := range p.cand {
+		pid := p.byNodeID[n.ID]
+		if lr, err := QueryLoad(ctx, p.h, pid); err == nil {
+			p.cand[i].Free = lr.FreeBytes()
+		}
+	}
+}
+
+// SetCapacityWeighted switches to a capacity-proportional weighted selector.
+// unitBytes is the granularity: a node with unitBytes free gets weight 1; with
+// 2*unitBytes, weight 2, etc. A node with unknown free space (0) gets weight 1.
+// Call FetchAndUpdateCapacities first to populate free-space values.
+// The default (0) keeps the existing selector unchanged.
+func (p *PlacementStore) SetCapacityWeighted(unitBytes int64) {
+	if unitBytes <= 0 {
+		return
+	}
+	p.sel = placement.NewWeighted()
+	p.capacityUnit = unitBytes
+}
+
 // SetGrantExpiry sets the unix-timestamp expiry stamped into the repair grants
 // attached by PutStripe (0 = never expire, the default). Call before storing.
 func (p *PlacementStore) SetGrantExpiry(ts int64) { p.grantExpiry = ts }
@@ -192,9 +236,14 @@ func (p *PlacementStore) SetGrantExpiry(ts int64) { p.grantExpiry = ts }
 // nextTarget picks the next node via the placement selector, mapping its
 // NodeID back to the peer.ID to dial. The candidate set is fixed and non-empty
 // (NewPlacementStore rejects an empty set), so Pick cannot fail here; any error
-// falls back to the first node rather than dropping the shard.
+// falls back to the first node rather than dropping the shard. When a
+// capacityUnit is set, candidates are weighted by free space before picking.
 func (p *PlacementStore) nextTarget() peer.ID {
-	nid, err := p.sel.Pick(p.cand)
+	cand := p.cand
+	if p.capacityUnit > 0 {
+		cand = placement.WeightByFree(p.cand, p.capacityUnit)
+	}
+	nid, err := p.sel.Pick(cand)
 	if err != nil {
 		return p.nodes[0]
 	}

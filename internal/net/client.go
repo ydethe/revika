@@ -265,6 +265,31 @@ func (n *NetStore) Delete(ctx context.Context, id store.ShardID) error {
 	return readResp(s)
 }
 
+// Renew extends the lease on id at the target node without re-uploading the
+// shard. The node must already record owner as a holder (established by a
+// previous Put). This is cheaper than a full re-PUT: only the shardID + signed
+// token travel over the wire, so renewal scales to large namespaces.
+func (n *NetStore) Renew(ctx context.Context, id store.ShardID) error {
+	s, err := n.openStream(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	if err := writeByte(s, byte(opRenew)); err != nil {
+		_ = s.Reset()
+		return err
+	}
+	if err := writeID(s, id); err != nil {
+		_ = s.Reset()
+		return err
+	}
+	if err := writeBlob(s, n.authToken(opRenew, id)); err != nil {
+		_ = s.Reset()
+		return err
+	}
+	return readResp(s)
+}
+
 // Probe issues a proof-of-possession challenge for id and returns true iff the
 // node proves it holds the exact bytes. want is the caller's own copy of the
 // shard bytes, against which the node's SHA-256(nonce||bytes) response is
