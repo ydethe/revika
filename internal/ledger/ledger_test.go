@@ -466,3 +466,54 @@ func containsOnly(got []store.ShardID, want ...store.ShardID) bool {
 	}
 	return true
 }
+
+// TestRevokeGrant verifies the basic contract: a nonce that has been revoked is
+// reported as revoked, an unknown nonce is not, and revocation is idempotent.
+func TestRevokeGrant(t *testing.T) {
+	l := open(t, Options{})
+
+	nonce := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+	owner := alice
+
+	// Before revocation: not revoked.
+	revoked, err := l.IsGrantRevoked(nonce)
+	if err != nil {
+		t.Fatalf("IsGrantRevoked (pre): %v", err)
+	}
+	if revoked {
+		t.Fatal("nonce reported revoked before any revocation")
+	}
+
+	// Revoke it.
+	if err := l.RevokeGrant(nonce, owner); err != nil {
+		t.Fatalf("RevokeGrant: %v", err)
+	}
+
+	// After revocation: is revoked.
+	revoked, err = l.IsGrantRevoked(nonce)
+	if err != nil {
+		t.Fatalf("IsGrantRevoked (post): %v", err)
+	}
+	if !revoked {
+		t.Fatal("nonce not revoked after RevokeGrant")
+	}
+
+	// Idempotent: a second call must not error.
+	if err := l.RevokeGrant(nonce, owner); err != nil {
+		t.Fatalf("RevokeGrant (idempotent): %v", err)
+	}
+}
+
+// TestRevokeGrantUnknownNonce verifies that a nonce that was never revoked is
+// reported as not-revoked (false, nil) rather than an error.
+func TestRevokeGrantUnknownNonce(t *testing.T) {
+	l := open(t, Options{})
+	other := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11}
+	revoked, err := l.IsGrantRevoked(other)
+	if err != nil {
+		t.Fatalf("IsGrantRevoked (unknown): %v", err)
+	}
+	if revoked {
+		t.Fatal("unknown nonce reported as revoked")
+	}
+}

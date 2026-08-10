@@ -157,3 +157,61 @@ func TestGrantVerifyRejects(t *testing.T) {
 		}
 	})
 }
+
+// TestGrantNonceUnique verifies that two grants built for the same stripe and
+// expiry produce different nonces, so each grant is independently revocable.
+func TestGrantNonceUnique(t *testing.T) {
+	sk, _, _ := cap.GenerateSigningKey()
+	d := mkDesc(4, 2)
+	g1, err := BuildGrant(sk, d, 0)
+	if err != nil {
+		t.Fatalf("build g1: %v", err)
+	}
+	g2, err := BuildGrant(sk, d, 0)
+	if err != nil {
+		t.Fatalf("build g2: %v", err)
+	}
+	n1, err := GrantNonce(g1)
+	if err != nil {
+		t.Fatalf("nonce g1: %v", err)
+	}
+	n2, err := GrantNonce(g2)
+	if err != nil {
+		t.Fatalf("nonce g2: %v", err)
+	}
+	if bytes.Equal(n1, n2) {
+		t.Errorf("consecutive grants have identical nonces (%x): revocation would invalidate both", n1)
+	}
+}
+
+// TestGrantNonceTamperedFails verifies that mutating the nonce byte range in a
+// valid grant breaks signature verification, so a tampered nonce is detected.
+func TestGrantNonceTamperedFails(t *testing.T) {
+	sk, _, _ := cap.GenerateSigningKey()
+	d := mkDesc(4, 2)
+	grant, _ := BuildGrant(sk, d, 0)
+
+	tampered := append([]byte{}, grant...)
+	// Flip the first nonce byte (at grantNonceOffset).
+	tampered[grantNonceOffset] ^= 0xff
+	if _, err := VerifyGrant(tampered, d, time.Unix(0, 0)); err == nil {
+		t.Errorf("tampered nonce: expected VerifyGrant to return an error")
+	}
+}
+
+// TestGrantNonceHelperErrors verifies that GrantNonce rejects a grant that is
+// not exactly GrantSize bytes.
+func TestGrantNonceHelperErrors(t *testing.T) {
+	sk, _, _ := cap.GenerateSigningKey()
+	d := mkDesc(4, 2)
+	grant, _ := BuildGrant(sk, d, 0)
+
+	// Short by one byte.
+	if _, err := GrantNonce(grant[:GrantSize-1]); err == nil {
+		t.Errorf("short grant: expected error from GrantNonce")
+	}
+	// Correct length: must succeed.
+	if _, err := GrantNonce(grant); err != nil {
+		t.Errorf("valid grant: unexpected GrantNonce error: %v", err)
+	}
+}

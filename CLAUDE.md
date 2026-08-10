@@ -272,7 +272,7 @@ internal/
   erasure/   Reed–Solomon encode/decode
   compress/  optional pre-encryption DEFLATE stage (per-chunk, skipped when it doesn't help)
   chunk/     fixed-size chunking (CDC planned)
-  stripe/    non-confidential erasure metadata (Descriptor) + signed repair grant
+  stripe/    non-confidential erasure metadata (Descriptor) + signed repair grant with expiry + nonce-based revocation
   pipeline/  StoreFile/LoadFile + FileManifest (in-memory; serialized to local JSON by revika-ctl)
   repair/    availability probes + shard regeneration
   net/       libp2p host, shard/probe protocols, NetStore, ledger-gated Server, DHT
@@ -280,7 +280,7 @@ internal/
   cap/       ML-KEM-768 cap wrapping (Wrap/Unwrap) + Ed25519 signing identity
   device/    signed device-authorization record (Auth = owner-signed set of ML-KEM device
              pubkeys); read-revocable device model under the offline master credential (§3.7.2)
-  ledger/    per-node SQLite ownership/lease/quota + stripe index
+  ledger/    per-node SQLite ownership/lease/quota + stripe index + revoked_grants table
   manifest/  cap-addressed encrypted file/dir blobs = Merkle DAG (ReadCap, DirManifest,
              COW Graft, signed RootPointer); reuses pipeline blobs + cap wrapping
   fsmeta/    capture/restore live-file attributes ⇄ pipeline.Metadata (Linux + portable split);

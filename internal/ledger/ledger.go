@@ -84,7 +84,7 @@ type Ledger struct {
 // detect whether it needs to migrate and whether the database was written by a
 // newer binary (in which case it refuses to open and tells the operator to
 // upgrade). Bump this constant whenever a new migration is added.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // schemaV0 is the original table layout (created with IF NOT EXISTS so it is
 // safe to run against a database that already has some or all of these tables
@@ -150,6 +150,18 @@ var ledgerMigrations = []func(*sql.Tx) error{
 			}
 		}
 		return nil
+	},
+	// Migration 1 → 2: add the revoked_grants table for nonce-based grant
+	// revocation. A revoked nonce is refused on any future grant-authorized PUT so
+	// an intercepted grant cannot be used to place shards after the owner revokes
+	// it, even if the grant has not yet reached its TTL expiry.
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS revoked_grants (
+			nonce      BLOB PRIMARY KEY,
+			owner      BLOB NOT NULL,
+			revoked_at INTEGER NOT NULL
+		)`)
+		return err
 	},
 }
 
@@ -863,6 +875,29 @@ func (l *Ledger) recomputeAccounts(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// RevokeGrant records grant nonce as revoked by owner. A revoked grant nonce is
+// refused on any future grant-authorized PUT, so an intercepted grant cannot be
+// used to place shards after revocation. It is idempotent (a second call for
+// the same nonce is a no-op).
+func (l *Ledger) RevokeGrant(nonce, owner []byte) error {
+	_, err := l.db.Exec(
+		`INSERT OR IGNORE INTO revoked_grants (nonce, owner, revoked_at) VALUES (?, ?, ?)`,
+		nonce, owner, time.Now().Unix(),
+	)
+	return err
+}
+
+// IsGrantRevoked reports whether nonce has been revoked. Returns (false, nil)
+// when the nonce is unknown (not revoked).
+func (l *Ledger) IsGrantRevoked(nonce []byte) (bool, error) {
+	var count int
+	err := l.db.QueryRow(`SELECT COUNT(*) FROM revoked_grants WHERE nonce=?`, nonce).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // scanIDs reads a result set of single BLOB id columns into ShardIDs.

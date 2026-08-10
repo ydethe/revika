@@ -296,6 +296,8 @@ func (srv *Server) handleShard(s network.Stream) {
 		srv.handleDelete(ctx, s, peer)
 	case opRenew:
 		srv.handleRenew(ctx, s, peer)
+	case opRevokeGrant:
+		srv.handleRevokeGrant(ctx, s, peer)
 	default:
 		srv.log.Debug("shard: unknown op", "peer", peer, "op", opByte)
 		srv.replyErr(s, fmt.Errorf("unknown op %d", opByte))
@@ -373,6 +375,21 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 		if d, derr := stripe.UnmarshalDescriptor(stripeBytes); derr == nil {
 			if o, gerr := stripe.VerifyGrant(grant, d, now); gerr == nil && d.Contains(id) {
 				desc, grantOwner, stripeOK = d, o, true
+			}
+		}
+	}
+	// Revocation check: if the grant verified, confirm its nonce has not been
+	// revoked. A revoked nonce means the owner explicitly invalidated this grant
+	// after issuance (e.g. after a suspected interception), so even a
+	// cryptographically valid grant must be refused.
+	if stripeOK {
+		if nonce, nonceErr := stripe.GrantNonce(grant); nonceErr == nil {
+			if srv.ledger != nil {
+				if revoked, rErr := srv.ledger.IsGrantRevoked(nonce); rErr == nil && revoked {
+					srv.log.Debug("shard put: grant revoked", "event", "shard.put.rejected", "reason", "grant_revoked", "peer", peer, "id", id)
+					srv.replyErr(s, ErrUnauthorized)
+					return
+				}
 			}
 		}
 	}
@@ -726,6 +743,52 @@ func (srv *Server) handleProbe(s network.Stream) {
 	// Probes are a frequent repair heartbeat, so this stays at Debug — it proves
 	// the node answered a possession challenge for a shard it holds.
 	srv.log.Debug("probe answered", "event", "probe", "peer", peer, "id", id)
+}
+
+func (srv *Server) handleRevokeGrant(ctx context.Context, s network.Stream, peer any) {
+	// Read the 8-byte grant nonce the client wants to revoke.
+	var nonce [8]byte
+	if _, err := io.ReadFull(s, nonce[:]); err != nil {
+		srv.log.Debug("shard revoke-grant: read nonce", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	token, err := readBlob(s, authTokenSize)
+	if err != nil {
+		srv.log.Debug("shard revoke-grant: read token", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	// Verify the auth token. The zero ShardID binds the token to the revoke
+	// operation without tying it to a specific shard.
+	now := time.Now()
+	owner, err := verifyToken(token, opRevokeGrant, store.ShardID{}, s.Conn().LocalPeer(), now)
+	if err != nil {
+		srv.log.Debug("shard revoke-grant: unauthorized", "peer", peer, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	// Replay check: same policy as PUT/DELETE — the signature must not be reused
+	// within its validity window.
+	var sig [cap.SignatureSize]byte
+	copy(sig[:], token[cap.SignPubKeySize+8:])
+	if srv.tokenCache.seen(sig, now) {
+		srv.log.Debug("shard revoke-grant: token replay rejected", "event", "shard.revoke_grant.rejected", "reason", "token_replay", "peer", peer)
+		srv.replyErr(s, ErrUnauthorized)
+		return
+	}
+	// Without a ledger there is no revocation store; treat as a no-op.
+	if srv.ledger == nil {
+		_ = writeByte(s, byte(statusOK))
+		return
+	}
+	if err := srv.ledger.RevokeGrant(nonce[:], owner); err != nil {
+		srv.log.Warn("shard revoke-grant: ledger", "peer", peer, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	srv.log.Debug("grant revoked", "event", "shard.revoke_grant", "peer", peer)
+	_ = writeByte(s, byte(statusOK))
 }
 
 // replyErr sends a mapped status byte, and for a generic error a short message

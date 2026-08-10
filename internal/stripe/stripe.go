@@ -31,6 +31,7 @@ package stripe
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"slices"
@@ -119,8 +120,11 @@ func UnmarshalDescriptor(b []byte) (Descriptor, error) {
 // Grant layout and domain separation.
 const (
 	// GrantSize is the fixed wire length of a Grant:
-	//   owner(32) || expiry(8, big-endian unix seconds) || sig(64)
-	GrantSize = cap.SignPubKeySize + 8 + cap.SignatureSize
+	//   owner(32) || expiry(8, big-endian unix seconds) || nonce(8) || sig(64)
+	GrantSize = cap.SignPubKeySize + 8 + 8 + cap.SignatureSize
+
+	// grantNonceOffset is the byte offset of the 8-byte nonce in a grant.
+	grantNonceOffset = cap.SignPubKeySize + 8
 
 	// grantDomain is prepended to the signed payload so a Grant signature can
 	// never be confused with any other Ed25519 signature the User produces (e.g.
@@ -130,38 +134,47 @@ const (
 
 // grantPayload is the exact byte string signed and verified for a Grant:
 //
-//	grantDomain || expiry(8) || MarshalBinary(descriptor)
+//	grantDomain || expiry(8) || nonce(8) || MarshalBinary(descriptor)
 //
 // Signing over the full descriptor binds the Grant to this precise stripe (its
 // K, M, and shard set in position order), so it cannot be lifted onto a different
-// stripe. Keeping the payload construction in one place guarantees signer and
-// verifier hash identical bytes.
-func grantPayload(expiry int64, descBytes []byte) []byte {
-	buf := make([]byte, 0, len(grantDomain)+8+len(descBytes))
+// stripe. The nonce makes each grant unique even across identical descriptors,
+// enabling revocation by nonce without invalidating peer grants. Keeping the
+// payload construction in one place guarantees signer and verifier hash identical
+// bytes.
+func grantPayload(expiry int64, nonce []byte, descBytes []byte) []byte {
+	buf := make([]byte, 0, len(grantDomain)+8+len(nonce)+len(descBytes))
 	buf = append(buf, grantDomain...)
 	var e [8]byte
 	binary.BigEndian.PutUint64(e[:], uint64(expiry))
 	buf = append(buf, e[:]...)
+	buf = append(buf, nonce...)
 	return append(buf, descBytes...)
 }
 
 // BuildGrant signs a repair grant for stripe d under signer. expiry is a unix
 // timestamp after which the grant is no longer valid; pass 0 for a grant that
-// never expires (the current default — repair must work with no User online, and
-// revocation is a planned follow-up).
+// never expires. Each call generates a fresh 8-byte random nonce, making every
+// grant unique and revocable by nonce without invalidating grants for other
+// stripes.
 func BuildGrant(signer cap.SignKey, d Descriptor, expiry int64) ([]byte, error) {
 	descBytes, err := d.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, fmt.Errorf("stripe: generate grant nonce: %w", err)
+	}
 	pub := signer.Public()
-	sig := signer.Sign(grantPayload(expiry, descBytes))
+	sig := signer.Sign(grantPayload(expiry, nonce[:], descBytes))
 
 	grant := make([]byte, 0, GrantSize)
 	grant = append(grant, pub[:]...)
 	var e [8]byte
 	binary.BigEndian.PutUint64(e[:], uint64(expiry))
 	grant = append(grant, e[:]...)
+	grant = append(grant, nonce[:]...)
 	return append(grant, sig...), nil
 }
 
@@ -177,7 +190,8 @@ func VerifyGrant(grant []byte, d Descriptor, now time.Time) (owner []byte, err e
 	var pub cap.SignPubKey
 	copy(pub[:], grant[:cap.SignPubKeySize])
 	expiry := int64(binary.BigEndian.Uint64(grant[cap.SignPubKeySize : cap.SignPubKeySize+8]))
-	sig := grant[cap.SignPubKeySize+8:]
+	nonce := grant[grantNonceOffset : grantNonceOffset+8]
+	sig := grant[grantNonceOffset+8:]
 
 	if expiry != 0 && now.Unix() > expiry {
 		return nil, fmt.Errorf("stripe: grant expired at %d", expiry)
@@ -186,12 +200,21 @@ func VerifyGrant(grant []byte, d Descriptor, now time.Time) (owner []byte, err e
 	if err != nil {
 		return nil, err
 	}
-	if !pub.Verify(grantPayload(expiry, descBytes), sig) {
+	if !pub.Verify(grantPayload(expiry, nonce, descBytes), sig) {
 		return nil, fmt.Errorf("stripe: grant signature invalid")
 	}
 	out := make([]byte, cap.SignPubKeySize)
 	copy(out, pub[:])
 	return out, nil
+}
+
+// GrantNonce returns the 8-byte nonce embedded in a valid grant wire blob. It
+// returns an error when the blob length does not match GrantSize.
+func GrantNonce(grant []byte) ([]byte, error) {
+	if len(grant) != GrantSize {
+		return nil, fmt.Errorf("stripe: grant is %d bytes, want %d", len(grant), GrantSize)
+	}
+	return grant[grantNonceOffset : grantNonceOffset+8], nil
 }
 
 // Putter is an optional capability a store.Store may implement: store a shard

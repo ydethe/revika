@@ -664,10 +664,13 @@ func cmdCp(args []string) error {
 	rootFlag := fs.String("root", "", "workspace folder or root file (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")
 	keyPath := fs.String("key", "", "private key to open a sealed shared root")
 	signKeyFlag := fs.String("signkey", "", "your signing key, authorizing writes (default <workspace>/keys/user.sign.key)")
-	grantTTL := fs.Duration("grant-ttl", 0, "expiry of the repair grants attached to stored shards (0 = never)")
+	grantTTL := fs.Duration("grant-ttl", 720*time.Hour, "expiry of the repair grants attached to stored shards (0 = never; default 30 days)")
 	placementMode := fs.String("placement", "round-robin", "node-selection policy: round-robin (default, even rotation) or weighted (proportional to advertised free space)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *grantTTL == 0 {
+		fmt.Fprintln(os.Stderr, "warning: grant-ttl 0 means grants never expire; an intercepted grant can be used indefinitely — consider setting a finite TTL")
 	}
 	if fs.NArg() != 2 {
 		return fmt.Errorf("cp takes <src> <dst>; exactly one carries the rvk: prefix")

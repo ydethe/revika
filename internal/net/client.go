@@ -336,6 +336,39 @@ func (n *NetStore) Probe(ctx context.Context, id store.ShardID, want, nonce []by
 	return subtle.ConstantTimeCompare(got, expected) == 1, nil
 }
 
+// RevokeGrant sends a revoke-grant request for the 8-byte nonce of a
+// previously issued repair grant. After revocation, the receiving node refuses
+// any grant-authorized PUT that carries this nonce, so an intercepted grant
+// cannot be used to place shards even if it has not yet reached its TTL expiry.
+// The caller must have a signer set; returns ErrUnauthorized without one.
+func (n *NetStore) RevokeGrant(ctx context.Context, nonce []byte) error {
+	if len(nonce) != 8 {
+		return fmt.Errorf("revika/net: grant nonce must be 8 bytes, got %d", len(nonce))
+	}
+	s, err := n.openStream(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	if err := writeByte(s, byte(opRevokeGrant)); err != nil {
+		_ = s.Reset()
+		return err
+	}
+	if _, err := s.Write(nonce); err != nil {
+		_ = s.Reset()
+		return err
+	}
+	// Auth token uses a zero ShardID: the revoke operation is not scoped to any
+	// particular shard, so the zero value is the conventional binding target.
+	token := n.authToken(opRevokeGrant, store.ShardID{})
+	if err := writeBlob(s, token); err != nil {
+		_ = s.Reset()
+		return err
+	}
+	return readResp(s)
+}
+
 // Connect ensures h has a live connection to pi, blocking up to connectTimeout.
 // A convenience for wiring a NetStore to a node given its AddrInfo.
 func Connect(ctx context.Context, h host.Host, pi peer.AddrInfo) error {
