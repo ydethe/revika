@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"revika/internal/atrest"
 	"revika/internal/cap"
 	"revika/internal/manifest"
 )
@@ -31,11 +32,21 @@ import (
 //	SC-8  (Transmission Integrity) — Save rejects a non-advancing Seq (anti-rollback), mirroring
 //	      the rule the networked store will enforce; Load verifies the Ed25519 signature.
 type FileRootStore struct {
-	path string
+	path       string
+	passphrase []byte // nil = plaintext (legacy behaviour)
 }
 
-// NewFileRootStore returns a RootStore backed by the file at path.
+// NewFileRootStore returns a RootStore backed by the file at path. The file
+// is stored and read as plaintext JSON (0600). Use NewEncryptedFileRootStore
+// to additionally protect it with a passphrase at rest.
 func NewFileRootStore(path string) *FileRootStore { return &FileRootStore{path: path} }
+
+// NewEncryptedFileRootStore is like NewFileRootStore but seals the JSON with
+// AES-256-GCM (Argon2id key derivation) before writing. Existing plaintext
+// files are migrated transparently on the next Save.
+func NewEncryptedFileRootStore(path string, passphrase []byte) *FileRootStore {
+	return &FileRootStore{path: path, passphrase: passphrase}
+}
 
 // Path reports the file the store reads and writes.
 func (f *FileRootStore) Path() string { return f.path }
@@ -88,12 +99,16 @@ func DecodeRootPointer(data []byte) (manifest.RootPointer, error) {
 // namespace). A present-but-invalid signature is an error, not a fresh start, so
 // a tampered pointer can never be silently replaced.
 func (f *FileRootStore) Load(ctx context.Context) (manifest.RootPointer, bool, error) {
-	data, err := os.ReadFile(f.path)
+	raw, err := os.ReadFile(f.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return manifest.RootPointer{}, false, nil
 		}
 		return manifest.RootPointer{}, false, err
+	}
+	data, err := f.decrypt(raw)
+	if err != nil {
+		return manifest.RootPointer{}, false, fmt.Errorf("provider: decrypt root pointer %s: %w", f.path, err)
 	}
 	rp, err := DecodeRootPointer(data)
 	if err != nil {
@@ -122,9 +137,14 @@ func (f *FileRootStore) Save(ctx context.Context, rp manifest.RootPointer) error
 			return fmt.Errorf("provider: root pointer seq %d does not advance stored seq %d", rp.Seq, cur.Seq)
 		}
 	}
-	data, err := EncodeRootPointer(rp)
+	plain, err := EncodeRootPointer(rp)
 	if err != nil {
 		return err
+	}
+	plain = append(plain, '\n')
+	data, err := f.encrypt(plain)
+	if err != nil {
+		return fmt.Errorf("provider: encrypt root pointer: %w", err)
 	}
 	if dir := filepath.Dir(f.path); dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -132,8 +152,29 @@ func (f *FileRootStore) Save(ctx context.Context, rp manifest.RootPointer) error
 		}
 	}
 	tmp := f.path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, f.path)
+}
+
+// encrypt returns data sealed under f.passphrase (if set), otherwise unchanged.
+func (f *FileRootStore) encrypt(data []byte) ([]byte, error) {
+	if f.passphrase == nil {
+		return data, nil
+	}
+	return atrest.Encrypt(data, f.passphrase)
+}
+
+// decrypt opens data sealed by encrypt. Plaintext data passes through
+// unchanged, so old unencrypted files can be read even when a passphrase is
+// configured (the next Save will re-write them encrypted).
+func (f *FileRootStore) decrypt(data []byte) ([]byte, error) {
+	if !atrest.IsEncrypted(data) {
+		return data, nil
+	}
+	if f.passphrase == nil {
+		return nil, fmt.Errorf("file is encrypted but no passphrase is configured (set REVIKA_PASSPHRASE)")
+	}
+	return atrest.Decrypt(data, f.passphrase)
 }

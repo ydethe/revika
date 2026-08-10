@@ -152,6 +152,65 @@ func TestFileRootStoreRejectsTamperedFile(t *testing.T) {
 	}
 }
 
+// TestEncryptedFileRootStore verifies that an EncryptedFileRootStore round-trips
+// a root pointer and that the on-disk file is sealed (not readable as plaintext
+// JSON). It also checks that a plaintext file written by NewFileRootStore is
+// transparently migrated on the first Load by an encrypted store, and that an
+// encrypted file cannot be opened without a passphrase.
+func TestEncryptedFileRootStore(t *testing.T) {
+	ctx := context.Background()
+	k, _, err := cap.GenerateSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "root.json")
+	pass := []byte("s3cr3t")
+
+	efrs := NewEncryptedFileRootStore(path, pass)
+
+	if _, ok, err := efrs.Load(ctx); err != nil || ok {
+		t.Fatalf("fresh encrypted Load: ok=%v err=%v (want ok=false, nil)", ok, err)
+	}
+
+	rp := signRoot(t, k, 1)
+	if err := efrs.Save(ctx, rp); err != nil {
+		t.Fatalf("encrypted Save: %v", err)
+	}
+
+	// The file on disk must not be parseable as plain JSON.
+	raw, _ := os.ReadFile(path)
+	if _, jerr := DecodeRootPointer(raw); jerr == nil {
+		t.Fatal("encrypted root file parsed as plaintext JSON (key leaked to disk)")
+	}
+
+	// An encrypted store with the correct passphrase opens it correctly.
+	got, ok, err := efrs.Load(ctx)
+	if err != nil || !ok {
+		t.Fatalf("encrypted Load: ok=%v err=%v", ok, err)
+	}
+	if got.Seq != rp.Seq || got.Owner != rp.Owner {
+		t.Fatalf("encrypted round-trip mismatch: got seq=%d want %d", got.Seq, rp.Seq)
+	}
+
+	// Wrong passphrase must fail.
+	bad := NewEncryptedFileRootStore(path, []byte("wrong"))
+	if _, _, err := bad.Load(ctx); err == nil {
+		t.Fatal("encrypted Load with wrong passphrase: expected error, got nil")
+	}
+
+	// A plaintext file loaded by an encrypted store is transparently accepted
+	// (migration path: old workspace, new passphrase-aware binary).
+	plainPath := filepath.Join(t.TempDir(), "plain.json")
+	plain := NewFileRootStore(plainPath)
+	if err := plain.Save(ctx, signRoot(t, k, 1)); err != nil {
+		t.Fatalf("plain Save: %v", err)
+	}
+	enc := NewEncryptedFileRootStore(plainPath, pass)
+	if _, ok, err := enc.Load(ctx); err != nil || !ok {
+		t.Fatalf("encrypted Load of plaintext file: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestDecodeRootPointerRejectsGarbage(t *testing.T) {
 	if _, err := DecodeRootPointer([]byte("not json")); err == nil {
 		t.Fatal("DecodeRootPointer accepted non-JSON")

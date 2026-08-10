@@ -243,7 +243,11 @@ pubkey hashes under the target, so re-minting a banned identity costs CPU, not m
 (`internal/cap/pow.go`). The puzzle is always Argon2id (`cap.Argon2idPuzzle`/`DefaultArgon2id`),
 so there is nothing to negotiate — client and node agree on it implicitly. Nodes admit writes
 only from owners meeting their own `-pow-difficulty` (default 0 = off), so the client's
-difficulty must be ≥ the node's.
+difficulty must be ≥ the node's. **At-rest encryption:** when `REVIKA_PASSPHRASE` is set in the
+environment, `keygen` encrypts both private key files (`.key` and `.sign.key`) with
+AES-256-GCM + Argon2id KDF (`internal/atrest`); all commands that load these files (and
+`root.json`) decrypt transparently. Plaintext files written before the passphrase was set are
+still readable (pass-through), and are re-encrypted on the next write.
 
 A node's role is decided purely by whether `-bootstrap` is given. Only the network's **seed**
 node (no `-bootstrap`) states the cluster policy — admission (`-pow-difficulty`)
@@ -272,6 +276,9 @@ internal/
   erasure/   Reed–Solomon encode/decode
   compress/  optional pre-encryption DEFLATE stage (per-chunk, skipped when it doesn't help)
   chunk/     fixed-size chunking (CDC planned)
+  atrest/    passphrase-based at-rest encryption for local workspace secrets (private key
+             files and root.json): Argon2id KDF + AES-256-GCM AEAD, transparent plaintext
+             pass-through for legacy files. Activated by REVIKA_PASSPHRASE env var.
   stripe/    non-confidential erasure metadata (Descriptor) + signed repair grant with expiry + nonce-based revocation
   pipeline/  StoreFile/LoadFile + FileManifest (in-memory; serialized to local JSON by revika-ctl)
   repair/    availability probes + shard regeneration

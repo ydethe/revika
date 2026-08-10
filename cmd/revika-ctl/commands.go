@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"revika/internal/atrest"
 	"revika/internal/cap"
 	"revika/internal/manifest"
 	"revika/internal/net"
@@ -169,13 +170,13 @@ func mintAndWriteIdentity(prefix string, puzzle cap.Argon2idPuzzle, d cap.Diffic
 	if err := os.MkdirAll(filepath.Dir(privPath), 0o700); err != nil {
 		return cap.PublicKey{}, fmt.Errorf("create key dir: %w", err)
 	}
-	if err := os.WriteFile(privPath, []byte(priv.String()+"\n"), 0o600); err != nil {
+	if err := writeSecret(privPath, []byte(priv.String()+"\n")); err != nil {
 		return cap.PublicKey{}, fmt.Errorf("write private key: %w", err)
 	}
 	if err := os.WriteFile(pubPath, []byte(pub.String()+"\n"), 0o644); err != nil {
 		return cap.PublicKey{}, fmt.Errorf("write public key: %w", err)
 	}
-	if err := os.WriteFile(signPrivPath, []byte(signKey.String()+"\n"), 0o600); err != nil {
+	if err := writeSecret(signPrivPath, []byte(signKey.String()+"\n")); err != nil {
 		return cap.PublicKey{}, fmt.Errorf("write signing key: %w", err)
 	}
 	if err := os.WriteFile(signPubPath, []byte(signPub.String()+"\n"), 0o644); err != nil {
@@ -184,9 +185,41 @@ func mintAndWriteIdentity(prefix string, puzzle cap.Argon2idPuzzle, d cap.Diffic
 	return pub, nil
 }
 
+// writeSecret persists a secret file at 0600. When REVIKA_PASSPHRASE is set
+// the content is sealed with AES-256-GCM (keyed via Argon2id) before writing,
+// so disk-level access alone cannot recover the key material.
+func writeSecret(path string, plaintext []byte) error {
+	data := plaintext
+	if pp := workspacePassphrase(); pp != nil {
+		var err error
+		data, err = atrest.Encrypt(plaintext, pp)
+		if err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// readSecret reads a secret file written by writeSecret. If the content was
+// encrypted it is decrypted with the current REVIKA_PASSPHRASE.
+func readSecret(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !atrest.IsEncrypted(raw) {
+		return raw, nil
+	}
+	pp := workspacePassphrase()
+	if pp == nil {
+		return nil, fmt.Errorf("key file %s is encrypted — set REVIKA_PASSPHRASE to decrypt it", path)
+	}
+	return atrest.Decrypt(raw, pp)
+}
+
 // loadSignKey reads the User's Ed25519 signing key from path.
 func loadSignKey(path string) (cap.SignKey, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readSecret(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cap.SignKey{}, fmt.Errorf("signing key %s not found; run `revika-ctl keygen` first (or pass -signkey)", path)
@@ -275,13 +308,32 @@ func rvkPath(s string) string { return strings.TrimPrefix(s, rvkScheme) }
 // to the recipient with ML-KEM-768 (opaque bytes), so a JSON-parse failure
 // routes to the sealed path. In both cases the signature is verified.
 func loadRoot(file, keyPath string) (rp manifest.RootPointer, exists, sealed bool, err error) {
-	data, err := os.ReadFile(file)
+	raw, err := os.ReadFile(file)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return manifest.RootPointer{}, false, false, nil
 		}
 		return manifest.RootPointer{}, false, false, err
 	}
+	// atrest-encrypted own root: decrypt first, then parse as JSON.
+	if atrest.IsEncrypted(raw) {
+		pp := workspacePassphrase()
+		if pp == nil {
+			return manifest.RootPointer{}, false, false, fmt.Errorf("root %s is encrypted — set REVIKA_PASSPHRASE to open it", file)
+		}
+		data, derr := atrest.Decrypt(raw, pp)
+		if derr != nil {
+			return manifest.RootPointer{}, false, false, fmt.Errorf("decrypt root %s: %w", file, derr)
+		}
+		if rp, derr = provider.DecodeRootPointer(data); derr != nil {
+			return manifest.RootPointer{}, false, false, fmt.Errorf("parse decrypted root %s: %w", file, derr)
+		}
+		if !rp.Verify() {
+			return manifest.RootPointer{}, false, false, fmt.Errorf("root %s failed signature verification", file)
+		}
+		return rp, true, false, nil
+	}
+	data := raw
 	if rp, derr := provider.DecodeRootPointer(data); derr == nil {
 		if !rp.Verify() {
 			return manifest.RootPointer{}, false, false, fmt.Errorf("root %s failed signature verification", file)
@@ -300,11 +352,11 @@ func loadRoot(file, keyPath string) (rp manifest.RootPointer, exists, sealed boo
 	if err != nil {
 		return manifest.RootPointer{}, false, false, err
 	}
-	raw, err := cap.Unwrap(priv, pub, data)
+	unwrapped, err := cap.Unwrap(priv, pub, data)
 	if err != nil {
 		return manifest.RootPointer{}, false, false, fmt.Errorf("open sealed root %s (wrong key?): %w", file, err)
 	}
-	rp, err = provider.DecodeRootPointer(raw)
+	rp, err = provider.DecodeRootPointer(unwrapped)
 	if err != nil {
 		return manifest.RootPointer{}, false, false, err
 	}
@@ -523,7 +575,7 @@ func commitRoot(ctx context.Context, cc commitConfig, newRoot manifest.ReadCap, 
 			continue
 		}
 
-		if err := provider.NewFileRootStore(cc.file).Save(ctx, rp); err != nil {
+		if err := newRootStore(cc.file).Save(ctx, rp); err != nil {
 			return err
 		}
 		reportConflicts(conflicts)
@@ -546,6 +598,16 @@ func (cc commitConfig) sealCompanion(root manifest.ReadCap, seq uint64) (manifes
 	return manifest.SealFullRoot(cc.signer, cc.pub, root, seq)
 }
 
+// newRootStore returns a FileRootStore for path, encrypted when REVIKA_PASSPHRASE
+// is set so the root cap (including the per-blob AES keys it carries) is sealed
+// at rest, not just protected by file-system permissions.
+func newRootStore(path string) *provider.FileRootStore {
+	if pp := workspacePassphrase(); pp != nil {
+		return provider.NewEncryptedFileRootStore(path, pp)
+	}
+	return provider.NewFileRootStore(path)
+}
+
 // commitLocalOnly is the pre-multi-device commit: sign at prev.Seq+1 (1 for a
 // fresh namespace) and save to the durable local file, mirroring to the DHT
 // verify-root best-effort when a publisher is available. The saved root.json is
@@ -559,7 +621,7 @@ func commitLocalOnly(ctx context.Context, cc commitConfig, newRoot manifest.Read
 	if err != nil {
 		return err
 	}
-	var rs provider.RootStore = provider.NewFileRootStore(cc.file)
+	var rs provider.RootStore = newRootStore(cc.file)
 	if pub != nil {
 		rs = provider.NewMultiRootStore(ctlLog, rs, provider.NewDHTRootStore(pub, cc.signer.Public()))
 	}
@@ -1746,7 +1808,7 @@ func cmdNode(args []string) error {
 // readPrivateKey reads and parses an ML-KEM private key file (as written by
 // keygen's <prefix>.key).
 func readPrivateKey(path string) (cap.PrivateKey, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readSecret(path)
 	if err != nil {
 		return cap.PrivateKey{}, err
 	}
