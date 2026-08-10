@@ -37,11 +37,14 @@ const metricsShutdownTimeout = 5 * time.Second
 //	GET /metrics   Prometheus text-exposition metrics
 //	GET /admin     rich HTML operator dashboard for this node: a self view (the
 //	               full /status snapshot rendered as HTML), the active connection
-//	               blocklist (SetBlocklister), the shards this node stores (from the
-//	               ledger stripe index), a detailed peer list (the serving node
-//	               leads, chipped apart), and a geographic map (OpenStreetMap via
-//	               Leaflet) plotting each node at its estimated position
-//	               (SetGeolocator)
+//	               blocklist (SetBlocklister), a filterable, paginated ledger browser
+//	               over the shards this node stores (by shard-ID hex prefix and/or
+//	               owner key: ?lshard=&lowner=&loffset=), a detailed peer list (the
+//	               serving node leads, chipped apart), and a geographic map
+//	               (OpenStreetMap via Leaflet) plotting each node at its estimated
+//	               position (SetGeolocator)
+//	GET /logo.png  the embedded revika logo, the /admin favicon (also served at
+//	GET /favicon.ico the browser-default path)
 //
 // It reads live state from the host, the ledger, and (optionally) the DHT
 // Discovery; it holds no state of its own beyond the start time and version.
@@ -152,6 +155,10 @@ func (m *MetricsServer) Handler() http.Handler {
 	mux.HandleFunc("/status", m.handleStatus)
 	mux.HandleFunc("/metrics", m.handleMetrics)
 	mux.HandleFunc("/admin", m.handleAdmin)
+	// The /admin favicon, embedded (logo.png). Served at both the explicit path the
+	// page links and /favicon.ico for browsers that request it unprompted.
+	mux.HandleFunc("/logo.png", m.handleLogo)
+	mux.HandleFunc("/favicon.ico", m.handleLogo)
 	return mux
 }
 

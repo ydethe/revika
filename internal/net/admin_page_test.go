@@ -3,10 +3,12 @@ package net
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"html/template"
 	"net"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -52,7 +54,8 @@ func TestAdminPageNoPeers(t *testing.T) {
 		"-geoip=ip-api",                // the geolocation-disabled hint
 		`id="map"`,                     // the map panel is present
 		"Self · defenses",              // the local abuse-control panel (Axis A/B + write cap)
-		"Stored shards",                // the ledger-stripe shard panel
+		"Ledger browser",               // the filterable ledger panel
+		"The ledger holds no shards",   // its empty state
 		"Blocklist",                    // the blocklist panel
 	} {
 		if !strings.Contains(body, want) {
@@ -98,26 +101,64 @@ func TestAdminPageContentType(t *testing.T) {
 	}
 }
 
-// TestAdminPageShards confirms a shard with recorded stripe context shows up in
-// the stored-shards panel, drawn from the ledger stripe index.
-func TestAdminPageShards(t *testing.T) {
+// TestAdminPageLedgerBrowser confirms a shard shows up in the ledger-browser panel
+// with its erasure context, and that the shard-ID prefix and owner-key filters both
+// narrow the view server-side.
+func TestAdminPageLedgerBrowser(t *testing.T) {
 	_, led, ts := newMetricsFixture(t)
 	now := time.Now()
-	var id, sib store.ShardID
-	id[0], sib[0] = 0xab, 0xcd
+	var id, sib, other store.ShardID
+	id[0], sib[0], other[0] = 0xab, 0xcd, 0x77
 	owner := []byte("owner-pubkey-00000000000000000000")
+	otherOwner := []byte("other-pubkey-00000000000000000000")
 	if _, err := led.AddOwner(id, owner, 100, now); err != nil {
-		t.Fatalf("AddOwner: %v", err)
+		t.Fatalf("AddOwner id: %v", err)
 	}
 	if err := led.PutStripe(id, 4, 2, []store.ShardID{id, sib}, []byte("grant")); err != nil {
 		t.Fatalf("PutStripe: %v", err)
 	}
+	if _, err := led.AddOwner(other, otherOwner, 200, now); err != nil {
+		t.Fatalf("AddOwner other: %v", err)
+	}
+
+	// Unfiltered: both shards and the erasure chip for the striped one appear.
 	code, body := getBody(t, ts.URL+"/admin")
 	if code != 200 {
 		t.Fatalf("/admin = %d, want 200", code)
 	}
+	if !strings.Contains(body, id.String()) || !strings.Contains(body, other.String()) {
+		t.Errorf("/admin ledger browser missing a shard ID (want both %s and %s)", id, other)
+	}
+	if !strings.Contains(body, "k=4 · m=2") {
+		t.Errorf("/admin ledger browser missing the erasure context chip")
+	}
+
+	// Filter by the striped shard's hex prefix: it stays, the other drops.
+	_, body = getBody(t, ts.URL+"/admin?lshard=ab")
 	if !strings.Contains(body, id.String()) {
-		t.Errorf("/admin stored-shards panel missing shard ID %s", id)
+		t.Errorf("shard-prefix filter dropped the matching shard %s", id)
+	}
+	if strings.Contains(body, other.String()) {
+		t.Errorf("shard-prefix filter kept the non-matching shard %s", other)
+	}
+
+	// Filter by owner key (base64, as the storage panel renders it).
+	ownerB64 := base64.RawStdEncoding.EncodeToString(owner)
+	_, body = getBody(t, ts.URL+"/admin?lowner="+url.QueryEscape(ownerB64))
+	if !strings.Contains(body, id.String()) {
+		t.Errorf("owner filter dropped the owner's shard %s", id)
+	}
+	if strings.Contains(body, other.String()) {
+		t.Errorf("owner filter kept a shard owned by someone else %s", other)
+	}
+
+	// A bad owner filter is reported, not fatal.
+	code, body = getBody(t, ts.URL+"/admin?lowner=not!base64!")
+	if code != 200 {
+		t.Fatalf("/admin with bad owner filter = %d, want 200", code)
+	}
+	if !strings.Contains(body, "not valid base64") {
+		t.Errorf("/admin did not report an undecodable owner filter")
 	}
 }
 

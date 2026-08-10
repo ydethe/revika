@@ -2,23 +2,45 @@ package net
 
 import (
 	"context"
+	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	manet "github.com/multiformats/go-multiaddr/net"
 
 	"revika/internal/geoip"
+	"revika/internal/ledger"
 )
 
-// adminShardCap bounds how many stored-shard rows the /admin page renders. A node
-// can hold far more shards than is useful to dump into one HTML table; beyond this
-// the page reports the total and notes the list is truncated.
-const adminShardCap = 500
+// adminLogoPNG is the revika logo served as the /admin favicon (and referenced by
+// the page's <link rel="icon">). Embedded so the dashboard has an icon with no
+// external asset fetch — every panel but the map stays fully offline.
+//
+//go:embed logo.png
+var adminLogoPNG []byte
+
+// handleLogo serves the embedded logo PNG for the /admin favicon. It is
+// content-addressed by build (the asset only changes when the binary does), so it
+// advertises a long, immutable cache lifetime to spare repeat fetches.
+func (m *MetricsServer) handleLogo(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	w.Write(adminLogoPNG)
+}
+
+// ledgerPageSize is how many ledger rows the /admin browser shows per page. The
+// browser filters and paginates server-side (ledger.Entries), so a large ledger is
+// navigated a page at a time rather than dumped whole into one HTML table.
+const ledgerPageSize = 100
 
 // NodeGeo is one node as the /admin dashboard sees it: identity, connection
 // direction, the addresses we hold it on, and — when the IP is global and a
@@ -152,49 +174,106 @@ func (m *MetricsServer) blocklistInfo() blocklistView {
 	return bv
 }
 
-// shardRow is one stored shard as the /admin dashboard shows it, from the ledger
-// stripe index: the content-addressed shard ID plus the erasure context (K data /
-// M parity, and how many sibling shards the stripe spans).
-type shardRow struct {
-	ShardID  string
-	K, M     int
-	Siblings int
+// ledgerRow is one shard as the /admin ledger browser shows it: the content-
+// addressed shard ID, its physical size and first-recorded time, the number of
+// owners currently claiming it, and the erasure context when a stripe row exists.
+type ledgerRow struct {
+	ShardID   string
+	Size      int64
+	Created   int64
+	Owners    int
+	HasStripe bool
+	K, M      int
+	Siblings  int
 }
 
-// shardsView is the /admin panel of the shards this node stores, drawn from the
-// ledger stripe index. Total is the full count; Rows is capped at adminShardCap,
-// with Truncated set when more shards exist than are shown.
-type shardsView struct {
-	Total     int
-	Truncated bool
-	Rows      []shardRow
+// ledgerView is the /admin ledger-browser panel: a filtered, paginated window over
+// the node's ledger. Rows is the current page; Total is how many shards match the
+// active filter (across the whole ledger, not just this page). ShardQuery/OwnerQuery
+// echo the filter inputs back into the form; OwnerErr flags an owner filter that did
+// not decode as base64. Prev/Next carry ready-built hrefs that preserve the filter.
+type ledgerView struct {
+	Rows       []ledgerRow
+	Total      int
+	Shown      int
+	Offset     int
+	ShardQuery string
+	OwnerQuery string
+	OwnerErr   bool
+	Filtered   bool
+	HasPrev    bool
+	HasNext    bool
+	PrevHref   string
+	NextHref   string
 }
 
-// shardsInfo snapshots the shards this node holds from the ledger stripe index,
-// sorted by shard ID for a stable page and capped at adminShardCap rows. A ledger
-// error is surfaced to the caller (the dashboard degrades to an empty panel).
-func (m *MetricsServer) shardsInfo() (shardsView, error) {
-	stripes, err := m.led.Stripes()
-	if err != nil {
-		return shardsView{}, err
+// ledgerInfo browses the ledger for the /admin panel, applying the shard-ID hex
+// prefix and owner-key filters server-side (ledger.Entries) and computing the
+// pagination hrefs. offset is clamped to a page boundary by the caller. A ledger
+// error is surfaced so the dashboard can fail the request rather than show a
+// half-built table.
+func (m *MetricsServer) ledgerInfo(shardQuery, ownerQuery string, offset int) (ledgerView, error) {
+	lv := ledgerView{
+		Offset:     offset,
+		ShardQuery: shardQuery,
+		OwnerQuery: ownerQuery,
+		Filtered:   shardQuery != "" || ownerQuery != "",
 	}
-	sort.Slice(stripes, func(i, j int) bool {
-		return stripes[i].ShardID.String() < stripes[j].ShardID.String()
-	})
-	sv := shardsView{Total: len(stripes)}
-	for _, st := range stripes {
-		if len(sv.Rows) >= adminShardCap {
-			sv.Truncated = true
-			break
+	filter := ledger.LedgerFilter{ShardHexPrefix: shardQuery, Limit: ledgerPageSize, Offset: offset}
+	if ownerQuery != "" {
+		// Owner keys are shown base64 (raw std) in the storage panel; the browser
+		// filters on the same encoding. A bad decode is reported, not fatal.
+		if owner, err := base64.RawStdEncoding.DecodeString(ownerQuery); err == nil {
+			filter.Owner = owner
+		} else {
+			lv.OwnerErr = true
 		}
-		sv.Rows = append(sv.Rows, shardRow{
-			ShardID:  st.ShardID.String(),
-			K:        st.K,
-			M:        st.M,
-			Siblings: len(st.Siblings),
+	}
+	res, err := m.led.Entries(filter)
+	if err != nil {
+		return ledgerView{}, err
+	}
+	lv.Total = res.Total
+	for _, e := range res.Entries {
+		lv.Rows = append(lv.Rows, ledgerRow{
+			ShardID:   e.ShardID.String(),
+			Size:      e.Size,
+			Created:   e.Created,
+			Owners:    e.OwnerCount,
+			HasStripe: e.HasStripe,
+			K:         e.K,
+			M:         e.M,
+			Siblings:  e.Siblings,
 		})
 	}
-	return sv, nil
+	lv.Shown = len(lv.Rows)
+
+	// Pagination hrefs preserve the active filter across pages.
+	mkHref := func(off int) string {
+		v := url.Values{}
+		if shardQuery != "" {
+			v.Set("lshard", shardQuery)
+		}
+		if ownerQuery != "" {
+			v.Set("lowner", ownerQuery)
+		}
+		if off > 0 {
+			v.Set("loffset", strconv.Itoa(off))
+		}
+		if q := v.Encode(); q != "" {
+			return "/admin?" + q
+		}
+		return "/admin"
+	}
+	if offset > 0 {
+		lv.HasPrev = true
+		lv.PrevHref = mkHref(max(offset-ledgerPageSize, 0))
+	}
+	if offset+lv.Shown < res.Total {
+		lv.HasNext = true
+		lv.NextHref = mkHref(offset + ledgerPageSize)
+	}
+	return lv, nil
 }
 
 // adminPage is the data the /admin HTML template renders: the self view (the full
@@ -211,7 +290,7 @@ type adminPage struct {
 	NodesJSON  template.JS // the same nodes, marshalled, for the map script
 	Status     Status      // full /status snapshot, rendered as the self view
 	Blocklist  blocklistView
-	Shards     shardsView
+	Ledger     ledgerView
 }
 
 func (m *MetricsServer) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -221,9 +300,18 @@ func (m *MetricsServer) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	shards, err := m.shardsInfo()
+	// Ledger browser: parse the filter/pagination query params. Offset is snapped
+	// down to a page boundary so prev/next math stays consistent.
+	q := r.URL.Query()
+	shardQuery := strings.TrimSpace(q.Get("lshard"))
+	ownerQuery := strings.TrimSpace(q.Get("lowner"))
+	offset := 0
+	if n, err := strconv.Atoi(q.Get("loffset")); err == nil && n > 0 {
+		offset = (n / ledgerPageSize) * ledgerPageSize
+	}
+	ledgerV, err := m.ledgerInfo(shardQuery, ownerQuery, offset)
 	if err != nil {
-		m.log.Warn("metrics: admin shards", "err", err)
+		m.log.Warn("metrics: admin ledger", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -254,7 +342,7 @@ func (m *MetricsServer) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		NodesJSON:  template.JS(data),
 		Status:     st,
 		Blocklist:  m.blocklistInfo(),
-		Shards:     shards,
+		Ledger:     ledgerV,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := adminTmpl.Execute(w, page); err != nil {
@@ -276,6 +364,7 @@ var adminFuncs = template.FuncMap{
 		return time.Unix(u, 0).UTC().Format(time.RFC3339)
 	},
 	"pct": func(f float64) string { return fmt.Sprintf("%.1f%%", f*100) },
+	"add": func(a, b int) int { return a + b },
 }
 
 // humanBytes renders a byte count in binary units (KiB, MiB, …) for the self view.
@@ -304,6 +393,7 @@ const adminHTML = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<link rel="icon" type="image/png" href="/logo.png">
 <title>revika · admin</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
   integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -368,6 +458,24 @@ const adminHTML = `<!DOCTYPE html>
   .kv dd { margin: 0; word-break: break-all; }
   .kv dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  /* Ledger-browser filter form + pager. */
+  .filter { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .filter input {
+    flex: 1 1 180px; min-width: 0; padding: 5px 8px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 12.5px;
+  }
+  .filter input:focus { outline: none; border-color: var(--accent); }
+  .filter button {
+    padding: 5px 12px; background: var(--accent); color: var(--bg); border: 0;
+    border-radius: 6px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .filter .clear { align-self: center; }
+  .pager {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border);
+  }
+  .pager .pager-nav { display: flex; gap: 14px; }
+  .pager .disabled { color: var(--border); }
 </style>
 </head>
 <body>
@@ -420,7 +528,7 @@ const adminHTML = `<!DOCTYPE html>
           <thead><tr><th>Owner (pubkey)</th><th>Bytes</th><th>Shards</th></tr></thead>
           <tbody>
             {{range .Status.Storage.Owners}}
-            <tr><td class="id">{{.Owner}}</td><td>{{bytes .BytesUsed}}</td><td>{{.ShardCount}}</td></tr>
+            <tr><td class="id"><a href="/admin?lowner={{.Owner}}" title="Browse this owner's shards">{{.Owner}}</a></td><td>{{bytes .BytesUsed}}</td><td>{{.ShardCount}}</td></tr>
             {{end}}
           </tbody>
         </table>
@@ -463,21 +571,40 @@ const adminHTML = `<!DOCTYPE html>
       {{end}}
     </section>
 
-    <section class="panel" aria-label="Stored shards">
-      <h2>Stored shards ({{.Shards.Total}})</h2>
-      {{if .Shards.Truncated}}<div class="note">Showing the first {{len .Shards.Rows}} of {{.Shards.Total}} shards.</div>{{end}}
-      {{if not .Shards.Rows}}
-        <div class="empty">No shards with stripe context stored on this node.</div>
+    <section class="panel" aria-label="Ledger browser">
+      <h2>Ledger browser ({{.Ledger.Total}} shard{{if ne .Ledger.Total 1}}s{{end}}{{if .Ledger.Filtered}} match{{if eq .Ledger.Total 1}}es{{else}} filter{{end}}{{end}})</h2>
+      <form class="filter" method="get" action="/admin">
+        <input type="text" name="lshard" value="{{.Ledger.ShardQuery}}" placeholder="shard ID hex prefix" spellcheck="false" autocomplete="off">
+        <input type="text" name="lowner" value="{{.Ledger.OwnerQuery}}" placeholder="owner public key (base64)" spellcheck="false" autocomplete="off">
+        <button type="submit">Filter</button>
+        {{if .Ledger.Filtered}}<a class="clear" href="/admin">clear</a>{{end}}
+      </form>
+      {{if .Ledger.OwnerErr}}<div class="note">Owner filter is not valid base64 — ignored.</div>{{end}}
+      {{if not .Ledger.Rows}}
+        <div class="empty">{{if .Ledger.Filtered}}No shards match this filter.{{else}}The ledger holds no shards on this node.{{end}}</div>
       {{else}}
         <div class="list-wrap short">
           <table>
-            <thead><tr><th>Shard ID (content hash)</th><th>k</th><th>m</th><th>Siblings</th></tr></thead>
+            <thead><tr><th>Shard ID (content hash)</th><th>Size</th><th>Created</th><th>Owners</th><th>Erasure</th></tr></thead>
             <tbody>
-              {{range .Shards.Rows}}
-              <tr><td class="id">{{.ShardID}}</td><td>{{.K}}</td><td>{{.M}}</td><td>{{.Siblings}}</td></tr>
+              {{range .Ledger.Rows}}
+              <tr>
+                <td class="id">{{.ShardID}}</td>
+                <td>{{bytes .Size}}</td>
+                <td class="mono">{{unix .Created}}</td>
+                <td>{{.Owners}}</td>
+                <td>{{if .HasStripe}}<span class="pill">k={{.K}} · m={{.M}} · {{.Siblings}} sib</span>{{else}}<span class="pill off">none</span>{{end}}</td>
+              </tr>
               {{end}}
             </tbody>
           </table>
+        </div>
+        <div class="pager">
+          <span>{{add .Ledger.Offset 1}}–{{add .Ledger.Offset .Ledger.Shown}} of {{.Ledger.Total}}</span>
+          <span class="pager-nav">
+            {{if .Ledger.HasPrev}}<a href="{{.Ledger.PrevHref}}">← prev</a>{{else}}<span class="disabled">← prev</span>{{end}}
+            {{if .Ledger.HasNext}}<a href="{{.Ledger.NextHref}}">next →</a>{{else}}<span class="disabled">next →</span>{{end}}
+          </span>
         </div>
       {{end}}
     </section>

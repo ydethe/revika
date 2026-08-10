@@ -95,6 +95,8 @@ Types:
   `QuotaInitialFraction` (the fraction of the full quota a brand-new owner starts
   with, e.g. `0.05`).
 - `OwnerStat`, `Stats` — per-owner and aggregate reporting snapshots.
+- `LedgerFilter`, `LedgerEntry`, `EntriesResult` — the filter, row, and paginated
+  result for the ledger-browser query (`DefaultEntryLimit` = 100).
 - `StripeRow` — one shard's erasure context (K/M, siblings, grant).
 - `ReconcileReport` — result of a `Reconcile` pass.
 - Errors: `ErrQuotaExceeded`, `ErrUnauthorized`.
@@ -117,6 +119,10 @@ Functions / methods:
   eligible for GC.
 - `(*Ledger) Account(owner) (bytesUsed, shardCount, err)` — an owner's usage.
 - `(*Ledger) Stats() (Stats, error)` — aggregate snapshot for metrics/status.
+- `(*Ledger) Entries(filter) (EntriesResult, error)` — browse shard rows (newest
+  first) with per-shard owner count + erasure context, filtered server-side by
+  shard-ID hex prefix and/or owner key and paginated (`Limit`/`Offset`, with `Total`
+  matching rows). Backs the `/admin` ledger browser.
 - `(*Ledger) PutStripe(id, k, m, siblings, grant)` — record/replace stripe context.
 - `(*Ledger) Stripes() ([]StripeRow, error)` — all stripe contexts (repair loop
   enumerates these).

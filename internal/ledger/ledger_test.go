@@ -365,6 +365,92 @@ func TestGCFlow(t *testing.T) {
 	}
 }
 
+// TestEntries covers the ledger browser query: unfiltered listing with owner count
+// and stripe context, plus the shard-prefix and owner filters and pagination.
+func TestEntries(t *testing.T) {
+	l := open(t, Options{})
+	now := time.Unix(1_700_000_000, 0)
+
+	// id(0xab): claimed by alice+bob, with a stripe. id(0x77): alice only, no stripe.
+	striped := id(0xab)
+	plain := id(0x77)
+	if _, err := l.AddOwner(striped, alice, 100, now); err != nil {
+		t.Fatalf("AddOwner striped/alice: %v", err)
+	}
+	if _, err := l.AddOwner(striped, bob, 100, now); err != nil {
+		t.Fatalf("AddOwner striped/bob: %v", err)
+	}
+	if err := l.PutStripe(striped, 4, 2, []store.ShardID{striped, id(0xcd)}, []byte("grant")); err != nil {
+		t.Fatalf("PutStripe: %v", err)
+	}
+	if _, err := l.AddOwner(plain, alice, 200, now); err != nil {
+		t.Fatalf("AddOwner plain/alice: %v", err)
+	}
+
+	// Unfiltered: both shards, Total=2, owner counts and stripe context populated.
+	res, err := l.Entries(LedgerFilter{})
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	if res.Total != 2 || len(res.Entries) != 2 {
+		t.Fatalf("unfiltered Total/len = %d/%d, want 2/2", res.Total, len(res.Entries))
+	}
+	byID := map[store.ShardID]LedgerEntry{}
+	for _, e := range res.Entries {
+		byID[e.ShardID] = e
+	}
+	if e := byID[striped]; e.OwnerCount != 2 || !e.HasStripe || e.K != 4 || e.M != 2 || e.Siblings != 2 {
+		t.Errorf("striped entry = %+v, want owners=2 stripe k=4 m=2 siblings=2", e)
+	}
+	if e := byID[plain]; e.OwnerCount != 1 || e.HasStripe || e.Size != 200 {
+		t.Errorf("plain entry = %+v, want owners=1 no-stripe size=200", e)
+	}
+
+	// Shard-ID hex prefix (case-insensitive) selects only the matching shard.
+	res, err = l.Entries(LedgerFilter{ShardHexPrefix: "ab"})
+	if err != nil {
+		t.Fatalf("Entries prefix: %v", err)
+	}
+	if res.Total != 1 || len(res.Entries) != 1 || res.Entries[0].ShardID != striped {
+		t.Fatalf("prefix filter = %d rows (Total %d), want the striped shard only", len(res.Entries), res.Total)
+	}
+
+	// Owner filter: bob claims only the striped shard.
+	res, err = l.Entries(LedgerFilter{Owner: bob})
+	if err != nil {
+		t.Fatalf("Entries owner: %v", err)
+	}
+	if res.Total != 1 || len(res.Entries) != 1 || res.Entries[0].ShardID != striped {
+		t.Fatalf("owner filter = %d rows (Total %d), want bob's one shard", len(res.Entries), res.Total)
+	}
+
+	// A LIKE metacharacter in the prefix is escaped, so it matches literally (nothing).
+	res, err = l.Entries(LedgerFilter{ShardHexPrefix: "a%"})
+	if err != nil {
+		t.Fatalf("Entries escaped: %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("escaped-wildcard prefix matched %d rows, want 0", res.Total)
+	}
+
+	// Pagination: Limit 1 returns one row but reports the full Total; the Offset page
+	// returns the other, and the two pages are disjoint.
+	p0, err := l.Entries(LedgerFilter{Limit: 1})
+	if err != nil {
+		t.Fatalf("Entries page0: %v", err)
+	}
+	p1, err := l.Entries(LedgerFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatalf("Entries page1: %v", err)
+	}
+	if p0.Total != 2 || len(p0.Entries) != 1 || len(p1.Entries) != 1 {
+		t.Fatalf("pagination page sizes = %d/%d (Total %d), want 1/1 Total 2", len(p0.Entries), len(p1.Entries), p0.Total)
+	}
+	if p0.Entries[0].ShardID == p1.Entries[0].ShardID {
+		t.Errorf("pagination returned the same shard on both pages: %s", p0.Entries[0].ShardID)
+	}
+}
+
 func containsOnly(got []store.ShardID, want ...store.ShardID) bool {
 	if len(got) != len(want) {
 		return false

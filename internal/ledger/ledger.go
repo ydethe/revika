@@ -464,6 +464,132 @@ func (l *Ledger) Stats() (Stats, error) {
 	return s, nil
 }
 
+// DefaultEntryLimit caps a single ledger browse page when the caller passes a
+// non-positive Limit, so a browser never tries to render the whole ledger at once.
+const DefaultEntryLimit = 100
+
+// LedgerFilter narrows an Entries browse query (the /admin ledger browser). Empty
+// fields match everything, so a zero-value filter browses the whole ledger. Limit
+// <= 0 falls back to DefaultEntryLimit; a negative Offset is treated as 0.
+type LedgerFilter struct {
+	// ShardHexPrefix matches shards whose content hash, rendered as hex, starts with
+	// this (case-insensitive) prefix. LIKE metacharacters in it are escaped, so it is
+	// a literal prefix, not a pattern.
+	ShardHexPrefix string
+	// Owner, when non-empty, restricts the result to shards this exact owner public
+	// key currently claims.
+	Owner  []byte
+	Limit  int
+	Offset int
+}
+
+// LedgerEntry is one shard as the ledger browser presents it: the content-addressed
+// shard ID, its physical size and first-recorded time, how many owners currently
+// claim it, and — when a stripe (erasure) row exists — the K/M parameters and the
+// sibling shard count. K, M and Siblings are meaningful only when HasStripe is true.
+type LedgerEntry struct {
+	ShardID    store.ShardID
+	Size       int64
+	Created    int64 // unix seconds the shard row was first recorded
+	OwnerCount int
+	HasStripe  bool
+	K, M       int
+	Siblings   int
+}
+
+// EntriesResult is one page of a ledger browse plus Total, the number of rows
+// matching the filter before Limit/Offset are applied, so the caller can paginate.
+type EntriesResult struct {
+	Entries []LedgerEntry
+	Total   int
+	Limit   int
+	Offset  int
+}
+
+// Entries browses the shard rows matching f, newest-recorded first, joining the
+// per-shard owner count and (when present) the erasure stripe context. It backs the
+// /admin ledger browser: filtering by shard-ID hex prefix and/or owner key is done
+// in SQL so it scales past the rendered page, and Total lets the UI paginate.
+func (l *Ledger) Entries(f LedgerFilter) (EntriesResult, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = DefaultEntryLimit
+	}
+	offset := max(f.Offset, 0)
+	where, args := ledgerFilterClause(f)
+
+	res := EntriesResult{Limit: limit, Offset: offset}
+	// Total matching rows (for pagination), independent of the page window. The
+	// WHERE only touches `shards s` and correlated subqueries, so it is valid here
+	// without the stripe join.
+	if err := l.db.QueryRow(`SELECT COUNT(*) FROM shards s`+where, args...).Scan(&res.Total); err != nil {
+		return EntriesResult{}, err
+	}
+
+	q := `SELECT s.id, s.size, s.created,
+	             (SELECT COUNT(*) FROM owners o2 WHERE o2.shard_id = s.id),
+	             st.k, st.m, COALESCE(length(st.siblings), 0)
+	      FROM shards s
+	      LEFT JOIN stripes st ON st.shard_id = s.id` + where +
+		` ORDER BY s.created DESC, s.id LIMIT ? OFFSET ?`
+	rows, err := l.db.Query(q, append(append([]any{}, args...), limit, offset)...)
+	if err != nil {
+		return EntriesResult{}, err
+	}
+	defer rows.Close()
+
+	idLen := len(store.ShardID{})
+	for rows.Next() {
+		var (
+			idRaw    []byte
+			e        LedgerEntry
+			k, m     sql.NullInt64
+			sibBytes int64
+		)
+		if err := rows.Scan(&idRaw, &e.Size, &e.Created, &e.OwnerCount, &k, &m, &sibBytes); err != nil {
+			return EntriesResult{}, err
+		}
+		if len(idRaw) != idLen {
+			return EntriesResult{}, fmt.Errorf("ledger: entry shard_id is %d bytes, want %d", len(idRaw), idLen)
+		}
+		copy(e.ShardID[:], idRaw)
+		// A shard with no stripe row LEFT-JOINs to NULL k/m; only then is it un-striped.
+		e.HasStripe = k.Valid
+		e.K, e.M = int(k.Int64), int(m.Int64)
+		e.Siblings = int(sibBytes) / idLen
+		res.Entries = append(res.Entries, e)
+	}
+	return res, rows.Err()
+}
+
+// ledgerFilterClause builds the SQL WHERE clause (with a leading " WHERE " when
+// non-empty) and its bound arguments for a LedgerFilter. The shard prefix matches
+// against SQLite's uppercase hex() of the id; the owner is an exact-key membership
+// test via a correlated EXISTS.
+func ledgerFilterClause(f LedgerFilter) (string, []any) {
+	var conds []string
+	var args []any
+	if p := strings.TrimSpace(f.ShardHexPrefix); p != "" {
+		conds = append(conds, `hex(s.id) LIKE ? ESCAPE '\'`)
+		args = append(args, escapeLike(strings.ToUpper(p))+"%")
+	}
+	if len(f.Owner) > 0 {
+		conds = append(conds, `EXISTS (SELECT 1 FROM owners o WHERE o.shard_id = s.id AND o.owner = ?)`)
+		args = append(args, f.Owner)
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// escapeLike escapes the SQL LIKE metacharacters (%, _, and the \ escape itself) in
+// s so it matches literally under `LIKE ... ESCAPE '\'`.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
 // StripeRow is the erasure context a node records for one shard it holds: the
 // stripe's K/M, its sibling shard IDs (in erasure-position order), and the signed
 // repair grant that authorizes regenerating and re-placing the stripe's shards.

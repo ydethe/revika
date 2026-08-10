@@ -559,9 +559,16 @@ tests. Endpoints:
     (operator-static entries unioned with the abuse detector's runtime auto-bans), read
     from the `Blocklister` wired by `SetBlocklister` (absent = the panel says none is
     configured). Read-only: it displays the set, never mutates it.
-  - **Stored shards** — the shards this node holds, drawn from the ledger stripe index
-    (`Ledger.Stripes`): content-hash shard ID plus the erasure context (`k`/`m`, sibling
-    count), sorted by ID and capped at `adminShardCap` (500) rows with a truncation note.
+  - **Ledger browser** — a filterable, paginated window over this node's ledger
+    (`Ledger.Entries`, `ledgerInfo`): each row is a shard with its content-hash ID, physical
+    size, first-recorded time, current owner count, and erasure context (`k`/`m` + sibling
+    count, or "none" when un-striped). A GET filter form narrows the view **server-side**
+    (so it scales past the rendered page) by shard-ID hex prefix (`?lshard=`, case-insensitive,
+    LIKE-escaped so it is a literal prefix) and/or owner public key (`?lowner=`, base64 raw-std
+    as the storage panel renders it; a bad decode is reported and ignored). Results page
+    `ledgerPageSize` (100) rows at a time via `?loffset=` with prev/next links that preserve
+    the filter, and the header shows the total match count. Each owner in the storage panel's
+    accounting table links straight to that owner's filtered view.
   - **Nodes + map** — a detailed peer table (peer ID, connection direction, chosen IP +
     scope pill, estimated location, remote multiaddrs) beside a Leaflet/OpenStreetMap map
     with a marker per located peer. `nodeGeos` gathers the view from
@@ -574,6 +581,9 @@ tests. Endpoints:
   Peer-supplied strings reach the page only through `html/template` escaping (the tables)
   or JS `textContent` (the map popups), never as raw HTML. Leaflet + the OSM tiles load
   from public CDNs, so the map needs outbound internet; every other panel works offline.
+  The page's favicon is the revika logo, embedded (`//go:embed logo.png`) and served by
+  `handleLogo` at `/logo.png` (linked from the `<head>`) and `/favicon.ico` (the browser
+  default), so the icon needs no external asset fetch.
 - `GET /metrics` — Prometheus text exposition of the same snapshot, including
   `revika_build_info{version,build_date}`, `revika_protocol_info{protocol}` (one line per
   served stream protocol), `revika_bootstrap_info{addr}`,

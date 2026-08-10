@@ -259,3 +259,37 @@ func TestMetricsGCAndQuota(t *testing.T) {
 		t.Errorf("gc.last_run_unix = %d, want 1700000060", st.GC.LastRunUnix)
 	}
 }
+
+func TestMetricsFavicon(t *testing.T) {
+	_, _, ts := newMetricsFixture(t)
+
+	// Both the linked path and the browser-default /favicon.ico serve the embedded
+	// PNG with the right content type and the exact bytes.
+	for _, path := range []string{"/logo.png", "/favicon.ico"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s = %d, want 200", path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "image/png" {
+			t.Errorf("%s Content-Type = %q, want image/png", path, ct)
+		}
+		if !slices.Equal(body, adminLogoPNG) {
+			t.Errorf("%s body (%d bytes) != embedded logo (%d bytes)", path, len(body), len(adminLogoPNG))
+		}
+		// A PNG signature guards against embedding an empty or wrong asset.
+		if len(body) < 8 || string(body[:8]) != "\x89PNG\r\n\x1a\n" {
+			t.Errorf("%s is not a PNG (first bytes %x)", path, body[:min(8, len(body))])
+		}
+	}
+
+	// The admin page references the icon so the browser fetches it.
+	if code, page := getBody(t, ts.URL+"/admin"); code != http.StatusOK ||
+		!strings.Contains(page, `<link rel="icon" type="image/png" href="/logo.png">`) {
+		t.Fatalf("/admin = %d, missing favicon link", code)
+	}
+}
