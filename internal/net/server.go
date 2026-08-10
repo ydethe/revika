@@ -97,6 +97,13 @@ type Server struct {
 	// rather than answered. Left nil, no per-subnet capping happens (the default).
 	// See subnetlimit.go.
 	subnetLimiter *SubnetRateLimiter
+
+	// tokenCache is the server-side replay cache: it records the Ed25519 signature
+	// of every successfully verified write token and rejects a second presentation
+	// of the same signature within its validity window (±tokenSkew). This closes the
+	// ±5-minute replay window that the timestamp check alone leaves open; the cache
+	// is bounded in memory by the window size (see authcache.go).
+	tokenCache *authCache
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -112,7 +119,7 @@ func NewServer(s store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Server{store: s, log: log}
+	return &Server{store: s, log: log, tokenCache: newAuthCache()}
 }
 
 // SetContext wires the node's process-lifetime context into stream handlers so
@@ -345,6 +352,16 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 				srv.replyErr(s, err)
 				return
 			}
+			// Replay check: the signature is bound to (op, shard, node, timestamp),
+			// so any second presentation of the same token within its validity window
+			// is a replay — reject it even though writes are idempotent.
+			var sig [cap.SignatureSize]byte
+			copy(sig[:], token[cap.SignPubKeySize+8:])
+			if srv.tokenCache.seen(sig, now) {
+				srv.log.Debug("shard put: token replay rejected", "event", "shard.put.rejected", "reason", "token_replay", "peer", peer, "id", id)
+				srv.replyErr(s, ErrUnauthorized)
+				return
+			}
 			// Proof-of-work admission: a fresh, owner-initiated write is only
 			// accepted from a self-certifying identity meeting the node's
 			// difficulty. This gates the abuse vector (an owner injecting new
@@ -531,6 +548,15 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 	if err != nil {
 		srv.log.Debug("shard delete: unauthorized", "peer", peer, "id", id, "err", err)
 		srv.replyErr(s, err)
+		return
+	}
+	// Replay check: same policy as PUT — the signature is bound to (op, shard,
+	// node, timestamp) and must not be reused within its validity window.
+	var deleteSig [cap.SignatureSize]byte
+	copy(deleteSig[:], token[cap.SignPubKeySize+8:])
+	if srv.tokenCache.seen(deleteSig, now) {
+		srv.log.Debug("shard delete: token replay rejected", "event", "shard.delete.rejected", "reason", "token_replay", "peer", peer, "id", id)
+		srv.replyErr(s, ErrUnauthorized)
 		return
 	}
 	// Write-rate cap: DELETE is metered per owner alongside PUT (same token bucket),

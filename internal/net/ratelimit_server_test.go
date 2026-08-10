@@ -71,15 +71,19 @@ func TestWriteRateLimitDelete(t *testing.T) {
 	signer, _, _ := cap.GenerateSigningKey()
 	c := signedClient(t, server, signer)
 
-	// A DELETE of a shard the owner never stored still meters (the bucket charges
-	// before ownership is even consulted); the single burst token is spent here.
+	// Two DELETEs for *distinct* shards so each produces a different signed token
+	// (the token payload includes the shard ID, so identical shard IDs would
+	// produce the same signature and the replay cache would intercept the second
+	// request before the rate limiter sees it). The rate-limiter is per-owner, not
+	// per-shard, so using different IDs still exercises the bucket.
 	//
-	// verifyToken authorizes the caller as an owner, then the rate check fires — so
-	// the *first* delete is admitted (and returns unauthorized/not-found from the
-	// ledger), while the *second* is refused by the bucket before that.
-	id := store.HashOf([]byte("never-stored"))
-	_ = c.Delete(ctx, id) // spends the one burst token (ledger then rejects the claim)
-	err := c.Delete(ctx, id)
+	// The first delete spends the one burst token (ledger then rejects the claim
+	// because the owner never stored either shard). The second is refused by the
+	// rate limiter bucket before the ledger is consulted.
+	id1 := store.HashOf([]byte("never-stored-one"))
+	id2 := store.HashOf([]byte("never-stored-two"))
+	_ = c.Delete(ctx, id1) // spends the one burst token; ledger rejects (not owner)
+	err := c.Delete(ctx, id2)
 	if !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("2nd DELETE error = %v, want ErrRateLimited", err)
 	}

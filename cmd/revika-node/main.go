@@ -166,6 +166,10 @@ func run() error {
 	flag.Var(&listen, "listen", "multiaddr to listen on (repeatable; default all interfaces, random TCP+QUIC ports)")
 	flag.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr with /p2p/<id> (repeatable)")
 	flag.Parse()
+	// Apply REVIKA_<FLAG> env-var overrides for any flag not set on the command
+	// line (12-factor config). CLI flags always take precedence. Saved here so
+	// the applied list can be logged once the logger exists.
+	envApplied := applyEnvOverrides()
 
 	// If no -bootstrap peer was given on the command line, look for a text file
 	// at <data>/bootstrap (one multiaddr per line; '#' comments and blank lines
@@ -210,6 +214,10 @@ func run() error {
 	log, err := newLogger(*logFormat, logLevelStr)
 	if err != nil {
 		return err
+	}
+
+	if len(envApplied) > 0 {
+		log.Info("config: env-var overrides applied", "event", "config.env", "vars", envApplied)
 	}
 
 	startedAt := time.Now()
@@ -995,6 +1003,50 @@ func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog
 	}
 	stats.Record(freed, rep.DroppedRecords, rep.OrphanBlobs, time.Now())
 	return curr
+}
+
+// applyEnvOverrides reads REVIKA_<FLAG> environment variables for every flag
+// that was not set explicitly on the command line (CLI always wins). Flag names
+// are mapped to env-var names by uppercasing and replacing hyphens with
+// underscores: e.g. -log-format → REVIKA_LOG_FORMAT, -listen → REVIKA_LISTEN.
+//
+// Repeatable flags (listen, bootstrap) accept a comma-separated list of values
+// in their env var; each non-empty part is applied individually via the flag's
+// Set method (which appends for multiFlag).
+//
+// Returns a slice of "ENV_NAME=value" strings for the caller to log once the
+// logger is ready.
+func applyEnvOverrides() []string {
+	cliSet := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { cliSet[f.Name] = true })
+
+	var applied []string
+	flag.VisitAll(func(f *flag.Flag) {
+		if cliSet[f.Name] {
+			return
+		}
+		envName := "REVIKA_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
+		val := os.Getenv(envName)
+		if val == "" {
+			return
+		}
+		if _, isMulti := f.Value.(*multiFlag); isMulti {
+			for _, part := range strings.Split(val, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				if err := f.Value.Set(part); err == nil {
+					applied = append(applied, envName+"="+part)
+				}
+			}
+			return
+		}
+		if err := flag.Set(f.Name, val); err == nil {
+			applied = append(applied, envName+"="+val)
+		}
+	})
+	return applied
 }
 
 // readBootstrapFile reads a text file of bootstrap multiaddrs, one per line.

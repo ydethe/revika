@@ -79,7 +79,19 @@ type Ledger struct {
 	opts Options
 }
 
-const schema = `
+// schemaVersion is the ledger schema version this binary targets. It is
+// stored in SQLite's PRAGMA user_version after every migration so Open can
+// detect whether it needs to migrate and whether the database was written by a
+// newer binary (in which case it refuses to open and tells the operator to
+// upgrade). Bump this constant whenever a new migration is added.
+const schemaVersion = 1
+
+// schemaV0 is the original table layout (created with IF NOT EXISTS so it is
+// safe to run against a database that already has some or all of these tables
+// from a pre-migration-tracking release). It intentionally omits first_seen
+// from accounts; migration 0→1 adds it as an ALTER TABLE so the migration
+// list stays authoritative and no column appears in two places.
+const schemaV0 = `
 CREATE TABLE IF NOT EXISTS shards (
 	id      BLOB PRIMARY KEY,
 	size    INTEGER NOT NULL,
@@ -96,8 +108,7 @@ CREATE INDEX IF NOT EXISTS owners_by_owner ON owners(owner);
 CREATE TABLE IF NOT EXISTS accounts (
 	owner       BLOB PRIMARY KEY,
 	bytes_used  INTEGER NOT NULL,
-	shard_count INTEGER NOT NULL,
-	first_seen  INTEGER NOT NULL DEFAULT 0
+	shard_count INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stripes (
 	shard_id BLOB PRIMARY KEY REFERENCES shards(id) ON DELETE CASCADE,
@@ -106,6 +117,41 @@ CREATE TABLE IF NOT EXISTS stripes (
 	siblings BLOB NOT NULL,
 	grant    BLOB NOT NULL
 );`
+
+// ledgerMigrations is the ordered list of forward migrations. Each entry
+// migrates the schema from (index) to (index+1). A new migration is appended
+// here and schemaVersion is bumped by one. Migrations run inside a single
+// transaction that also advances user_version, so a crash mid-migration leaves
+// the database at the previous version and Open retries the migration on the
+// next start.
+var ledgerMigrations = []func(*sql.Tx) error{
+	// Migration 0 → 1: create the base tables (idempotent via IF NOT EXISTS for
+	// databases from pre-migration releases) and add the first_seen column used
+	// by the Axis B age-graduated quota (Architecture §5). Pre-migration databases
+	// may already have the column; the column-exists check makes the ALTER a no-op
+	// in that case so existing owners retain their full quota (first_seen=0 =
+	// maximum age) rather than being throttled as freshly minted identities.
+	func(tx *sql.Tx) error {
+		if _, err := tx.Exec(schemaV0); err != nil {
+			return fmt.Errorf("create base tables: %w", err)
+		}
+		// Check whether first_seen already exists (pre-migration database).
+		var count int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name='first_seen'`,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("check first_seen column: %w", err)
+		}
+		if count == 0 {
+			if _, err := tx.Exec(
+				`ALTER TABLE accounts ADD COLUMN first_seen INTEGER NOT NULL DEFAULT 0`,
+			); err != nil {
+				return fmt.Errorf("add first_seen: %w", err)
+			}
+		}
+		return nil
+	},
+}
 
 // Open opens (creating if needed) a ledger database at path. Pass ":memory:" for
 // an ephemeral in-memory ledger (tests).
@@ -118,28 +164,49 @@ func Open(path string, opts Options) (*Ledger, error) {
 	// SQLite tolerates a single writer; serialise access through one connection
 	// so concurrent PUT/DELETE never hit "database is locked".
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrateSchema(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("ledger: init schema: %w", err)
-	}
-	// Additive migration for the age-graduated quota (Axis B): a ledger created
-	// before first_seen existed lacks the column. On a fresh DB the CREATE above
-	// already added it, so this ALTER fails with "duplicate column" — which we
-	// treat as a no-op. Existing rows default to first_seen=0 (epoch), i.e. maximal
-	// age, so pre-migration owners keep their full quota rather than being throttled
-	// as if freshly minted.
-	if _, err := db.Exec(`ALTER TABLE accounts ADD COLUMN first_seen INTEGER NOT NULL DEFAULT 0`); err != nil && !isDuplicateColumn(err) {
-		db.Close()
-		return nil, fmt.Errorf("ledger: migrate accounts.first_seen: %w", err)
+		return nil, fmt.Errorf("ledger: %w", err)
 	}
 	return &Ledger{db: db, opts: opts}, nil
 }
 
-// isDuplicateColumn reports whether err is SQLite's "duplicate column name" error,
-// raised when ADD COLUMN targets a column the CREATE TABLE already provided (a
-// fresh DB). Treated as a benign no-op by the additive migration in Open.
-func isDuplicateColumn(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "duplicate column")
+// migrateSchema reads PRAGMA user_version and runs any pending migrations up to
+// schemaVersion. Each migration runs in its own transaction that also advances
+// user_version, so a mid-migration crash leaves the database at the version
+// before the failed migration and Open retries from that point on the next start.
+func migrateSchema(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version > schemaVersion {
+		return fmt.Errorf("schema version %d is newer than this binary (max supported: %d); upgrade revika-node", version, schemaVersion)
+	}
+	for version < schemaVersion {
+		next := version + 1
+		migrate := ledgerMigrations[version]
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("migrate %d→%d: begin: %w", version, next, err)
+		}
+		if err := migrate(tx); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate %d→%d: %w", version, next, err)
+		}
+		// Advance user_version inside the transaction so the migration and its
+		// version stamp are atomic. SQLite PRAGMA cannot use bound parameters, so
+		// we use Sprintf with a validated integer.
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, next)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate %d→%d: set version: %w", version, next, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migrate %d→%d: commit: %w", version, next, err)
+		}
+		version = next
+	}
+	return nil
 }
 
 // Close closes the underlying database.
