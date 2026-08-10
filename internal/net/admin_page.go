@@ -427,6 +427,18 @@ const adminHTML = `<!DOCTYPE html>
       </div>
       {{end}}
     </section>
+
+    <section class="panel" aria-label="Abuse controls">
+      <h2>Self · defenses</h2>
+      <dl class="kv">
+        <dt title="Axis A: identity-agnostic per-subnet request-rate cap">Subnet flow cap (Axis A)</dt>
+        <dd>{{with .Status.Defense.SubnetRateLimit}}{{if .Enabled}}<span class="pill on">{{printf "%.0f" .Rate}}/s · burst {{printf "%.0f" .Burst}}</span> · /{{.Prefix4}} v4 · /{{.Prefix6}} v6{{else}}<span class="pill off">disabled</span>{{end}}{{end}}</dd>
+        <dt title="Per-owner token bucket on PUT/DELETE">Write-verb cap (per owner)</dt>
+        <dd>{{with .Status.Defense.WriteRateLimit}}{{if .Enabled}}<span class="pill on">{{printf "%.0f" .Rate}}/s · burst {{printf "%.0f" .Burst}}</span>{{else}}<span class="pill off">disabled</span>{{end}}{{end}}</dd>
+        <dt title="Axis B: a new owner's quota ramps up with age">Quota ramp (Axis B)</dt>
+        <dd>{{with .Status.Defense.QuotaRamp}}{{if .Enabled}}<span class="pill on">{{pct .InitialFraction}} → full over {{.Ramp}}</span>{{else}}<span class="pill off">{{if $.Status.Storage.QuotaBytes}}disabled{{else}}n/a — no quota set{{end}}</span>{{end}}{{end}}</dd>
+      </dl>
+    </section>
   </div>
 </div>
 

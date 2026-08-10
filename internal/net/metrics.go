@@ -61,6 +61,7 @@ type MetricsServer struct {
 	pow       PoWInfo       // proof-of-work admission policy this node enforces on writes
 	repair    RepairInfo    // repair maintenance policy this node runs (and advertises)
 	rebalance RebalanceInfo // rebalance maintenance policy this node runs (and advertises)
+	defense   DefenseInfo   // local abuse controls (Axis A/B + per-owner write cap)
 	loadSrc   LoadSource    // optional: reports storage capacity/load for rebalancing (§3.4)
 	protocols []string      // versioned libp2p stream protocols this node serves
 	geo       geoip.Locator // optional: estimates a peer's position for the /admin map (nil = positions unknown)
@@ -135,6 +136,13 @@ func (m *MetricsServer) SetMaintenance(repair RepairInfo, rebalance RebalanceInf
 	m.repair, m.rebalance = repair, rebalance
 }
 
+// SetDefenses records the node's local abuse-control configuration (Axis A
+// per-subnet flow cap, the per-owner write-verb cap, and Axis B age-graduated
+// quota) so it is reported on /status, /metrics, and the /admin dashboard. These
+// are per-node local policy, never inherited from bootstrap, so the surface shows
+// exactly what this node enforces. Optional; call before Serve.
+func (m *MetricsServer) SetDefenses(d DefenseInfo) { m.defense = d }
+
 // Handler returns the HTTP mux serving the metrics endpoints. Exposed so it can
 // be tested directly (via httptest) and mounted by a caller if desired.
 func (m *MetricsServer) Handler() http.Handler {
@@ -189,9 +197,62 @@ type Status struct {
 	PoW       PoWInfo       `json:"pow"`
 	Repair    RepairInfo    `json:"repair"`
 	Rebalance RebalanceInfo `json:"rebalance"`
+	Defense   DefenseInfo   `json:"defense"`
 	Storage   StorageInfo   `json:"storage"`
 	Network   NetworkInfo   `json:"network"`
 	GC        GCSnapshot    `json:"gc"`
+}
+
+// DefenseInfo reports a node's *local* abuse-control configuration — the flow and
+// storage-capability caps that are chosen per node and never inherited from
+// bootstrap (unlike the PoW/repair/rebalance cluster policy above). It gathers the
+// three levers a node runs against flooding and Sybil abuse:
+//
+//   - SubnetRateLimit (Axis A): an identity-agnostic per-subnet request-rate cap
+//     that bounds a flood from one network location regardless of how many owner
+//     identities it mints.
+//   - WriteRateLimit: a per-owner token bucket on the write verbs (PUT/DELETE).
+//   - QuotaRamp (Axis B): an age-graduated per-owner storage quota, so a freshly
+//     minted (e.g. re-minted-after-ban) identity starts near-powerless.
+//
+// Each sub-policy carries its own Enabled flag so the surface distinguishes "off"
+// from "on with these parameters".
+type DefenseInfo struct {
+	SubnetRateLimit SubnetLimitInfo `json:"subnet_rate_limit"` // Axis A
+	WriteRateLimit  WriteLimitInfo  `json:"write_rate_limit"`
+	QuotaRamp       QuotaRampInfo   `json:"quota_ramp"` // Axis B
+}
+
+// SubnetLimitInfo is the Axis A per-subnet flow cap: a token bucket keyed on the
+// source IP subnet metering every shard/probe request. Rate is the sustained
+// requests/second a subnet may make, Burst the back-to-back allowance, and
+// Prefix4/Prefix6 the IPv4/IPv6 prefix lengths that aggregate source IPs into one
+// bucket. Enabled is false when the cap is off.
+type SubnetLimitInfo struct {
+	Enabled bool    `json:"enabled"`
+	Rate    float64 `json:"rate_per_second"`
+	Burst   float64 `json:"burst"`
+	Prefix4 int     `json:"prefix4"`
+	Prefix6 int     `json:"prefix6"`
+}
+
+// WriteLimitInfo is the per-owner write-verb rate cap: a token bucket keyed on the
+// Ed25519 owner refusing over-rate PUT/DELETE (grant-authorized maintenance
+// exempt). Enabled is false when the cap is off.
+type WriteLimitInfo struct {
+	Enabled bool    `json:"enabled"`
+	Rate    float64 `json:"rate_per_second"`
+	Burst   float64 `json:"burst"`
+}
+
+// QuotaRampInfo is the Axis B age-graduated per-owner quota: an owner's effective
+// storage ceiling rises from InitialFraction of the full quota at first sight to the
+// full quota once its age reaches Ramp. Enabled is false when no ramp is in force
+// (no ramp duration, an out-of-range fraction, or no per-owner quota to graduate).
+type QuotaRampInfo struct {
+	Enabled         bool          `json:"enabled"`
+	Ramp            time.Duration `json:"ramp"`             // age at which the full quota is reached (0 = no ramp)
+	InitialFraction float64       `json:"initial_fraction"` // fraction of the full quota at age zero
 }
 
 // PoWInfo is the proof-of-work admission policy this node enforces on writes:
@@ -276,6 +337,7 @@ func (m *MetricsServer) snapshot() (Status, error) {
 		PoW:           m.pow,
 		Repair:        m.repair,
 		Rebalance:     m.rebalance,
+		Defense:       m.defense,
 	}
 	id := m.h.ID().String()
 	for _, a := range m.h.Addrs() {
@@ -438,6 +500,18 @@ func (m *MetricsServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	metric("revika_rebalance_enabled", "Whether this node runs the storage-rebalancing loop (1 = on).", "gauge", float64(b2i(st.Rebalance.Enabled)))
 	metric("revika_rebalance_interval_seconds", "Period between rebalance sweeps in seconds (0 = disabled).", "gauge", st.Rebalance.Interval.Seconds())
 	metric("revika_rebalance_threshold", "Load-gap dead-band below which the rebalancer moves no shard.", "gauge", st.Rebalance.Threshold)
+
+	// Local abuse controls (Axis A per-subnet flow cap, per-owner write cap, Axis B
+	// age-graduated quota). Never inherited from bootstrap — per-node local policy.
+	metric("revika_subnet_rate_limit_enabled", "Whether the Axis A identity-agnostic per-subnet flow cap is enforced (1 = on).", "gauge", float64(b2i(st.Defense.SubnetRateLimit.Enabled)))
+	metric("revika_subnet_rate_limit_rate", "Axis A sustained per-subnet request rate cap in requests/second (0 when disabled).", "gauge", st.Defense.SubnetRateLimit.Rate)
+	metric("revika_subnet_rate_limit_burst", "Axis A per-subnet burst allowance in requests (0 when disabled).", "gauge", st.Defense.SubnetRateLimit.Burst)
+	metric("revika_write_rate_limit_enabled", "Whether the per-owner write-verb rate cap is enforced (1 = on).", "gauge", float64(b2i(st.Defense.WriteRateLimit.Enabled)))
+	metric("revika_write_rate_limit_rate", "Per-owner write rate cap in writes/second (0 when disabled).", "gauge", st.Defense.WriteRateLimit.Rate)
+	metric("revika_write_rate_limit_burst", "Per-owner write burst allowance in writes (0 when disabled).", "gauge", st.Defense.WriteRateLimit.Burst)
+	metric("revika_quota_ramp_enabled", "Whether the Axis B age-graduated per-owner quota is in force (1 = on).", "gauge", float64(b2i(st.Defense.QuotaRamp.Enabled)))
+	metric("revika_quota_ramp_seconds", "Axis B age at which a new owner reaches its full quota, in seconds (0 = no ramp).", "gauge", st.Defense.QuotaRamp.Ramp.Seconds())
+	metric("revika_quota_ramp_initial_fraction", "Axis B fraction of the full quota a brand-new owner may use at age zero.", "gauge", st.Defense.QuotaRamp.InitialFraction)
 
 	// Dialable bootstrap addresses (multiaddr + /p2p/<id>) for `revika-ctl
 	// -bootstrap`, one info-style line (constant 1) per address, addr in a label.

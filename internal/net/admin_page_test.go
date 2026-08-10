@@ -51,6 +51,7 @@ func TestAdminPageNoPeers(t *testing.T) {
 		"No peers currently connected", // empty-list state
 		"-geoip=ip-api",                // the geolocation-disabled hint
 		`id="map"`,                     // the map panel is present
+		"Self · defenses",              // the local abuse-control panel (Axis A/B + write cap)
 		"Stored shards",                // the ledger-stripe shard panel
 		"Blocklist",                    // the blocklist panel
 	} {
@@ -229,7 +230,12 @@ func TestAdminTemplateRender(t *testing.T) {
 			PeerID:    "12D3KooWSelf",
 			Version:   "test-1.0.0",
 			Protocols: []string{"/revika/shard/1.2.0"},
-			Storage:   StorageInfo{Shards: 3, BytesUsed: 4096},
+			Storage:   StorageInfo{Shards: 3, BytesUsed: 4096, QuotaBytes: 1 << 20},
+			Defense: DefenseInfo{
+				SubnetRateLimit: SubnetLimitInfo{Enabled: true, Rate: 1000, Burst: 4000, Prefix4: 24, Prefix6: 56},
+				WriteRateLimit:  WriteLimitInfo{Enabled: false},
+				QuotaRamp:       QuotaRampInfo{Enabled: true, Ramp: 7 * 24 * time.Hour, InitialFraction: 0.05},
+			},
 		},
 	}
 	var buf bytes.Buffer
@@ -247,6 +253,10 @@ func TestAdminTemplateRender(t *testing.T) {
 		`"lat":48.85`,
 		"/revika/shard/1.2.0", // self view lists the served protocol
 		"4.0 KiB",             // human-readable bytes-used in the self view
+		"Self · defenses",     // the local abuse-control panel
+		"1000/s · burst 4000", // Axis A subnet cap rendered
+		"/24 v4 · /56 v6",     // Axis A subnet prefixes
+		"5.0% → full over",    // Axis B quota ramp rendered
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered page missing %q", want)

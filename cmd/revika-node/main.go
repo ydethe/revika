@@ -69,6 +69,25 @@ const (
 // /revika/params (see the PoW block in run()).
 const bootstrapDialTimeout = 30 * time.Second
 
+// Default tuning for the local abuse controls that ship ON out of the box (Axis A
+// per-subnet flow cap and Axis B age-graduated quota). They are deliberately
+// generous — a DoS/Sybil backstop, not a fine throttle — so a fresh node resists a
+// flood without throttling honest traffic; an operator tightens them under attack.
+const (
+	// defaultSubnetRate is the default Axis A sustained per-subnet request rate cap
+	// (requests/second across all shard/probe verbs). Set well above legitimate
+	// inter-node repair/rebalance and single-client upload volume.
+	defaultSubnetRate = 1000
+	// subnetBurstFactor derives the default -subnet-burst from -subnet-rate when the
+	// operator leaves the burst unset: burst = factor × rate, i.e. a few seconds of
+	// accumulated headroom so a bursty-but-honest client is never torn down.
+	subnetBurstFactor = 4
+	// defaultQuotaRamp is the default Axis B age over which a brand-new owner's
+	// effective quota climbs from -quota-initial to the full -quota. It only bites
+	// when a per-owner -quota is set (with no quota there is nothing to graduate).
+	defaultQuotaRamp = 7 * 24 * time.Hour
+)
+
 // version is the build version reported on /status and /metrics. Override at
 // build time with -ldflags="-X main.version=v1.2.3".
 var version = "dev"
@@ -122,6 +141,12 @@ func run() error {
 		connGrace     = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
 		writeRate     = flag.Float64("write-rate", 0, "per-owner write-verb rate cap in writes/second on PUT/DELETE (0 = disabled). A token bucket keyed on the Ed25519 owner refuses over-rate writes with statusRateLimited; grant-authorized repair/rebalance writes are exempt. LOCAL defence, never inherited")
 		writeBurst    = flag.Float64("write-burst", 0, "per-owner write burst allowance: max back-to-back writes before -write-rate throttles (0 = default to -write-rate, i.e. a ~1s burst; clamped to >=1). LOCAL defence, never inherited")
+		subnetRate    = flag.Float64("subnet-rate", defaultSubnetRate, "Axis A: identity-agnostic per-subnet request rate cap in requests/second across ALL shard/probe verbs (ON by default; 0 = disabled). A token bucket keyed on the source IP subnet bounds a flood from one network location no matter how many owner identities it mints; over-cap requests are torn down. Set generously (above legit inter-node repair/rebalance volume) — unlike -write-rate it cannot exempt maintenance. LOCAL defence, never inherited")
+		subnetBurst   = flag.Float64("subnet-burst", 0, "Axis A: per-subnet burst allowance: max back-to-back requests before -subnet-rate throttles (0 = default to 4×-subnet-rate; clamped to >=1). LOCAL defence, never inherited")
+		subnetPrefix4 = flag.Int("subnet-prefix4", 24, "Axis A: IPv4 prefix length aggregating source IPs into one -subnet-rate bucket (default /24)")
+		subnetPrefix6 = flag.Int("subnet-prefix6", 56, "Axis A: IPv6 prefix length aggregating source IPs into one -subnet-rate bucket (default /56)")
+		quotaRamp     = flag.Duration("quota-ramp", defaultQuotaRamp, "Axis B: graduate a new owner's effective storage quota from -quota-initial of -quota up to full over this age (ON by default; 0 = no ramp, full quota immediately). Only bites when a per-owner -quota is set. A fresh identity starts weak, so minting a new one to evade a ban buys little write capacity; the owner's first shard is always admitted. LOCAL defence, never inherited")
+		quotaInitial  = flag.Float64("quota-initial", 0.05, "Axis B: fraction (0,1) of -quota a brand-new owner may use at age zero, ramping linearly to full over -quota-ramp (ignored when -quota-ramp is 0 or -quota is 0)")
 		powDiff       = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
 		publicIP      = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
 		listen        multiFlag
@@ -184,7 +209,12 @@ func run() error {
 	if err := os.MkdirAll(filepath.Dir(ledgerPath), 0o700); err != nil {
 		return fmt.Errorf("create ledger dir: %w", err)
 	}
-	led, err := ledger.Open(ledgerPath, ledger.Options{QuotaBytes: *quota, LeaseTTL: *leaseTTL})
+	led, err := ledger.Open(ledgerPath, ledger.Options{
+		QuotaBytes:           *quota,
+		LeaseTTL:             *leaseTTL,
+		QuotaRamp:            *quotaRamp,
+		QuotaInitialFraction: *quotaInitial,
+	})
 	if err != nil {
 		return fmt.Errorf("open ledger: %w", err)
 	}
@@ -372,13 +402,52 @@ func run() error {
 	// per-owner storage *volume* quota with a *flow* cap; grant-authorized
 	// repair/rebalance writes carry no owner token and are exempt. Off by default
 	// (-write-rate 0).
+	var writeInfo net.WriteLimitInfo
 	if *writeRate > 0 {
 		burst := *writeBurst
 		if burst <= 0 {
 			burst = *writeRate // ~1s worth of writes; NewOwnerRateLimiter clamps to >=1
 		}
 		srv.SetRateLimiter(net.NewOwnerRateLimiter(*writeRate, burst))
+		writeInfo = net.WriteLimitInfo{Enabled: true, Rate: *writeRate, Burst: burst}
 		log.Info("write-rate limiting enabled", "event", "ratelimit.enabled", "rate_per_s", *writeRate, "burst", burst)
+	}
+
+	// Axis A — identity-agnostic per-subnet flow cap (local defence, never
+	// inherited): a token bucket keyed on the source IP subnet that meters every
+	// shard/probe request before the frame is parsed, so a flood from one network
+	// location is bounded regardless of how many owner identities it mints. It is the
+	// outer DoS backstop that does not depend on identity scarcity, and it covers the
+	// read verbs the per-owner write limiter never sees. ON by default with a generous
+	// cap (a DoS backstop, not a fine throttle); -subnet-rate 0 disables it. See
+	// internal/net/subnetlimit.go.
+	var subnetInfo net.SubnetLimitInfo
+	if *subnetRate > 0 {
+		burst := *subnetBurst
+		if burst <= 0 {
+			burst = subnetBurstFactor * *subnetRate // generous headroom; NewSubnetRateLimiter clamps to >=1
+		}
+		srv.SetSubnetRateLimiter(net.NewSubnetRateLimiter(*subnetRate, burst, *subnetPrefix4, *subnetPrefix6))
+		subnetInfo = net.SubnetLimitInfo{Enabled: true, Rate: *subnetRate, Burst: burst, Prefix4: *subnetPrefix4, Prefix6: *subnetPrefix6}
+		log.Info("subnet flow-rate limiting enabled", "event", "subnetlimit.enabled",
+			"rate_per_s", *subnetRate, "burst", burst, "prefix4", *subnetPrefix4, "prefix6", *subnetPrefix6)
+	}
+
+	// Axis B — age-graduated per-owner storage quota (local defence, never
+	// inherited): the ledger ramps a brand-new owner's effective quota from
+	// -quota-initial of -quota up to full over -quota-ramp, so a re-minted identity
+	// starts near-powerless. It only bites when a per-owner -quota is set (with no
+	// quota there is nothing to graduate), and an out-of-range initial fraction is a
+	// no-op. Wired into ledger.Open above; assembled here only for the metrics surface.
+	quotaRampInfo := net.QuotaRampInfo{Ramp: *quotaRamp, InitialFraction: *quotaInitial}
+	quotaRampInfo.Enabled = *quotaRamp > 0 && *quotaInitial > 0 && *quotaInitial < 1 && *quota > 0
+
+	// The node's local abuse-control configuration, surfaced on /status, /metrics,
+	// and /admin so an operator can see exactly what this node enforces.
+	defenseInfo := net.DefenseInfo{
+		SubnetRateLimit: subnetInfo,
+		WriteRateLimit:  writeInfo,
+		QuotaRamp:       quotaRampInfo,
 	}
 
 	// Join the DHT (server mode: a node stores routing state + provider records
@@ -458,6 +527,7 @@ func run() error {
 		ms.SetGCStats(gcStats)
 		ms.SetPoW(effDiff)
 		ms.SetMaintenance(repairPolicy, rebalancePolicy)
+		ms.SetDefenses(defenseInfo)
 		ms.SetLoadSource(net.LoadSource(loadSource))
 		ms.SetProtocols(served)
 		ms.SetBlocklister(blocklister)

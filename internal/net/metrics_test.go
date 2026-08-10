@@ -164,6 +164,60 @@ func TestMetricsPrometheus(t *testing.T) {
 	}
 }
 
+func TestMetricsReportsDefenses(t *testing.T) {
+	ms, _, ts := newMetricsFixture(t)
+	// Mirror the on-by-default wiring cmd/revika-node assembles: Axis A enabled,
+	// per-owner write cap enabled, Axis B enabled.
+	ms.SetDefenses(DefenseInfo{
+		SubnetRateLimit: SubnetLimitInfo{Enabled: true, Rate: 1000, Burst: 4000, Prefix4: 24, Prefix6: 56},
+		WriteRateLimit:  WriteLimitInfo{Enabled: true, Rate: 50, Burst: 100},
+		QuotaRamp:       QuotaRampInfo{Enabled: true, Ramp: 7 * 24 * time.Hour, InitialFraction: 0.05},
+	})
+
+	// /status carries the structured defense block.
+	code, body := getBody(t, ts.URL+"/status")
+	if code != http.StatusOK {
+		t.Fatalf("/status = %d", code)
+	}
+	var st Status
+	if err := json.Unmarshal([]byte(body), &st); err != nil {
+		t.Fatalf("decode status: %v (body=%s)", err, body)
+	}
+	d := st.Defense
+	if !d.SubnetRateLimit.Enabled || d.SubnetRateLimit.Rate != 1000 || d.SubnetRateLimit.Burst != 4000 ||
+		d.SubnetRateLimit.Prefix4 != 24 || d.SubnetRateLimit.Prefix6 != 56 {
+		t.Errorf("subnet_rate_limit = %+v, want enabled 1000/s burst 4000 /24 /56", d.SubnetRateLimit)
+	}
+	if !d.WriteRateLimit.Enabled || d.WriteRateLimit.Rate != 50 || d.WriteRateLimit.Burst != 100 {
+		t.Errorf("write_rate_limit = %+v, want enabled 50/s burst 100", d.WriteRateLimit)
+	}
+	if !d.QuotaRamp.Enabled || d.QuotaRamp.Ramp != 7*24*time.Hour || d.QuotaRamp.InitialFraction != 0.05 {
+		t.Errorf("quota_ramp = %+v, want enabled ramp 168h initial 0.05", d.QuotaRamp)
+	}
+
+	// /metrics exposes the same as gauges.
+	code, body = getBody(t, ts.URL+"/metrics")
+	if code != http.StatusOK {
+		t.Fatalf("/metrics = %d", code)
+	}
+	for _, want := range []string{
+		"# TYPE revika_subnet_rate_limit_enabled gauge",
+		"revika_subnet_rate_limit_enabled 1",
+		"revika_subnet_rate_limit_rate 1000",
+		"revika_subnet_rate_limit_burst 4000",
+		"revika_write_rate_limit_enabled 1",
+		"revika_write_rate_limit_rate 50",
+		"revika_write_rate_limit_burst 100",
+		"revika_quota_ramp_enabled 1",
+		"revika_quota_ramp_seconds 604800",
+		"revika_quota_ramp_initial_fraction 0.05",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
 func TestMetricsGCAndQuota(t *testing.T) {
 	// Build a fixture with a non-zero quota and a GC stats collector wired in.
 	h, err := NewHost(HostConfig{ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"}})

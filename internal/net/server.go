@@ -84,6 +84,14 @@ type Server struct {
 	// maintenance writes (repair/rebalance) carry no token and are never metered.
 	// Left nil, no write-rate limiting happens (the default). See ratelimit.go.
 	limiter *OwnerRateLimiter
+
+	// subnetLimiter, when set, is Axis A: an identity-agnostic per-subnet flow cap
+	// metering *every* shard/probe request by source IP subnet before the frame is
+	// parsed, so a flood from one network location is bounded regardless of how
+	// many owner identities it mints. An over-cap request is torn down (Reset)
+	// rather than answered. Left nil, no per-subnet capping happens (the default).
+	// See subnetlimit.go.
+	subnetLimiter *SubnetRateLimiter
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -158,6 +166,13 @@ func (srv *Server) SetAbuseMonitor(a *AbuseMonitor) { srv.abuse = a }
 // exempt. Call before Register; a nil limiter (the default) meters nothing.
 func (srv *Server) SetRateLimiter(l *OwnerRateLimiter) { srv.limiter = l }
 
+// SetSubnetRateLimiter attaches Axis A: an identity-agnostic per-subnet flow cap
+// (subnetlimit.go) metering every shard and probe request by source IP subnet. It
+// runs before the frame is parsed, so it bounds a flood from one network location
+// regardless of identity — the backstop that does not depend on identity scarcity.
+// Call before Register; a nil limiter (the default) meters nothing.
+func (srv *Server) SetSubnetRateLimiter(l *SubnetRateLimiter) { srv.subnetLimiter = l }
+
 // enforcePoW reports whether owner satisfies the node's proof-of-work admission
 // policy, returning ErrUnauthorized if not. A zero minimum difficulty accepts
 // any owner (the check is disabled).
@@ -206,6 +221,17 @@ func (srv *Server) handleShard(s network.Stream) {
 	_ = s.SetDeadline(time.Now().Add(serverStreamTimeout))
 
 	peer := s.Conn().RemotePeer()
+	// Axis A: identity-agnostic per-subnet flow cap (the outer DoS backstop). Meter
+	// this request by source subnet before reading the op or any payload, so a flood
+	// from one network location is bounded no matter how many owner identities it
+	// mints. Over-cap requests are torn down (Reset) — the cheapest rejection under
+	// flood, and it avoids reading a large PUT frame we would only refuse.
+	// Unattributable addresses (relay/unknown transport) fail open.
+	if !srv.subnetLimiter.Allow(s.Conn().RemoteMultiaddr(), time.Now()) {
+		srv.log.Debug("shard: subnet over flow cap", "event", "shard.rejected", "reason", "subnet_rate_limited", "peer", peer, "addr", s.Conn().RemoteMultiaddr())
+		_ = s.Reset()
+		return
+	}
 	opByte, err := readByte(s)
 	if err != nil {
 		srv.log.Debug("shard: read op", "peer", peer, "err", err)
@@ -529,6 +555,15 @@ func (srv *Server) handleProbe(s network.Stream) {
 	defer s.Close()
 	_ = s.SetDeadline(time.Now().Add(serverStreamTimeout))
 	peer := s.Conn().RemotePeer()
+
+	// Axis A: meter the probe by source subnet too — a probe flood is as cheap to
+	// mount and as effective at exhausting a node as a read/write flood. Same
+	// fail-open, torn-down-on-over-cap behaviour as handleShard.
+	if !srv.subnetLimiter.Allow(s.Conn().RemoteMultiaddr(), time.Now()) {
+		srv.log.Debug("probe: subnet over flow cap", "event", "probe.rejected", "reason", "subnet_rate_limited", "peer", peer, "addr", s.Conn().RemoteMultiaddr())
+		_ = s.Reset()
+		return
+	}
 
 	id, err := readID(s)
 	if err != nil {

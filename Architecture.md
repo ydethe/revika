@@ -130,13 +130,31 @@ model in §2 is untouched. The first three are **[implemented]** in `internal/ne
   banned at a threshold (default 3). Its tuning
   (`-rebalance-abuse-tolerance/-coalesce/-strikes/-decay`) is a *local* defence, never inherited
   from bootstrap.
-- **Rate limiting — [planned]** — a per-peer and per-owner token bucket on the write verbs
-  (`PUT`/`DELETE`), keyed on the Ed25519 owner pubkey the auth token already carries
-  (§3.2, `internal/net/auth.go`); anonymous reads (`GET`/`HAS`/`PROBE`) limited per-peer/IP
-  only. A new `statusRateLimited` response code surfaces the rejection.
+- **Per-owner write rate limiting — [implemented]** (`net.OwnerRateLimiter`,
+  `internal/net/ratelimit.go`) — a token bucket on the write verbs (`PUT`/`DELETE`) keyed on
+  the Ed25519 owner pubkey the auth token already carries (§3.2, `internal/net/auth.go`),
+  refusing an over-rate write with a `statusRateLimited` response code. Grant-authorized
+  maintenance writes (repair, rebalance) carry no owner token and are exempt. A *local* defence
+  (`-write-rate/-write-burst`, off by default), never inherited from bootstrap.
+- **Axis A — identity-agnostic per-subnet flow cap — [implemented]** (`net.SubnetRateLimiter`,
+  `internal/net/subnetlimit.go`) — a token bucket keyed on the *source IP subnet* of a request
+  (default `/24` IPv4, `/56` IPv6), not on identity, so it bounds a flood from one network
+  location regardless of how many owner keys an attacker mints — the DoS backstop the per-owner
+  cap misses because a Sybil rides a fresh key per request. Checked at the top of the `shard`/
+  `probe` handlers, tearing the stream down *before* framing (so it also covers the anonymous
+  read verbs). Unattributable traffic (no IP, e.g. a relayed address) fails open. A *local*
+  defence (`-subnet-rate/-subnet-burst/-subnet-prefix4/-subnet-prefix6`, **on by default** at a
+  generous DoS-backstop cap — 1000 req/s, burst 4×that; `-subnet-rate 0` disables it), never
+  inherited, and reported on `/status`, `/metrics`, and `/admin`. Per-*owner* read-verb limiting
+  is still **[planned]**.
 
 These are *flow/connection* caps that complement the existing *storage* caps (per-owner
-quota + leases, §3.2). Ban-by-identity is only as strong as the cost of minting a fresh
+quota + leases, §3.2). A second identity-scarcity lever lives in the storage cap itself —
+**Axis B**, an age-graduated per-owner quota (`ledger.effectiveQuota`, §3.2) ramping a
+brand-new owner's ceiling from a small initial fraction up to full over a configured duration
+(`-quota-ramp/-quota-initial`, **on by default** — ramp 7 days, initial 5% — but inert unless a
+per-owner `-quota` is set), so a banned-and-re-minted identity resets to near-zero storage
+power. Ban-by-identity is only as strong as the cost of minting a fresh
 identity, so revika makes owner identities **self-certifying** via proof-of-work: a valid
 Ed25519 owner key must, on its own, hash under a difficulty target, so it costs
 seconds-to-minutes of CPU to mint but one hash to verify — a banned owner cannot re-mint in
@@ -181,10 +199,15 @@ Two implementations pass a shared conformance suite:
   writes go to a temp file and are atomically renamed. On `Get` it re-hashes and returns
   `ErrCorrupt` if the bytes no longer match the ID, so the store is self-verifying.
 
-Node responsibilities still **[planned]**: **leases/expiry** (renewable holds so
-abandoned shards are GC'd) and **quotas** (per-node capacity, per-user accounting) — these
-arrive with the network layer, since only a networked node needs them. The
-**proof-of-possession** probe endpoint (§3.4) is now **[implemented]** (`/revika/probe`).
+Node **leases/expiry** (renewable holds so abandoned shards are GC'd) and **quotas**
+(per-node capacity, per-user accounting) arrived with the network layer and are now
+**[implemented]** in the per-node ledger (`internal/ledger`), since only a networked node
+needs them. The per-owner quota can be **age-graduated** (Axis B, §3.1): with `QuotaRamp`
+set, an owner's effective ceiling ramps from `QuotaInitialFraction` of the full quota at
+first sight up to the full quota over the ramp duration (measured from the owner's
+`accounts.first_seen`; `ledger.effectiveQuota`), a first-shard escape always admitting the
+very first claim so a brand-new owner can establish itself and start accruing age. The
+**proof-of-possession** probe endpoint (§3.4) is **[implemented]** (`/revika/probe`).
 `.revika/shards/` is the intended on-disk root.
 
 ### 3.3 Encoding pipeline (User) — **[implemented]** (`internal/pipeline`, `chunk`, `crypto`, `erasure`)
@@ -793,8 +816,10 @@ index/accounting of the user's own data and where it lives, *not* a global share
   blocklist (§3.1) — that act on connection/identity metadata only, never on shard content.
   The blocklist is runtime-mutable and persistent, and a `net.AbuseMonitor` extends it
   automatically when a peer abuses a maintenance flow (off-schedule rebalancing or repeated
-  possession lies — §3.1/§3.4). *(Implemented in `internal/net/defense.go` + `abuse.go`;
-  per-peer/per-owner rate limiting still planned.)*
+  possession lies — §3.1/§3.4). *(Implemented in `internal/net/defense.go` + `abuse.go`.
+  Write-verb per-owner rate limiting (`OwnerRateLimiter`) and an identity-agnostic
+  per-subnet flow cap (Axis A, `SubnetRateLimiter`) are also implemented; per-owner
+  read-verb rate limiting is still planned.)*
 - **Authentication:** libp2p secure channels authenticate peers; root pointers are signed
   by the User's key. *(Planned — arrives with the network layer.)* Absent an enrolled device
   record a User's devices share that key; making an individual device separately keyed and
@@ -806,10 +831,15 @@ index/accounting of the user's own data and where it lives, *not* a global share
 - **Acceptable use / abuse control:** enforced *locally per node*, since nodes are
   independent and untrusted — there is no global ban authority. A node combines per-owner
   storage quota + leases (§3.2, **[implemented]**) with the connection/flow defences above
-  (rcmgr/connmgr/gater **[implemented]**; write-verb rate limiting **[planned]**).
-  Ban-by-identity keys on the Ed25519 owner pubkey; to keep that ban meaningful, owner keys
-  are **self-certifying** — minted via proof-of-work so a fresh identity costs
-  seconds-to-minutes of CPU, not milliseconds. This is enforced end to end: the client mints
+  (rcmgr/connmgr/gater, per-owner write-verb rate limiting, and an identity-agnostic
+  per-subnet flow cap — Axis A — all **[implemented]**; per-owner read-verb rate limiting
+  **[planned]**). Ban-by-identity keys on the Ed25519 owner pubkey; to keep that ban
+  meaningful, two levers raise the value of *not* getting banned. First, owner keys are
+  **self-certifying** — minted via proof-of-work so a fresh identity costs
+  seconds-to-minutes of CPU, not milliseconds. Second, a fresh identity is *worth little*:
+  the per-owner storage quota is optionally **age-graduated** (Axis B, §3.1/§3.2), so a
+  banned-and-re-minted owner resets to near-zero storage capability and earns its full
+  quota back only over time. This is enforced end to end: the client mints
   under proof-of-work (`revika-ctl keygen -pow-difficulty`) and a node admits a
   PUT only from an owner meeting its own difficulty (`revika-node -pow-difficulty`,
   `Server.SetPoW`; `internal/cap/pow.go`, **[implemented]**). Repair and DELETE are exempt

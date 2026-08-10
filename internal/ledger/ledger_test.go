@@ -105,6 +105,79 @@ func TestStats(t *testing.T) {
 	}
 }
 
+func TestQuotaEnforced(t *testing.T) {
+	// Baseline (no ramp): a new claim past the flat quota is refused and nothing
+	// changes.
+	l := open(t, Options{QuotaBytes: 150})
+	now := time.Unix(1_700_000_000, 0)
+	if _, err := l.AddOwner(id(1), alice, 100, now); err != nil {
+		t.Fatalf("first claim within quota: %v", err)
+	}
+	if _, err := l.AddOwner(id(2), alice, 100, now); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("over-quota claim = %v, want ErrQuotaExceeded", err)
+	}
+	if used, _, _ := l.Account(alice); used != 100 {
+		t.Fatalf("alice used after refused claim = %d, want 100 (unchanged)", used)
+	}
+}
+
+func TestQuotaRampGraduatesNewOwner(t *testing.T) {
+	// Axis B: a fresh owner starts weak (10% of a 1000-byte quota) and ramps to the
+	// full quota over 100s.
+	l := open(t, Options{QuotaBytes: 1000, QuotaRamp: 100 * time.Second, QuotaInitialFraction: 0.1})
+	t0 := time.Unix(1_700_000_000, 0)
+
+	// The very first shard is always admitted so the owner can record first_seen —
+	// even though its 500 bytes exceed the age-zero effective quota of 100.
+	if added, err := l.AddOwner(id(1), alice, 500, t0); err != nil || !added {
+		t.Fatalf("first shard: added=%v err=%v, want admitted (first-shard escape)", added, err)
+	}
+	// A second claim at age zero is held to the ~100-byte effective quota: already
+	// at 500 used, it is refused.
+	if _, err := l.AddOwner(id(2), alice, 50, t0); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("young owner second claim = %v, want ErrQuotaExceeded", err)
+	}
+
+	// Halfway through the ramp (age 50s) the effective quota is 0.1+0.9*0.5 = 0.55 of
+	// 1000 = 550. A fresh owner (bob) lands a tiny first shard, then can grow toward
+	// 550 but not beyond.
+	half := t0.Add(50 * time.Second)
+	if added, err := l.AddOwner(id(3), bob, 10, t0); err != nil || !added {
+		t.Fatalf("bob first shard: added=%v err=%v", added, err)
+	}
+	if added, err := l.AddOwner(id(4), bob, 500, half); err != nil || !added {
+		t.Fatalf("bob claim within mid-ramp quota (10+500<=550): added=%v err=%v", added, err)
+	}
+	if _, err := l.AddOwner(id(5), bob, 100, half); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("bob claim over mid-ramp quota (510+100>550) = %v, want ErrQuotaExceeded", err)
+	}
+
+	// Past the ramp (age >= 100s) the full 1000-byte quota is available: alice, at
+	// 500 used, can add 400 more but not push over 1000.
+	after := t0.Add(200 * time.Second)
+	if added, err := l.AddOwner(id(6), alice, 400, after); err != nil || !added {
+		t.Fatalf("alice claim within full quota (500+400<=1000): added=%v err=%v", added, err)
+	}
+	if _, err := l.AddOwner(id(7), alice, 200, after); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("alice claim over full quota (900+200>1000) = %v, want ErrQuotaExceeded", err)
+	}
+}
+
+func TestQuotaRampDisabledIsFlatQuota(t *testing.T) {
+	// With QuotaRamp 0 the effective quota is the full QuotaBytes from age zero —
+	// the pre-Axis-B behaviour, regardless of QuotaInitialFraction.
+	l := open(t, Options{QuotaBytes: 1000, QuotaRamp: 0, QuotaInitialFraction: 0.1})
+	now := time.Unix(1_700_000_000, 0)
+	if added, err := l.AddOwner(id(1), alice, 600, now); err != nil || !added {
+		t.Fatalf("first claim: added=%v err=%v", added, err)
+	}
+	// Second claim well within the flat 1000 quota (600+300) must be admitted, not
+	// throttled as if the owner were young.
+	if added, err := l.AddOwner(id(2), alice, 300, now); err != nil || !added {
+		t.Fatalf("second claim within flat quota: added=%v err=%v, want admitted", added, err)
+	}
+}
+
 func TestRemoveOwner(t *testing.T) {
 	l := open(t, Options{})
 	now := time.Unix(1_700_000_000, 0)

@@ -75,10 +75,29 @@ User side — a node is trusted for *availability*, never *confidentiality*.
   and an optional repair possession-verify (`net.RepairStore.SetVerifyPossession`,
   `-repair-verify`) that upgrades `repair.Check`'s per-shard survival test from a trusted
   `Store.Has` presence byte to a proof-of-retrieval fetch + content-address self-verify, catching
-  a node that lies about holding a shard. Read-verb (`GET`/`HAS`/`PROBE`) rate limiting is still
-  TODO. Note ban-by-identity is weak while identities
-  are free to mint — proof-of-work identities raise the re-mint cost, but global anti-Sybil,
-  reputation, and economic layers remain deferred (see Architecture.md §5).
+  a node that lies about holding a shard. Two further *local* defences harden the system against
+  a *Sybil* flood (a fresh identity per request, which the per-owner caps miss): **Axis A** is an
+  identity-agnostic per-*subnet* flow cap (`net.SubnetRateLimiter`, `internal/net/subnetlimit.go`;
+  a token bucket keyed on the request's source IP subnet — default `/24` IPv4, `/56` IPv6 —
+  tearing down over-cap `shard`/`probe` streams *before* framing; `-subnet-rate/-subnet-burst/
+  -subnet-prefix4/-subnet-prefix6`, **on by default** at a generous DoS-backstop cap —
+  `-subnet-rate` defaults to 1000 req/s and `-subnet-burst` to 4×that; `-subnet-rate 0` disables
+  it), bounding a flood from one network location regardless of how many owner keys it mints and
+  so also covering the read verbs; **Axis B** is an age-graduated per-owner storage quota
+  (`ledger.effectiveQuota`, `Options.QuotaRamp` + `QuotaInitialFraction`,
+  `-quota-ramp/-quota-initial`) ramping a brand-new owner's ceiling from a small initial fraction
+  (default 5%) to the full quota over the ramp duration (default 7 days; measured from
+  `accounts.first_seen`; a first-shard escape always admits the very first claim so age can start
+  accruing), so a banned-and-re-minted identity resets to near-zero storage power. Axis B is
+  **on by default** too but only bites when a per-owner `-quota` is set (with unlimited quota
+  there is nothing to graduate). Both are **local** (never inherited from bootstrap) and their
+  effective configuration is surfaced on `/status` (`defense` object), `/metrics`
+  (`revika_subnet_rate_limit_*`, `revika_quota_ramp_*` gauges), and the `/admin` "Self · defenses"
+  panel. Read-verb (`GET`/`HAS`/`PROBE`) *per-owner* rate
+  limiting is still TODO (Axis A already caps the read verbs per subnet). Note ban-by-identity is
+  weak while identities are free to mint — proof-of-work identities raise the re-mint cost and
+  Axis B makes a fresh identity worth little, but global anti-Sybil, reputation, and economic
+  layers remain deferred (see Architecture.md §5).
 
 ## Toolchain & conventions
 
@@ -118,6 +137,8 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -rebalance-abuse-coalesce -rebalance-abuse-strikes
                           #   -rebalance-abuse-decay -conn-low -conn-high -conn-grace
                           #   -write-rate -write-burst -repair-verify
+                          #   -subnet-rate -subnet-burst -subnet-prefix4 -subnet-prefix6
+                          #   -quota-ramp -quota-initial
                           #   -pow-difficulty -geoip -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | mv | ls | rm | share | revoke | node
                           #   | device (see -h). `ls -owner <pubkey-file>` resolves a namespace's

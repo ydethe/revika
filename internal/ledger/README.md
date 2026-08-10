@@ -17,7 +17,9 @@ a bare content-addressed blob store cannot:
   one physical blob; each is charged, and each may independently drop its claim.
   The blob is only truly deletable once no owner remains.
 - **Is an owner over quota?** Each owner is charged the shard's full size on its
-  first claim, so a PUT can be refused *before* more bytes are accepted.
+  first claim, so a PUT can be refused *before* more bytes are accepted. The
+  effective ceiling can be **age-graduated** (Axis B, below) so a freshly minted
+  identity starts weak and earns its full quota over time.
 - **What is collectible?** Shards with no remaining owner (and optionally shards
   whose leases have all expired) can be garbage-collected.
 
@@ -35,7 +37,9 @@ a bare content-addressed blob store cannot:
 - **`shards`** — one row per distinct content-addressed blob: `id`, `size`,
   `created`.
 - **`owners`** — `(shard_id, owner)` claims with `put_at` and `expiry` (the lease).
-- **`accounts`** — per-owner rollup: `bytes_used`, `shard_count` (drives quota).
+- **`accounts`** — per-owner rollup: `bytes_used`, `shard_count` (drives quota),
+  and `first_seen` (Unix seconds of the owner's first accepted claim — the age
+  clock the graduated quota ramp measures from; see **Age-graduated quota** below).
 - **`stripes`** — erasure context for a held shard: `k`, `m`, sibling shard IDs,
   and a signed repair `grant`. Foreign-keyed to `shards` with `ON DELETE CASCADE`,
   so a stripe row disappears when its shard row is dropped.
@@ -43,11 +47,47 @@ a bare content-addressed blob store cannot:
 **Leases** are advisory: an `expiry` of 0 never expires; otherwise GC may reclaim
 expired shards only when run with `expireLeases=true`.
 
+## Age-graduated quota (Axis B)
+
+Banning by identity only bites if a *fresh* identity is worth little, so a banned
+owner cannot re-mint and immediately flood again. Axis B makes an owner's storage
+**capability grow with age**: when `Options.QuotaRamp > 0`, the effective per-owner
+ceiling ramps linearly from `QuotaInitialFraction * QuotaBytes` at first sight to the
+full `QuotaBytes` after `QuotaRamp` has elapsed (measured from `accounts.first_seen`).
+`effectiveQuota(opts, firstSeen, now)` computes it; `QuotaRamp <= 0` (or a fraction
+outside `(0, 1)`) is a flat quota, unchanged from before.
+
+Two properties keep it from locking anyone out:
+
+- **First-shard escape.** A brand-new owner has `bytes_used == 0` and no recorded
+  `first_seen`; its very first claim is always admitted (`used == 0` bypasses the
+  ceiling), which *records* `first_seen = now` so age — and standing — can start
+  accruing. Without this a ramp starting near zero would refuse an owner its first
+  byte and it could never establish itself.
+- **Age survives reconcile.** `Reconcile` recomputes `accounts` from the surviving
+  `owners` rows using `MIN(put_at)` as `first_seen`, so a restart or a ledger
+  reconciliation never resets an owner's age clock (which would silently restore a
+  banned-and-re-minted-looking owner to full quota).
+
+It is a **local** node policy (wired from `revika-node -quota-ramp/-quota-initial`),
+**on by default** (ramp 7 days, initial fraction 5%), but it only bites when a per-owner
+`-quota` is set — with unlimited quota there is nothing to graduate, so the default node
+(no quota) is unaffected. It is enforced purely on metadata the ledger already holds
+(owner key, bytes, a timestamp) with no extra work on the hot path — the age term is one
+arithmetic expression inside the existing `AddOwner` quota check. Pre-migration ledger
+rows default `first_seen = 0` (epoch), i.e. maximal age = full quota, so upgrading a node
+never retroactively throttles its existing owners. Its effective configuration is reported
+on the node's `/status` (`defense.quota_ramp`), `/metrics` (`revika_quota_ramp_*`), and the
+`/admin` "Self · defenses" panel. See Architecture.md §5.
+
 ## Exported API
 
 Types:
 - `Ledger` — the SQLite-backed index; safe for concurrent use.
-- `Options` — `QuotaBytes` (0 = unlimited) and `LeaseTTL` (0 = no expiry).
+- `Options` — `QuotaBytes` (0 = unlimited), `LeaseTTL` (0 = no expiry), and the
+  Axis B graduated-quota knobs `QuotaRamp` (0 = disabled: flat quota) +
+  `QuotaInitialFraction` (the fraction of the full quota a brand-new owner starts
+  with, e.g. `0.05`).
 - `OwnerStat`, `Stats` — per-owner and aggregate reporting snapshots.
 - `StripeRow` — one shard's erasure context (K/M, siblings, grant).
 - `ReconcileReport` — result of a `Reconcile` pass.
@@ -58,7 +98,9 @@ Functions / methods:
 - `(*Ledger) Close()` — close the underlying DB.
 - `(*Ledger) QuotaBytes()` — configured per-owner quota.
 - `(*Ledger) AddOwner(id, owner, size, now) (added, err)` — record a claim or renew
-  a lease; enforces quota. `added` is true only for a new claim (charged once).
+  a lease; enforces quota (the effective ceiling is age-graduated when `QuotaRamp` is
+  set — see **Age-graduated quota**). `added` is true only for a new claim (charged
+  once); a brand-new owner's first claim also stamps `first_seen`.
 - `(*Ledger) RemoveOwner(id, owner) (remaining, err)` — drop a claim; returns
   remaining owners, or `ErrUnauthorized` if the caller never owned it.
 - `(*Ledger) DropRecord(id)` — remove a shard record (called after the blob is

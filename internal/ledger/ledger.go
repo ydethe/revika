@@ -31,6 +31,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -53,6 +54,22 @@ type Options struct {
 	// LeaseTTL is how long a PUT's lease lasts before it is considered expired.
 	// Expiry is advisory unless GC runs with expireLeases=true. 0 = no expiry.
 	LeaseTTL time.Duration
+
+	// QuotaRamp is Axis B: it graduates a new owner's *effective* quota from a
+	// small initial fraction (QuotaInitialFraction) of QuotaBytes at age zero up to
+	// the full QuotaBytes over this duration, measured from the owner's first
+	// recorded claim. A brand-new identity therefore starts nearly powerless, so
+	// minting a fresh one to evade a ban buys little write capacity — capability is
+	// earned by age, which a Sybil cannot fake. 0 = no ramp: the full quota applies
+	// immediately (prior behaviour). Has no effect unless QuotaBytes > 0.
+	QuotaRamp time.Duration
+	// QuotaInitialFraction is the fraction (0,1) of QuotaBytes a brand-new owner may
+	// use at age zero, ramping linearly to the full quota over QuotaRamp. A value
+	// <=0 or >=1 disables the ramp (full quota immediately). Ignored when QuotaRamp
+	// is 0. An owner's very first shard is always admitted regardless (bounded by
+	// the wire's max shard size) so it can record its first_seen timestamp and begin
+	// accruing standing.
+	QuotaInitialFraction float64
 }
 
 // Ledger is a SQLite-backed ownership/lease/quota index. It is safe for
@@ -79,7 +96,8 @@ CREATE INDEX IF NOT EXISTS owners_by_owner ON owners(owner);
 CREATE TABLE IF NOT EXISTS accounts (
 	owner       BLOB PRIMARY KEY,
 	bytes_used  INTEGER NOT NULL,
-	shard_count INTEGER NOT NULL
+	shard_count INTEGER NOT NULL,
+	first_seen  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS stripes (
 	shard_id BLOB PRIMARY KEY REFERENCES shards(id) ON DELETE CASCADE,
@@ -104,7 +122,24 @@ func Open(path string, opts Options) (*Ledger, error) {
 		db.Close()
 		return nil, fmt.Errorf("ledger: init schema: %w", err)
 	}
+	// Additive migration for the age-graduated quota (Axis B): a ledger created
+	// before first_seen existed lacks the column. On a fresh DB the CREATE above
+	// already added it, so this ALTER fails with "duplicate column" — which we
+	// treat as a no-op. Existing rows default to first_seen=0 (epoch), i.e. maximal
+	// age, so pre-migration owners keep their full quota rather than being throttled
+	// as if freshly minted.
+	if _, err := db.Exec(`ALTER TABLE accounts ADD COLUMN first_seen INTEGER NOT NULL DEFAULT 0`); err != nil && !isDuplicateColumn(err) {
+		db.Close()
+		return nil, fmt.Errorf("ledger: migrate accounts.first_seen: %w", err)
+	}
 	return &Ledger{db: db, opts: opts}, nil
+}
+
+// isDuplicateColumn reports whether err is SQLite's "duplicate column name" error,
+// raised when ADD COLUMN targets a column the CREATE TABLE already provided (a
+// fresh DB). Treated as a benign no-op by the additive migration in Open.
+func isDuplicateColumn(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column")
 }
 
 // Close closes the underlying database.
@@ -144,13 +179,25 @@ func (l *Ledger) AddOwner(id store.ShardID, owner []byte, size int64, now time.T
 		return false, err
 	}
 
-	// New claim: enforce quota against the owner's current usage.
+	// New claim: enforce quota against the owner's current usage and its
+	// age-graduated *effective* quota (Axis B). A brand-new owner (no account row)
+	// always lands its first shard — bounded by the wire's max shard size — so it
+	// can record first_seen and begin accruing standing; only its second and later
+	// claims are held to the ramping effective quota.
 	if l.opts.QuotaBytes > 0 {
-		var used int64
-		if err := tx.QueryRow(`SELECT bytes_used FROM accounts WHERE owner=?`, owner).Scan(&used); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		var (
+			used      int64
+			firstSeen int64
+		)
+		err := tx.QueryRow(`SELECT bytes_used, first_seen FROM accounts WHERE owner=?`, owner).Scan(&used, &firstSeen)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Brand-new owner: no account yet. first_seen is set to now on insert
+			// below; the used==0 path admits this first shard unconditionally.
+			used, firstSeen = 0, now.Unix()
+		} else if err != nil {
 			return false, err
 		}
-		if used+size > l.opts.QuotaBytes {
+		if used > 0 && used+size > effectiveQuota(l.opts, firstSeen, now) {
 			return false, ErrQuotaExceeded
 		}
 	}
@@ -165,12 +212,37 @@ func (l *Ledger) AddOwner(id store.ShardID, owner []byte, size int64, now time.T
 		return false, err
 	}
 	if _, err := tx.Exec(`
-		INSERT INTO accounts (owner, bytes_used, shard_count) VALUES (?, ?, 1)
+		INSERT INTO accounts (owner, bytes_used, shard_count, first_seen) VALUES (?, ?, 1, ?)
 		ON CONFLICT(owner) DO UPDATE SET bytes_used = bytes_used + excluded.bytes_used, shard_count = shard_count + 1`,
-		owner, size); err != nil {
+		owner, size, now.Unix()); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
+}
+
+// effectiveQuota returns the byte cap in force for an owner first seen at
+// firstSeenUnix, evaluated at now (Axis B). With no ramp configured (QuotaRamp <= 0
+// or an out-of-range QuotaInitialFraction) it is the full QuotaBytes. Otherwise it
+// rises linearly from QuotaInitialFraction*QuotaBytes at age zero to the full quota
+// once the owner's age reaches QuotaRamp, and stays there. Pure arithmetic on the
+// first_seen already read for the quota check, so it adds no query to the write
+// path.
+func effectiveQuota(opts Options, firstSeenUnix int64, now time.Time) int64 {
+	full := opts.QuotaBytes
+	if opts.QuotaRamp <= 0 {
+		return full
+	}
+	frac := opts.QuotaInitialFraction
+	if frac <= 0 || frac >= 1 {
+		return full // ramp disabled by an out-of-range fraction
+	}
+	age := now.Sub(time.Unix(firstSeenUnix, 0))
+	if age >= opts.QuotaRamp {
+		return full
+	}
+	age = max(age, 0)
+	ratio := frac + (1-frac)*(float64(age)/float64(opts.QuotaRamp))
+	return max(int64(float64(full)*ratio), 1)
 }
 
 // RemoveOwner drops owner's claim on id and returns how many owners remain. It
@@ -565,9 +637,11 @@ func (l *Ledger) recomputeAccounts(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM accounts`); err != nil {
 		return err
 	}
+	// Rebuild first_seen from the earliest surviving claim per owner (MIN put_at),
+	// so the age-graduated quota (Axis B) is not reset to epoch by a reconcile.
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO accounts (owner, bytes_used, shard_count)
-		SELECT o.owner, COALESCE(SUM(s.size), 0), COUNT(*)
+		INSERT INTO accounts (owner, bytes_used, shard_count, first_seen)
+		SELECT o.owner, COALESCE(SUM(s.size), 0), COUNT(*), MIN(o.put_at)
 		FROM owners o JOIN shards s ON s.id = o.shard_id
 		GROUP BY o.owner`); err != nil {
 		return err

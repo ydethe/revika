@@ -144,6 +144,41 @@ verified. It is a **local** defence, wired from `revika-node -write-rate/-write-
 (off by default, `-write-rate 0`) and — like the abuse-detector tuning — never inherited
 from bootstrap.
 
+## Per-subnet flow rate limiting (`subnetlimit.go`)
+
+`SubnetRateLimiter` is the **identity-agnostic** outer flow cap (Axis A): a token
+bucket keyed on the *source IP subnet* of a request, not on the owner identity. It is
+the DoS backstop that does not depend on identity scarcity — a flood from one network
+location is bounded regardless of how many owner keys the attacker mints, so it
+complements the per-owner `OwnerRateLimiter` (which a Sybil attacker sidesteps with a
+fresh key per request) and the PoW admission cost. It reads only connection metadata
+(the remote multiaddr's IP), never a shard byte, so the untrusted-blob-store model holds.
+
+- `NewSubnetRateLimiter(rate, burst, prefix4, prefix6)` returns `nil` when `rate <= 0`
+  (disabled); `burst` is clamped `>= 1`; `prefix4`/`prefix6` default to `/24` and `/56`
+  (the `defaultSubnetPrefix4`/`6` constants) when non-positive. A nil `*SubnetRateLimiter`
+  meters nothing, so `Allow` is safe to call unconditionally.
+- `Allow(addr, now)` extracts the IP from the multiaddr (`manet.ToIP`), masks it to the
+  configured prefix (so every host in a `/24` — or `/56` for IPv6 — shares one bucket, an
+  attacker can't dodge the cap by walking host addresses in a subnet it controls),
+  credits lazily accrued tokens (capped at `burst`), charges one, and reports admission.
+  **Unattributable traffic fails open**: a nil addr or one with no IP component (e.g. a
+  relayed `/dns4/...` address) cannot be keyed to a subnet, so it is allowed rather than
+  blocked — the limiter never throttles traffic it cannot classify.
+- Idle, full buckets are pruned (`pruneLocked`, at most once per `subnetBucketIdle` = 10m)
+  so the map can't grow unbounded under an address-walking flood.
+
+`Server.SetSubnetRateLimiter` wires it in: `handleShard` and `handleProbe` check
+`Allow(RemoteMultiaddr(), now)` at the very top — *before* reading the request frame —
+and on refusal `Reset` the stream (cheapest teardown; chosen over a `statusRateLimited`
+reply so the node never reads a large over-cap PUT frame it is about to refuse). Being a
+**local** defence it is wired from `revika-node -subnet-rate/-subnet-burst/-subnet-prefix4/
+-subnet-prefix6` (**on by default** at a generous DoS-backstop cap — `-subnet-rate` 1000 req/s,
+`-subnet-burst` 4×that; `-subnet-rate 0` disables it) and, like the abuse-detector tuning,
+is never inherited from bootstrap. Its effective configuration is reported on `/status`
+(`defense.subnet_rate_limit`), `/metrics` (`revika_subnet_rate_limit_*`), and the `/admin`
+"Self · defenses" panel. See Architecture.md §3.1/§5.
+
 ## Maintenance-abuse detection (`abuse.go`)
 
 `AbuseMonitor` is a node's local defence against a peer that abuses the two
@@ -341,6 +376,12 @@ interprets, or trusts payloads.
   check) and `handleDelete` meters the verified owner; an over-rate write is refused with
   `statusRateLimited` before any store/ledger work. Grant-authorized maintenance writes are
   exempt. Nil (the default) meters nothing.
+- `SetSubnetRateLimiter(*SubnetRateLimiter)` — wires the optional identity-agnostic
+  per-subnet flow cap (Axis A; see **Per-subnet flow rate limiting**). `handleShard` and
+  `handleProbe` check it at the top of the handler and `Reset` an over-cap stream before
+  reading its frame. It keys on the source IP subnet, not the owner, so it bounds a flood
+  from one network location regardless of how many identities it mints. Nil (the default)
+  meters nothing.
 
 Ordering is crash-safe: bytes are stored before ownership is recorded, and on
 DELETE the ledger row is removed before the blob — a crash in between leaves an
@@ -348,12 +389,19 @@ orphan blob for GC to reclaim, never lost owner data. `handleProbe` returns
 `SHA-256(nonce || shardBytes)`. `serverStreamTimeout` (60s) bounds each exchange.
 
 **Abuse controls.** Beyond the per-owner storage quota the ledger enforces, the server
-carries a *flow* cap: an optional per-owner token bucket on `PUT`/`DELETE` (keyed on the
-Ed25519 owner from `verifyToken`), surfaced by the `statusRateLimited` response code — see
-**Write-verb rate limiting** above (`SetRateLimiter`). Transport-level blocking lives in the
-host's `ConnectionGater` (see **Self-defence**); together with the quota they form a node's
-acceptable-use enforcement. **Still planned:** rate-limiting the anonymous read verbs
-(`GET`/`HAS`/`PROBE`) per-peer/IP. See Architecture.md §3.1/§5.
+carries two complementary *flow* caps. The **per-owner** one (`SetRateLimiter`) is a token
+bucket on `PUT`/`DELETE` keyed on the Ed25519 owner from `verifyToken`, surfaced by the
+`statusRateLimited` response code — see **Write-verb rate limiting** above. The
+**per-subnet** one (`SetSubnetRateLimiter`, Axis A) is an *identity-agnostic* token bucket
+keyed on the request's source IP subnet that tears down over-cap streams before framing —
+see **Per-subnet flow rate limiting** above; it bounds a Sybil flood that the per-owner cap
+misses because each request rides a fresh key. The ledger also gates an owner's *storage
+capability by age* (Axis B, graduated quota — see
+[`internal/ledger`](../ledger/README.md)), so a re-minted identity buys little. Transport-level
+blocking lives in the host's `ConnectionGater` (see **Self-defence**); together these form a
+node's acceptable-use enforcement. **Still planned:** rate-limiting the anonymous read verbs
+(`GET`/`HAS`/`PROBE`) *per owner* (the per-subnet cap already covers them). See
+Architecture.md §3.1/§5.
 
 **Node policy advertisement (`params.go`, `/revika/params/1.0.0`).** A node answers a
 read-only, unauthenticated `/revika/params` query (registered by `Register`, same
@@ -466,8 +514,10 @@ repair/rebalance cadence this node runs and advertises), the served stream-proto
 versions (`SetProtocols`, fed `Server.Protocols()` so `/status` and `/metrics` report
 the wire versions this node speaks), the storage-load reporter
 (`SetLoadSource`, feeding the capacity/free/load fields), the peer geolocator
-(`SetGeolocator`, powering the `/admin` map), and the connection blocklist
-(`SetBlocklister`, surfacing the refused peers/subnets on `/admin`) are optional.
+(`SetGeolocator`, powering the `/admin` map), the connection blocklist
+(`SetBlocklister`, surfacing the refused peers/subnets on `/admin`), and the local
+abuse-control configuration (`SetDefenses`, a `DefenseInfo` reporting the Axis A
+per-subnet flow cap, the per-owner write-rate cap, and the Axis B quota ramp) are optional.
 `Serve(ctx, addr)` runs it with graceful shutdown; `Handler()` exposes the mux for
 tests. Endpoints:
 
@@ -479,16 +529,23 @@ tests. Endpoints:
   enabled, puzzle name, difficulty bits), `StorageInfo` (shards, bytes, quota, the rebalancing signal
   `capacity_bytes`/`free_bytes`/`load` when a load source is set, and a per-`OwnerInfo`
   breakdown from the ledger), the `RepairInfo`/`RebalanceInfo` maintenance policy, `NetworkInfo`
-  (connected peers, routing-table size, per-`PeerInfo` cartography), and `GCSnapshot`.
+  (connected peers, routing-table size, per-`PeerInfo` cartography), `GCSnapshot`, and the
+  `DefenseInfo` local abuse-control block (`defense`: the Axis A `subnet_rate_limit`, the
+  per-owner `write_rate_limit`, and the Axis B `quota_ramp`, each with an `enabled` flag).
   `bootstrap` mirrors `listen_addrs` with the node's `/p2p/<peer-id>` appended — each entry is
   ready to paste into `revika-ctl -bootstrap`.
 - `GET /admin` — an operator-facing **HTML dashboard** for this node
-  (`admin_page.go`), with four panel groups:
+  (`admin_page.go`), with these panel groups:
   - **Self** — the full `/status` snapshot rendered as HTML: identity/version/uptime,
     DHT + peer counts, the PoW admission and repair/rebalance maintenance policy, the
     served protocols and listen/bootstrap addresses, plus a storage & GC panel (shards,
     bytes used, quota, capacity/free/load, GC counters, and the per-owner accounting
     table) — the same data as `/status`, for eyeballing without a JSON tool.
+  - **Self · defenses** — the local abuse controls this node enforces, from the
+    `DefenseInfo` wired by `SetDefenses`: the Axis A per-subnet flow cap (rate/burst +
+    IPv4/IPv6 prefixes), the per-owner write-rate cap, and the Axis B age-graduated quota
+    (initial fraction → full over the ramp). Each shows an on/off pill; the quota ramp reads
+    "n/a — no quota set" when no per-owner quota is configured.
   - **Blocklist** — the peer IDs and subnets the connection gater currently refuses
     (operator-static entries unioned with the abuse detector's runtime auto-bans), read
     from the `Blocklister` wired by `SetBlocklister` (absent = the panel says none is
@@ -515,7 +572,10 @@ tests. Endpoints:
   `revika_capacity_bytes` / `revika_free_bytes` / `revika_load_ratio`, and the maintenance
   gauges `revika_repair_enabled` / `revika_repair_interval_seconds` /
   `revika_rebalance_enabled` / `revika_rebalance_interval_seconds` /
-  `revika_rebalance_threshold`.
+  `revika_rebalance_threshold`, and the local-defence gauges
+  `revika_subnet_rate_limit_enabled` / `_rate` / `_burst` (Axis A),
+  `revika_write_rate_limit_enabled` / `_rate` / `_burst` (per-owner write cap), and
+  `revika_quota_ramp_enabled` / `_seconds` / `_initial_fraction` (Axis B).
 
 `GCStats` (`gcstats.go`) is a thread-safe counter shared between a node's GC loop
 (`Record`) and the MetricsServer (`Snapshot` → `GCSnapshot`), reporting cycles run,
