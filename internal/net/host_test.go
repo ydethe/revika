@@ -1,11 +1,62 @@
 package net
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+func TestGenerateIdentityFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keys", "node.key")
+
+	id, err := GenerateIdentityFile(path)
+	if err != nil {
+		t.Fatalf("GenerateIdentityFile: %v", err)
+	}
+	if id == "" {
+		t.Fatal("empty peer ID")
+	}
+
+	// The key must be persisted at 0600 and reload to the SAME peer ID (so the
+	// printed SEED_ADDR matches the identity a node loads from the file).
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat key: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("key mode = %o, want 600", perm)
+	}
+	priv, err := loadOrCreateIdentity(path)
+	if err != nil {
+		t.Fatalf("reload identity: %v", err)
+	}
+	reloaded, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("peer ID from reloaded key: %v", err)
+	}
+	if reloaded != id {
+		t.Errorf("reloaded peer ID = %s, want %s", reloaded, id)
+	}
+
+	// Two fresh keys differ (no fixed/committed identity).
+	other, err := GenerateIdentityFile(filepath.Join(dir, "other.key"))
+	if err != nil {
+		t.Fatalf("second GenerateIdentityFile: %v", err)
+	}
+	if other == id {
+		t.Error("two generated identities collided")
+	}
+
+	// It must refuse to clobber an existing key (never silently replace a live one).
+	if _, err := GenerateIdentityFile(path); err == nil {
+		t.Error("expected an error overwriting an existing key, got nil")
+	}
+}
 
 func TestPublicAddrsFactory(t *testing.T) {
 	factory, err := publicAddrsFactory("203.0.113.7")

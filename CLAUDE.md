@@ -89,8 +89,10 @@ User side — a node is trusted for *availability*, never *confidentiality*.
   (default 5%) to the full quota over the ramp duration (default 7 days; measured from
   `accounts.first_seen`; a first-shard escape always admits the very first claim so age can start
   accruing), so a banned-and-re-minted identity resets to near-zero storage power. Axis B is
-  **on by default** too but only bites when a per-owner `-quota` is set (with unlimited quota
-  there is nothing to graduate). Both are **local** (never inherited from bootstrap) and their
+  **on by default** too because `-quota` is now non-zero by default: **90 GiB** (90% of a
+  nominal 100 GiB node; `main.defaultQuotaBytes`), so a fresh node bounds a single owner out of
+  the box (issue #22) — `-quota 0` restores the old unlimited ceiling and is logged as a warning
+  (with unlimited quota there is nothing for Axis B to graduate). Both are **local** (never inherited from bootstrap) and their
   effective configuration is surfaced on `/status` (`defense` object), `/metrics`
   (`revika_subnet_rate_limit_*`, `revika_quota_ramp_*` gauges), and the `/admin` "Self · defenses"
   panel. Read-verb (`GET`/`HAS`/`PROBE`) *per-owner* rate
@@ -141,7 +143,9 @@ go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstra
                           #   -quota-ramp -quota-initial
                           #   -pow-difficulty -geoip -log-format -log-level -v)
 go run ./cmd/revika-ctl   # User client: connect | keygen | cp | mv | ls | rm | share | revoke | node
-                          #   | device (see -h). `ls -owner <pubkey-file>` resolves a namespace's
+                          #   | device | nodekey (see -h). `nodekey -o <path>` mints a fresh libp2p
+                          #   node identity (Ed25519, 0600) and prints its peer ID — the repo ships
+                          #   no committed key (secure-by-default, #13). `ls -owner <pubkey-file>` resolves a namespace's
                           #   DHT-published root (verify-only); `revoke rvk:PATH` re-keys a shared
                           #   subtree; `device init|enroll|revoke|list|id` manages the offline
                           #   master credential's authorized read-devices (§3.7.2).

@@ -57,6 +57,12 @@ full `QuotaBytes` after `QuotaRamp` has elapsed (measured from `accounts.first_s
 `effectiveQuota(opts, firstSeen, now)` computes it; `QuotaRamp <= 0` (or a fraction
 outside `(0, 1)`) is a flat quota, unchanged from before.
 
+The node sets `QuotaBytes` from its `-quota` flag, which is **non-zero by default**
+(issue #22): 90 GiB — 90% of a nominal 100 GiB node — so a fresh node bounds a single
+owner out of the box and the Axis B ramp is active by default. `-quota 0` opts back
+into an unlimited (unbounded) per-owner ceiling and is logged as a warning; with an
+unlimited quota there is nothing for the ramp to graduate.
+
 Two properties keep it from locking anyone out:
 
 - **First-shard escape.** A brand-new owner has `bytes_used == 0` and no recorded

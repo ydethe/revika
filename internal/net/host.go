@@ -11,6 +11,7 @@ import (
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -199,6 +200,13 @@ func loadOrCreateIdentity(path string) (libp2pcrypto.PrivKey, error) {
 	}
 
 	// Not present yet — generate, persist, and return.
+	return generateAndPersistIdentity(path)
+}
+
+// generateAndPersistIdentity mints a fresh Ed25519 libp2p key, writes it to path
+// (0600, parent dir 0700), and returns it. Shared by first-boot key creation and
+// the GenerateIdentityFile deploy helper so both use identical marshaling.
+func generateAndPersistIdentity(path string) (libp2pcrypto.PrivKey, error) {
 	priv, _, err := libp2pcrypto.GenerateEd25519Key(nil)
 	if err != nil {
 		return nil, fmt.Errorf("revika/net: generate identity: %w", err)
@@ -214,4 +222,23 @@ func loadOrCreateIdentity(path string) (libp2pcrypto.PrivKey, error) {
 		return nil, fmt.Errorf("revika/net: write identity %s: %w", path, err)
 	}
 	return priv, nil
+}
+
+// GenerateIdentityFile creates a fresh Ed25519 libp2p node identity, persists it
+// to path, and returns the derived Peer ID. It is the deploy-time counterpart to a
+// node's own first-boot key creation: use it to mint an *ephemeral, uncommitted*
+// bootstrap/seed identity locally (e.g. deploy/gen-seed-key.sh) rather than shipping
+// a well-known key in the repository. It refuses to clobber an existing file so a
+// live identity is never silently replaced.
+func GenerateIdentityFile(path string) (peer.ID, error) {
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("revika/net: identity %s already exists (refusing to overwrite)", path)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("revika/net: stat identity %s: %w", path, err)
+	}
+	priv, err := generateAndPersistIdentity(path)
+	if err != nil {
+		return "", err
+	}
+	return peer.IDFromPrivateKey(priv)
 }

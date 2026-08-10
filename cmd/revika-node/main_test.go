@@ -62,6 +62,20 @@ func TestSleepJitter(t *testing.T) {
 	}
 }
 
+// TestDefaultQuotaBytes pins the secure-by-default per-owner ceiling (issue #22):
+// 90% of a nominal 100 GiB node, expressed in bytes. A non-zero default is what
+// bounds a single owner out of the box and activates the Axis B ramp, so a change
+// here is a deliberate policy change and should update the flag help + docs too.
+func TestDefaultQuotaBytes(t *testing.T) {
+	const nominal = int64(100) * (1 << 30) // 100 GiB
+	if want := nominal * 90 / 100; defaultQuotaBytes != want {
+		t.Errorf("defaultQuotaBytes = %d, want %d (90%% of 100 GiB)", int64(defaultQuotaBytes), want)
+	}
+	if defaultQuotaBytes <= 0 {
+		t.Error("defaultQuotaBytes must be > 0 so a fresh node bounds a single owner")
+	}
+}
+
 // openLedger opens a fresh file-backed ledger for a test and registers cleanup.
 func openLedger(t *testing.T, opts ledger.Options) *ledger.Ledger {
 	t.Helper()

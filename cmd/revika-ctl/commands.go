@@ -1552,6 +1552,32 @@ func cmdShare(args []string) error {
 // it is "aware of" and could place shards on. It joins the network through the
 // workspace's saved bootstrap peers (-root), then reports each advertised node
 // with its peer ID, whether we could reach it, and its advertised addresses.
+// cmdNodeKey mints a fresh libp2p node identity key file and prints its Peer ID.
+// It exists so a bootstrap/seed identity for local docker-compose or CI runs is
+// generated on demand and git-ignored, never committed to the repository (issue
+// #13). The Peer ID is the sole stdout line so a shell can capture it:
+//
+//	peerid=$(revika-ctl nodekey -o deploy/seed.key)
+func cmdNodeKey(args []string) error {
+	fs := flag.NewFlagSet("nodekey", flag.ExitOnError)
+	out := fs.String("o", "", "path to write the new libp2p node identity key (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *out == "" {
+		return fmt.Errorf("nodekey: -o <path> is required")
+	}
+	id, err := net.GenerateIdentityFile(*out)
+	if err != nil {
+		return err
+	}
+	// Diagnostics go to stderr (ctlLog); the Peer ID alone goes to stdout so it is
+	// safe to capture in `$(...)` without the log line leaking into the value.
+	ctlLog.Info("generated node identity", "path", *out, "peer_id", id.String())
+	fmt.Println(id.String())
+	return nil
+}
+
 func cmdNode(args []string) error {
 	fs := flag.NewFlagSet("node", flag.ExitOnError)
 	rootFlag := fs.String("root", "", "workspace folder supplying the bootstrap peers (default $REVIKA_ROOT, else "+defaultWorkspaceDir+")")

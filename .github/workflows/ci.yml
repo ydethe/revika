@@ -50,13 +50,18 @@ jobs:
     name: multi-node end-to-end (compose)
     runs-on: ubuntu-latest
     needs: test
-    # docker compose reads SEED_ADDR from the environment (no .env file); it is
-    # supplied from the SEED_ADDR secret, which must match the committed dev seed
-    # key deploy/seed.key (Peer ID printed by `docker compose logs seed`).
-    env:
-      SEED_ADDR: ${{ secrets.SEED_ADDR }}
     steps:
       - uses: actions/checkout@v4
+
+      # No committed seed key (issue #13): mint an ephemeral, git-ignored dev
+      # identity per run and derive the SEED_ADDR the peers bootstrap through.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Generate ephemeral dev seed identity
+        run: echo "SEED_ADDR=$(./deploy/gen-seed-key.sh)" >> "$GITHUB_ENV"
 
       # Authorized client: stores a file, asserts every node received shards,
       # retrieves it, and checks it is byte-identical. Its exit code is the run's.
@@ -101,10 +106,16 @@ jobs:
     name: node-down resilience (compose)
     runs-on: ubuntu-latest
     needs: test
-    env:
-      SEED_ADDR: ${{ secrets.SEED_ADDR }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Generate ephemeral dev seed identity
+        run: echo "SEED_ADDR=$(./deploy/gen-seed-key.sh)" >> "$GITHUB_ENV"
 
       # Stores a file across all 3 nodes, stops one node, then proves the file
       # is still retrieved byte-identically from the surviving k=4 of 6 shards.
@@ -116,10 +127,16 @@ jobs:
     name: autonomous repair (compose)
     runs-on: ubuntu-latest
     needs: test
-    env:
-      SEED_ADDR: ${{ secrets.SEED_ADDR }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Generate ephemeral dev seed identity
+        run: echo "SEED_ADDR=$(./deploy/gen-seed-key.sh)" >> "$GITHUB_ENV"
 
       # Stores a file across the nodes (each shard carrying a stripe descriptor
       # + repair grant), stops one node, waits for a surviving node's repair loop,

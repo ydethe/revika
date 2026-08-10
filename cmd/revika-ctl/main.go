@@ -26,6 +26,7 @@
 //	revika-ctl revoke [-root <ws>] [backend] rvk:<path>                  # rotate caps
 //	revika-ctl share [-root <ws>] [backend] rvk:<path> -to <pubkey-file> [-o <file>]
 //	revika-ctl node  [-root <ws>]                                        # list nodes
+//	revika-ctl nodekey -o <path>                                         # mint a node identity key
 //
 // [backend] is -node <ma>; it overrides the workspace config's bootstrap peers
 // when given, which otherwise supply the DHT entry point. -root accepts a
@@ -87,6 +88,8 @@ func main() {
 		err = cmdShare(args)
 	case "node":
 		err = cmdNode(args)
+	case "nodekey":
+		err = cmdNodeKey(args)
 	case "device":
 		err = cmdDevice(args)
 	case "help", "-h", "--help":
@@ -194,6 +197,12 @@ Commands:
         is aware of and could place shards on. Joins through the workspace's saved
         bootstrap peers (-root). Reports each node's peer ID, reachability, and
         advertised addresses. No file contact.
+
+  nodekey -o <path>
+        Mint a fresh libp2p node identity key at <path> and print its Peer ID.
+        Use it to generate an ephemeral, git-ignored bootstrap/seed identity for a
+        local docker-compose or CI run instead of committing a well-known key
+        (see deploy/gen-seed-key.sh). Refuses to overwrite an existing key.
 
   device <id | init | enroll | revoke | list> [-root <ws>] [-signkey <path>]
         Manage the devices authorized to read your namespace (the master credential

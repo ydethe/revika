@@ -86,6 +86,13 @@ const (
 	// effective quota climbs from -quota-initial to the full -quota. It only bites
 	// when a per-owner -quota is set (with no quota there is nothing to graduate).
 	defaultQuotaRamp = 7 * 24 * time.Hour
+	// defaultQuotaBytes is the secure-by-default per-owner storage ceiling: 90% of a
+	// nominal 100 GiB node. A fresh node therefore bounds any single owner out of the
+	// box instead of admitting unlimited data (the old default), and — being non-zero
+	// — it also activates the Axis B age-graduated ramp by default. An operator
+	// overrides it with -quota; an explicit -quota 0 opts back into unlimited and is
+	// logged as a warning.
+	defaultQuotaBytes = 90 * (1 << 30) // 90 GiB = 90% of 100 GiB
 )
 
 // version is the build version reported on /status and /metrics. Override at
@@ -117,7 +124,7 @@ func run() error {
 		logLevel      = flag.String("log-level", "info", "minimum log level: debug, info, warn, or error")
 		dhtOn         = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
 		advertiseOn   = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
-		quota         = flag.Int64("quota", 0, "per-owner storage quota in bytes (0 = unlimited)")
+		quota         = flag.Int64("quota", defaultQuotaBytes, "per-owner storage quota in bytes (default 90 GiB = 90% of a nominal 100 GiB node; explicit 0 = unlimited, logged as a warning). A non-zero quota also activates the Axis B age-graduated ramp")
 		leaseTTL      = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
 		gcInterval    = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
 		gcExpired     = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
@@ -223,6 +230,17 @@ func run() error {
 		return fmt.Errorf("reconcile ledger: %w", err)
 	} else if rep.OrphanBlobs > 0 || rep.DroppedRecords > 0 {
 		log.Info("ledger reconciled", "event", "ledger.reconcile", "orphan_blobs", rep.OrphanBlobs, "dropped_records", rep.DroppedRecords)
+	}
+
+	// Surface the effective per-owner storage ceiling. A non-zero quota is the
+	// secure default (it bounds any single owner and arms the Axis B ramp); an
+	// explicit -quota 0 disables the cap, which we warn about since one owner can
+	// then fill the node.
+	if *quota > 0 {
+		log.Info("per-owner storage quota", "event", "quota.configured", "bytes", *quota)
+	} else {
+		log.Warn("per-owner storage quota disabled (unlimited): a single owner can fill this node — set -quota to bound it",
+			"event", "quota.unlimited")
 	}
 
 	// Self-defence: resource manager + connection manager + a mutable, persistent

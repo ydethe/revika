@@ -55,6 +55,15 @@ Exported errors: `ErrRemote`, `ErrUnauthorized`, `ErrQuotaExceeded`.
 (a persistent Ed25519 identity loaded or generated+persisted at 0600; empty means
 an ephemeral in-memory key for tests), `PublicIP`, `Defense`, and `Log`.
 
+**Secure-by-default identity (issue #13).** The repo ships *no* committed private
+key. `loadOrCreateIdentity(path)` loads an existing key or, on first boot,
+self-generates a fresh Ed25519 key and persists it at 0600 — so a node minted with
+no key material gets a unique identity rather than a well-known one. To mint a key
+*ahead* of time (e.g. to learn a seed's peer ID before wiring bootstrap multiaddrs),
+`GenerateIdentityFile(path)` writes a new key and returns its `peer.ID`, refusing to
+overwrite an existing file. It backs the `revika-ctl nodekey -o <path>` command and
+the `deploy/gen-seed-key.sh` dev helper.
+
 **Public IP / NAT.** A node behind NAT only observes private/unspecified listen
 addresses, so WAN peers cannot dial it. Set `HostConfig.PublicIP` (the node's
 `-public-ip` flag) to the node's externally reachable IPv4/IPv6 address:

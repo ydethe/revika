@@ -14,11 +14,12 @@
 # rather than a timing-dependent e2e scenario.
 #
 # A node's Peer ID is derived from its libp2p identity key, so bootstrapping
-# normally needs a two-step "start seed, copy its Peer ID" dance. We skip that
-# here by giving the seed a *fixed, committed dev-only identity* (deploy/seed.key,
-# bind-mounted read-only). Its Peer ID is therefore known ahead of time and baked
-# into SEED_ADDR below — the whole network comes up with a single command:
+# normally needs a two-step "start seed, copy its Peer ID" dance. We avoid that by
+# giving the seed a *dev-only identity generated locally* (deploy/seed.key, git-
+# ignored, bind-mounted read-only). Mint it once — its Peer ID becomes the SEED_ADDR
+# the peers bootstrap through — then bring the network up:
 #
+#   export SEED_ADDR="$(./deploy/gen-seed-key.sh)"
 #   docker compose up --build
 #
 # The `client` service then stores a random file (spreading its erasure-coded
@@ -55,16 +56,18 @@
 #
 #   docker compose down -v
 #
-# WARNING: deploy/seed.key is a well-known key checked into the repo purely so
-# this local setup is reproducible. Never use it for a real deployment.
+# NOTE: deploy/seed.key is a throwaway dev identity minted by deploy/gen-seed-key.sh
+# and git-ignored — it is NEVER committed. A real deployment lets each node generate
+# and persist its own identity (revika-node writes <data>/keys/node.key on first boot);
+# do not reuse this dev key anywhere real.
 
 # The seed's dial address, referenced ONCE here (a YAML anchor) and taken from
 # the SEED_ADDR environment variable — never hardcoded and never from a .env
-# file. In CI it is injected from the `SEED_ADDR` GitHub Actions secret; for a
-# local run, export it first (its Peer ID is derived from the committed dev-only
-# key deploy/seed.key and printed by the seed on startup, `docker compose logs
-# seed`). Peers reference it as `*seed_addr`.
-x-seed-addr: &seed_addr "${SEED_ADDR:?SEED_ADDR must be set (CI: the SEED_ADDR secret; local: export it)}"
+# file. Both locally and in CI it comes from deploy/gen-seed-key.sh, which mints
+# the git-ignored dev seed key and prints the matching multiaddr:
+#   export SEED_ADDR="$(./deploy/gen-seed-key.sh)"
+# Peers reference it as `*seed_addr`.
+x-seed-addr: &seed_addr "${SEED_ADDR:?SEED_ADDR must be set — run: export SEED_ADDR=\"\$(./deploy/gen-seed-key.sh)\"}"
 
 # Shared healthcheck for every node service: curl the node's HTTP /healthz
 # endpoint (the -metrics server, on :9096 by default). curl ships in the node
@@ -79,8 +82,8 @@ x-node-healthcheck: &node_healthcheck
 
 services:
   # Entry point of the network: no -bootstrap, others join through it. Its
-  # identity is pinned by the bind-mounted key so its Peer ID is stable and
-  # known in advance (it is baked into SEED_ADDR for the peers and client).
+  # identity is pinned by the bind-mounted, locally-generated key (deploy/seed.key
+  # from gen-seed-key.sh) so its Peer ID matches the SEED_ADDR the peers dial.
   seed:
     build:
       context: .

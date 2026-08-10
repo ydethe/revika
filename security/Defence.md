@@ -122,8 +122,11 @@ a response (single-use nonce). Two consumers:
 blockchain) is the sole arbiter of a node's ownership and resources: tables
 `shards`/`owners`/`accounts`/`stripes`, per-owner quotas (`QuotaBytes`), TTL leases
 (`LeaseTTL`), GC of expired leases. The `Server` is **ledger-gated**: a fresh PUT is
-refused if the owner exceeds its quota (`shard.put.rejected reason=quota`). Deduplication
-by content address is counted by multi-owner refcount. The stripe row stores the
+refused if the owner exceeds its quota (`shard.put.rejected reason=quota`). The per-owner
+quota is **bounded by default** (issue #22): `-quota` defaults to 90 GiB (90% of a nominal
+100 GiB node), so a fresh node caps any single owner out of the box rather than admitting
+unlimited data; `-quota 0` restores the unbounded ceiling and is logged as a warning.
+Deduplication by content address is counted by multi-owner refcount. The stripe row stores the
 *grant* that authorizes maintenance moves without the User key (§1.7).
 
 - **Covered scenarios**: [N-DISP-07](./N-DISP-07/) (saturation: the quota bounds the volume
@@ -203,7 +206,11 @@ Kademlia discovery on a private `/revika` prefix (`internal/net/dht.go`, `Discov
 location of a shard is a *provider record*, not a hash ring; a move =
 a re-announce, and DHT redundancy avoids the single point. The libp2p transport is
 **end-to-end encrypted and authenticated** (peer identity = libp2p key), so that a
-peer is authenticated before any exchange and traffic is confidential in transit.
+peer is authenticated before any exchange and traffic is confidential in transit. That
+node identity is **secure-by-default** (issue #13): the repo ships no committed private
+key — a node with no key material self-generates a fresh Ed25519 identity on first boot
+and persists it at 0600, and `revika-ctl nodekey` mints one ahead of time — so no two
+deployments share a well-known key an attacker could impersonate.
 
 - **Covered scenarios**: [N-PROTO-03](./N-PROTO-03/) (redirection to fake peers:
   authenticated peers), [N-CONF-04](./N-CONF-04/) (flow observation: encrypted transport),

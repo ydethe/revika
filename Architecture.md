@@ -153,8 +153,10 @@ quota + leases, §3.2). A second identity-scarcity lever lives in the storage ca
 **Axis B**, an age-graduated per-owner quota (`ledger.effectiveQuota`, §3.2) ramping a
 brand-new owner's ceiling from a small initial fraction up to full over a configured duration
 (`-quota-ramp/-quota-initial`, **on by default** — ramp 7 days, initial 5% — but inert unless a
-per-owner `-quota` is set), so a banned-and-re-minted identity resets to near-zero storage
-power. Ban-by-identity is only as strong as the cost of minting a fresh
+per-owner `-quota` is set, which it now is by default: `-quota` defaults to **90 GiB** — 90% of a
+nominal 100 GiB node — so a fresh node bounds a single owner out of the box instead of admitting
+unlimited data, and `-quota 0` restores the unlimited ceiling with a startup warning), so a
+banned-and-re-minted identity resets to near-zero storage power. Ban-by-identity is only as strong as the cost of minting a fresh
 identity, so revika makes owner identities **self-certifying** via proof-of-work: a valid
 Ed25519 owner key must, on its own, hash under a difficulty target, so it costs
 seconds-to-minutes of CPU to mint but one hash to verify — a banned owner cannot re-mint in
