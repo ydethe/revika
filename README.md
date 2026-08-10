@@ -1,5 +1,7 @@
 # revika
 
+[![CI](https://github.com/ydethe/revika/actions/workflows/ci.yml/badge.svg)](https://github.com/ydethe/revika/actions/workflows/ci.yml)
+
 A decentralized, distributed, end-to-end encrypted storage system — a self-hosted
 Dropbox/Drive that runs over a peer-to-peer network instead of a central server. Files are
 split, encrypted, and spread across many independent nodes, so no single node ever holds a
