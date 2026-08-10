@@ -52,9 +52,18 @@ disables geolocation and the dashboard renders peers without map markers.
   - `Endpoint` is overridable (tests point it at a local stub); a 4s per-request
     timeout plus the caller's context bound each lookup, and any error resolves to
     not-located (cached briefly) rather than an error.
-- **MaxMind GeoLite2 (`.mmdb`)** (planned) — an offline, no-third-party drop-in behind
-  the same `Locator` interface. Nothing else changes when it lands; it would be the
-  privacy-preserving default for operators who ship the database.
+- **`MMDBLocator`** (implemented) — an offline MaxMind **GeoLite2/GeoIP2 City** database
+  (`.mmdb`) read via the pure-Go `github.com/oschwald/maxminddb-golang/v2`. Built with
+  `OpenMMDB(path)`; `Close()` it at shutdown. It makes **no network calls** and discloses
+  no address to any third party, so it is the privacy-preserving backend. The operator
+  points the node at a single file: `revika-node -geoip=/path/to/GeoLite2-City.mmdb`
+  (not a directory — a MaxMind database is one self-contained file). A **City** database
+  is required for map markers; the Country-only database carries no latitude/longitude, so
+  every lookup against it resolves to not-located. A missing/invalid file logs a warning and
+  disables geolocation rather than failing node startup. `OpenMMDB` errors on a bad path;
+  a miss, a decode error, or a record with no coordinates (including Null-Island `(0,0)`)
+  all resolve to not-located. `mmdbwriter` is a test-only dependency used to synthesize a
+  tiny City database in `mmdb_test.go` — no binary fixture is committed.
 
 ## Tests
 

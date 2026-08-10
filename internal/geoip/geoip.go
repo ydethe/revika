@@ -12,11 +12,11 @@
 //   - Positions are best-effort *estimates*. IP geolocation is coarse (often only
 //     city/country accurate), so the dashboard presents markers as approximate.
 //
-// The only backend implemented today is IPAPILocator, an opt-in client for the
-// free ip-api.com service (off by default on the node — see revika-node's
-// -geoip flag — because it sends peer public IPs to a third party). An offline
-// MaxMind GeoLite2 (.mmdb) backend is a planned drop-in behind the same
-// interface; nothing else changes when it lands.
+// Two backends exist, both off by default (see revika-node's -geoip flag):
+// IPAPILocator, an opt-in client for the free ip-api.com service (sends peer
+// public IPs to a third party), and MMDBLocator, an offline MaxMind GeoLite2/
+// GeoIP2 City (.mmdb) reader that makes no network calls and is the privacy-
+// preserving choice for operators who ship the database.
 package geoip
 
 import (

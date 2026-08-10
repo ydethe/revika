@@ -22,6 +22,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	mrand "math/rand/v2"
 	gonet "net"
@@ -136,7 +137,7 @@ func run() error {
 		rebalThresh   = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
 		capacity      = flag.Int64("capacity", 0, "usable storage budget in bytes for load balancing (0 = use the shard filesystem's total capacity)")
 		metricsAddr   = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics /admin over plain HTTP — put TLS on a reverse proxy")
-		geoipMode     = flag.String("geoip", "off", "geolocation source for the /admin map: 'off' (no lookups) or 'ip-api' (best-effort cached lookups via ip-api.com — sends peer PUBLIC IPs to that third party; private/loopback IPs are never sent). LOCAL/operator-facing only, never inherited")
+		geoipMode     = flag.String("geoip", "off", "geolocation source for the /admin map: 'off' (no lookups), 'ip-api' (best-effort cached lookups via ip-api.com — sends peer PUBLIC IPs to that third party), or a path to an offline MaxMind GeoLite2/GeoIP2 *City* .mmdb file (no third party, privacy-preserving). Private/loopback IPs are never located. LOCAL/operator-facing only, never inherited")
 		blocklist     = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
 		blocklistAuto = flag.String("blocklist-auto", "", "path to the persistent auto-blocklist the abuse detector appends banned peers to and reloads on restart (empty = derive as <data>/blocklist.auto; set to 'off' to disable persistence)")
 		abuseTol      = flag.Duration("rebalance-abuse-tolerance", 0, "fast-side slack on the rebalance schedule before a peer is judged off-schedule; absorbs jitter (0 = built-in default 10m). LOCAL defence, never inherited")
@@ -551,6 +552,11 @@ func run() error {
 		ms.SetBlocklister(blocklister)
 		if loc := geolocator(*geoipMode, log); loc != nil {
 			ms.SetGeolocator(loc)
+			// An offline .mmdb backend memory-maps a file; release it on
+			// shutdown (after Serve stops with ctx). ip-api needs no cleanup.
+			if c, ok := loc.(io.Closer); ok {
+				defer c.Close()
+			}
 		}
 		go func() {
 			if err := ms.Serve(ctx, *metricsAddr); err != nil {
@@ -590,8 +596,9 @@ func run() error {
 // -geoip mode. "off" (default) returns nil, so the dashboard renders the peer
 // list with positions unknown and no map markers — no address ever leaves the
 // host. "ip-api" enables opt-in, cached best-effort lookups via ip-api.com (which
-// sends peer public IPs to that third party). An unrecognised mode is treated as
-// off with a warning rather than failing startup.
+// sends peer public IPs to that third party). Any other value is treated as a
+// path to an offline MaxMind City .mmdb file (no third party); a path that fails
+// to open is logged and disables geolocation rather than failing startup.
 func geolocator(mode string, log *slog.Logger) geoip.Locator {
 	switch mode {
 	case "", "off":
@@ -601,9 +608,15 @@ func geolocator(mode string, log *slog.Logger) geoip.Locator {
 			"event", "node.geoip", "mode", mode)
 		return geoip.NewIPAPILocator()
 	default:
-		log.Warn("geoip: unrecognised -geoip mode, disabling the /admin map geolocation",
-			"event", "node.geoip", "mode", mode)
-		return nil
+		loc, err := geoip.OpenMMDB(mode)
+		if err != nil {
+			log.Warn("geoip: could not open MaxMind .mmdb, disabling the /admin map geolocation",
+				"event", "node.geoip", "path", mode, "err", err)
+			return nil
+		}
+		log.Info("geoip: /admin map enabled via offline MaxMind database (no third-party lookups)",
+			"event", "node.geoip", "path", mode)
+		return loc
 	}
 }
 

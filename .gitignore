@@ -13,6 +13,7 @@ manifest.json
 *.cap
 testfile.bin
 .*
+*.mmdb
 
 # Test binary, built with `go test -c`
 *.test

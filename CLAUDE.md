@@ -282,8 +282,9 @@ internal/
              COW Graft, signed RootPointer); reuses pipeline blobs + cap wrapping
   fsmeta/    capture/restore live-file attributes ⇄ pipeline.Metadata (Linux + portable split);
              shared by revika-ctl and provider
-  geoip/     coarse IP→position estimation behind a pluggable Locator (IPAPILocator now,
-             opt-in; offline MaxMind .mmdb planned) for the node's /admin dashboard map
+  geoip/     coarse IP→position estimation behind a pluggable Locator (opt-in IPAPILocator
+             via ip-api.com, or offline MMDBLocator reading a MaxMind GeoLite2/GeoIP2 City
+             .mmdb — no third party) for the node's /admin dashboard map; both off by default
   provider/  framework-neutral OS filesystem-integration API (Provider iface) mapping macOS File
              Provider / Windows Cloud Filter / Linux GVfs; Manifest impl over the manifest DAG with
              stable ItemIDs, DAG-diff change enumeration, and a RootStore seam for the (planned) DHT
