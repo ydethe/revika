@@ -45,6 +45,15 @@ type HostConfig struct {
 	// see defense.go. Nil (the default, used by tests) leaves libp2p's own
 	// defaults in place and installs no gater.
 	Defense *DefenseConfig
+	// EnableNATTraversal enables AutoNAT v2 (reachability detection), DCUtR
+	// hole-punching, and the circuit-relay v2 transport client so NAT'd nodes can
+	// still connect to and be reached by WAN peers. Defaults to false so tests are
+	// unaffected; the daemon enables it.
+	EnableNATTraversal bool
+	// EnableRelayService makes this node a circuit-relay v2 relay server, forwarding
+	// traffic for peers behind NAT. Only enable on nodes with a public IP and enough
+	// bandwidth; implies EnableNATTraversal.
+	EnableRelayService bool
 	// Log receives host lifecycle lines: peer connect/disconnect (Debug). If nil,
 	// this logging is discarded.
 	Log *slog.Logger
@@ -99,6 +108,17 @@ func NewHost(cfg HostConfig) (host.Host, error) {
 			return nil, err
 		}
 		opts = append(opts, defOpts...)
+	}
+
+	if cfg.EnableNATTraversal || cfg.EnableRelayService {
+		opts = append(opts,
+			libp2p.EnableAutoNATv2(),
+			libp2p.EnableHolePunching(),
+			libp2p.EnableRelay(), // circuit-relay transport client
+		)
+	}
+	if cfg.EnableRelayService {
+		opts = append(opts, libp2p.EnableRelayService())
 	}
 
 	h, err := libp2p.New(opts...)

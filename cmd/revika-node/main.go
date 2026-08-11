@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -132,6 +133,8 @@ func run() error {
 		repairOn      = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
 		repairEvery   = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
 		repairVerify  = flag.Bool("repair-verify", false, "harden the repair survival check: confirm a remote shard by fetching and self-verifying it (hash==ID) instead of trusting the holder's presence byte, so a lying node cannot fake availability. Costs a shard download per remote check. LOCAL defence, never inherited")
+		repairProbe   = flag.Bool("repair-probe", false, "harden the repair survival check with a fresh-nonce Probe challenge after fetch+verify (requires -repair-verify). A node that served valid shard bytes but fails the nonce challenge is counted missing. More expensive: one extra round-trip per remote shard check. LOCAL defence, never inherited")
+		relayService  = flag.Bool("relay", false, "run as a circuit-relay v2 server for peers behind NAT (needs a public IP and sufficient bandwidth; implies NAT traversal)")
 		rebalanceOn   = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
 		rebalEvery    = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
 		rebalThresh   = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
@@ -155,7 +158,8 @@ func run() error {
 		subnetPrefix6 = flag.Int("subnet-prefix6", 56, "Axis A: IPv6 prefix length aggregating source IPs into one -subnet-rate bucket (default /56)")
 		quotaRamp     = flag.Duration("quota-ramp", defaultQuotaRamp, "Axis B: graduate a new owner's effective storage quota from -quota-initial of -quota up to full over this age (ON by default; 0 = no ramp, full quota immediately). Only bites when a per-owner -quota is set. A fresh identity starts weak, so minting a new one to evade a ban buys little write capacity; the owner's first shard is always admitted. LOCAL defence, never inherited")
 		quotaInitial  = flag.Float64("quota-initial", 0.05, "Axis B: fraction (0,1) of -quota a brand-new owner may use at age zero, ramping linearly to full over -quota-ramp (ignored when -quota-ramp is 0 or -quota is 0)")
-		powDiff       = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
+		putConcurrency = flag.Int("put-concurrency", 32, "max concurrent in-flight PUT operations (each may allocate up to 64 MiB for the shard buffer); over-cap PUTs are rejected with statusRateLimited so the client can retry. 0 = no application-level cap (bounded only by the libp2p resource manager). LOCAL defence, never inherited")
+		powDiff        = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
 		publicIP      = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
 		listen        multiFlag
 		bootstrap     multiFlag
@@ -163,6 +167,22 @@ func run() error {
 	flag.Var(&listen, "listen", "multiaddr to listen on (repeatable; default all interfaces, random TCP+QUIC ports)")
 	flag.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr with /p2p/<id> (repeatable)")
 	flag.Parse()
+	// Apply REVIKA_<FLAG> env-var overrides for any flag not set on the command
+	// line (12-factor config). CLI flags always take precedence. Saved here so
+	// the applied list can be logged once the logger exists.
+	envApplied := applyEnvOverrides()
+
+	// If no -bootstrap peer was given on the command line, look for a text file
+	// at <data>/bootstrap (one multiaddr per line; '#' comments and blank lines
+	// are skipped). This lets an operator write the peer list once on disk
+	// instead of repeating it on every restart or in every process-manager unit.
+	// An explicit -bootstrap flag always takes precedence (the file is ignored
+	// when the flag was given).
+	if len(bootstrap) == 0 {
+		if addrs, err := readBootstrapFile(filepath.Join(*dataDir, "bootstrap")); err == nil {
+			bootstrap = addrs
+		}
+	}
 
 	// Role is decided purely by whether the operator named a bootstrap peer. A
 	// *seed* node (no -bootstrap) is the network's first node and is authoritative:
@@ -197,7 +217,12 @@ func run() error {
 		return err
 	}
 
+	if len(envApplied) > 0 {
+		log.Info("config: env-var overrides applied", "event", "config.env", "vars", envApplied)
+	}
+
 	startedAt := time.Now()
+	var wg sync.WaitGroup
 
 	// The process-lifetime context: cancelled on SIGINT/SIGTERM, it bounds the
 	// DHT and its background loops so they stop cleanly on shutdown.
@@ -280,11 +305,13 @@ func run() error {
 	}
 
 	h, err := net.NewHost(net.HostConfig{
-		ListenAddrs:  listen,
-		IdentityPath: filepath.Join(*dataDir, "keys", "node.key"),
-		PublicIP:     *publicIP,
-		Defense:      defense,
-		Log:          log,
+		ListenAddrs:        listen,
+		IdentityPath:       filepath.Join(*dataDir, "keys", "node.key"),
+		PublicIP:           *publicIP,
+		Defense:            defense,
+		EnableNATTraversal: true,
+		EnableRelayService: *relayService,
+		Log:                log,
 	})
 	if err != nil {
 		return err
@@ -432,6 +459,18 @@ func run() error {
 		log.Info("write-rate limiting enabled", "event", "ratelimit.enabled", "rate_per_s", *writeRate, "burst", burst)
 	}
 
+	// PUT concurrency cap (local defence, never inherited): an application-level
+	// semaphore that bounds the number of PUT operations in flight simultaneously,
+	// keeping peak shard-buffer allocation at -put-concurrency × 64 MiB even when
+	// the rcmgr's per-scope limit is wider. Over-cap PUTs are refused with
+	// statusRateLimited so the client can retry after a slot frees up.
+	var putConcInfo net.PutConcurrencyInfo
+	if *putConcurrency > 0 {
+		srv.SetPutConcurrency(*putConcurrency)
+		putConcInfo = net.PutConcurrencyInfo{Enabled: true, Limit: *putConcurrency}
+		log.Info("PUT concurrency cap enabled", "event", "put_concurrency.enabled", "limit", *putConcurrency)
+	}
+
 	// Axis A — identity-agnostic per-subnet flow cap (local defence, never
 	// inherited): a token bucket keyed on the source IP subnet that meters every
 	// shard/probe request before the frame is parsed, so a flood from one network
@@ -466,6 +505,7 @@ func run() error {
 	defenseInfo := net.DefenseInfo{
 		SubnetRateLimit: subnetInfo,
 		WriteRateLimit:  writeInfo,
+		PutConcurrency:  putConcInfo,
 		QuotaRamp:       quotaRampInfo,
 	}
 
@@ -492,13 +532,15 @@ func run() error {
 		if *advertiseOn {
 			disc.AdvertiseLoop(ctx)
 		}
-		go reprovideLoop(ctx, disc, blobs, log)
+		supervise(ctx, &wg, "reprovide", log, func() { reprovideLoop(ctx, disc, blobs, log) })
 		// Actively (and observably) discover peer storage nodes over the DHT.
-		go discoveryLoop(ctx, disc, log)
+		supervise(ctx, &wg, "discovery", log, func() { discoveryLoop(ctx, disc, log) })
 		// Repair needs the DHT to find sibling shards and place regenerated ones,
 		// so it only runs when the node participates in the DHT.
 		if effRepairOn {
-			go repairLoop(ctx, h, blobs, disc, led, log, effRepairEvery, *repairVerify)
+			supervise(ctx, &wg, "repair", log, func() {
+				repairLoop(ctx, h, blobs, disc, led, log, effRepairEvery, *repairVerify, *repairProbe)
+			})
 		}
 		// Rebalancing likewise needs the DHT: it discovers candidate targets and
 		// relies on provider records to keep a moved shard addressable.
@@ -518,10 +560,11 @@ func run() error {
 			rb.SetThreshold(effRebalThresh)
 			rb.SetCooldown(2 * effRebalEvery)
 			rb.SetAbuseMonitor(abuse)
-			go rebalanceLoop(ctx, rb, log, effRebalEvery)
+			supervise(ctx, &wg, "rebalance", log, func() { rebalanceLoop(ctx, rb, log, effRebalEvery) })
 		}
 	}
 
+	srv.SetContext(ctx)
 	srv.Register(h)
 
 	// Versioned stream protocols now installed on the host, for the startup banner
@@ -537,7 +580,7 @@ func run() error {
 	// enabled, expired leases), keeping disk and ledger aligned. Its activity is
 	// recorded into gcStats so the metrics server can report it.
 	gcStats := net.NewGCStats()
-	go gcLoop(ctx, blobs, led, log, *gcInterval, *gcExpired, gcStats)
+	supervise(ctx, &wg, "gc", log, func() { gcLoop(ctx, blobs, led, log, *gcInterval, *gcExpired, gcStats) })
 
 	// Metrics/status HTTP server (plain HTTP; front it with a TLS-terminating
 	// reverse proxy). disc is nil when the DHT is off, which the server handles.
@@ -558,11 +601,11 @@ func run() error {
 				defer c.Close()
 			}
 		}
-		go func() {
-			if err := ms.Serve(ctx, *metricsAddr); err != nil {
+		supervise(ctx, &wg, "metrics", log, func() {
+			if err := ms.Serve(ctx, *metricsAddr); err != nil && ctx.Err() == nil {
 				log.Error("metrics: server stopped", "err", err)
 			}
-		}()
+		})
 	}
 
 	addrs := make([]string, 0, len(h.Addrs()))
@@ -586,9 +629,17 @@ func run() error {
 		"metrics", *metricsAddr,
 	)
 
-	// Block until interrupted, then shut down cleanly.
+	// Block until interrupted, then drain background goroutines before returning
+	// so deferred cleanup (host, ledger, DHT) runs only after the loops have stopped.
 	<-ctx.Done()
 	log.Info("shutting down", "event", "node.stop")
+	drained := make(chan struct{})
+	go func() { wg.Wait(); close(drained) }()
+	select {
+	case <-drained:
+	case <-time.After(10 * time.Second):
+		log.Warn("shutdown: timed out waiting for goroutines", "event", "node.drain.timeout")
+	}
 	return nil
 }
 
@@ -707,7 +758,7 @@ func discoveryLoop(ctx context.Context, disc *net.Discovery, log *slog.Logger) {
 // first (and stores nothing when a sibling already reappeared) makes duplicate work
 // rare and always harmless — content-addressed Put and per-owner AddOwner are
 // idempotent.
-func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool) {
+func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool, useProbe bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -715,7 +766,7 @@ func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runRepair(ctx, h, blobs, disc, led, log, interval, verify)
+			runRepair(ctx, h, blobs, disc, led, log, interval, verify, useProbe)
 		}
 	}
 }
@@ -723,7 +774,7 @@ func repairLoop(ctx context.Context, h host.Host, blobs store.Store, disc *net.D
 // runRepair performs one repair cycle. Stripe rows that describe the same stripe
 // (a node may hold several of a stripe's shards) are deduplicated so each stripe
 // is checked once.
-func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool) {
+func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Discovery, led *ledger.Ledger, log *slog.Logger, interval time.Duration, verify bool, useProbe bool) {
 	rows, err := led.Stripes()
 	if err != nil {
 		log.Warn("repair: list stripes", "err", err)
@@ -748,6 +799,7 @@ func runRepair(ctx context.Context, h host.Host, blobs store.Store, disc *net.Di
 
 		rs := net.NewRepairStore(h, blobs, disc, desc, row.Grant)
 		rs.SetVerifyPossession(verify)
+		rs.SetUseProbe(useProbe)
 		man := pipeline.FileManifest{
 			Params: pipeline.Config{Params: erasure.Params{K: row.K, M: row.M}},
 			Chunks: []pipeline.ChunkRef{{Shards: desc.Shards}},
@@ -837,6 +889,60 @@ func sleepJitter(ctx context.Context, interval time.Duration) bool {
 	}
 }
 
+// supervise runs fn in a goroutine that restarts it after a panic, with
+// exponential backoff. A clean return while ctx is still live (unexpected for a
+// loop) also triggers a restart. The goroutine stops permanently when ctx is
+// cancelled and fn returns.  wg is incremented before the goroutine starts so the
+// caller can drain all supervised goroutines on shutdown.
+func supervise(ctx context.Context, wg *sync.WaitGroup, label string, log *slog.Logger, fn func()) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		backoff := time.Second
+		const maxBackoff = 30 * time.Second
+		for {
+			panicked := runSafe(label, log, fn)
+			if ctx.Err() != nil {
+				return
+			}
+			// fn exited while ctx is still live: restart after backoff.
+			if panicked {
+				log.Error("goroutine panicked; restarting after backoff",
+					"event", "goroutine.restart", "label", label, "backoff", backoff)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+				backoff = min(backoff*2, maxBackoff)
+			} else {
+				log.Warn("goroutine exited unexpectedly; restarting",
+					"event", "goroutine.restart", "label", label)
+				backoff = time.Second // reset on clean-but-unexpected exit
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+			}
+		}
+	}()
+}
+
+// runSafe calls fn, catching any panic and logging it. Returns true if a panic
+// was recovered.
+func runSafe(label string, log *slog.Logger, fn func()) (panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("goroutine panicked", "event", "goroutine.panic",
+				"label", label, "panic", fmt.Sprintf("%v", r))
+			panicked = true
+		}
+	}()
+	fn()
+	return false
+}
+
 // gcLoop runs the garbage collector on a fixed cadence until ctx is cancelled.
 // Each cycle reclaims shards that are no longer owned (and, if expireLeases is
 // set, whose leases have all lapsed), then reconciles the ledger with disk.
@@ -911,4 +1017,70 @@ func runGC(ctx context.Context, blobs store.Store, led *ledger.Ledger, log *slog
 	}
 	stats.Record(freed, rep.DroppedRecords, rep.OrphanBlobs, time.Now())
 	return curr
+}
+
+// applyEnvOverrides reads REVIKA_<FLAG> environment variables for every flag
+// that was not set explicitly on the command line (CLI always wins). Flag names
+// are mapped to env-var names by uppercasing and replacing hyphens with
+// underscores: e.g. -log-format → REVIKA_LOG_FORMAT, -listen → REVIKA_LISTEN.
+//
+// Repeatable flags (listen, bootstrap) accept a comma-separated list of values
+// in their env var; each non-empty part is applied individually via the flag's
+// Set method (which appends for multiFlag).
+//
+// Returns a slice of "ENV_NAME=value" strings for the caller to log once the
+// logger is ready.
+func applyEnvOverrides() []string {
+	cliSet := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { cliSet[f.Name] = true })
+
+	var applied []string
+	flag.VisitAll(func(f *flag.Flag) {
+		if cliSet[f.Name] {
+			return
+		}
+		envName := "REVIKA_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
+		val := os.Getenv(envName)
+		if val == "" {
+			return
+		}
+		if _, isMulti := f.Value.(*multiFlag); isMulti {
+			for _, part := range strings.Split(val, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				if err := f.Value.Set(part); err == nil {
+					applied = append(applied, envName+"="+part)
+				}
+			}
+			return
+		}
+		if err := flag.Set(f.Name, val); err == nil {
+			applied = append(applied, envName+"="+val)
+		}
+	})
+	return applied
+}
+
+// readBootstrapFile reads a text file of bootstrap multiaddrs, one per line.
+// '#' comments and blank lines are ignored. Returns nil, nil when the file
+// does not exist so callers can treat absence as "no static peers configured".
+func readBootstrapFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var addrs []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		addrs = append(addrs, line)
+	}
+	return addrs, nil
 }

@@ -44,6 +44,11 @@ type Server struct {
 	announcer Announcer
 	ledger    *ledger.Ledger
 
+	// ctx is the node's process-lifetime context. Handlers use it so that in-flight
+	// store operations cancel promptly on shutdown rather than running until the
+	// 60 s stream timeout expires. Set via SetContext before Register.
+	ctx context.Context
+
 	// Proof-of-work admission policy. When powMin > 0, an owner identity
 	// presented on a write must satisfy powMin leading zero bits under powPuzzle
 	// (Argon2id), or the write is refused — raising the cost of minting a fresh
@@ -92,6 +97,21 @@ type Server struct {
 	// rather than answered. Left nil, no per-subnet capping happens (the default).
 	// See subnetlimit.go.
 	subnetLimiter *SubnetRateLimiter
+
+	// tokenCache is the server-side replay cache: it records the Ed25519 signature
+	// of every successfully verified write token and rejects a second presentation
+	// of the same signature within its validity window (±tokenSkew). This closes the
+	// ±5-minute replay window that the timestamp check alone leaves open; the cache
+	// is bounded in memory by the window size (see authcache.go).
+	tokenCache *authCache
+
+	// putSem, when non-nil, is an application-level semaphore bounding concurrent
+	// in-flight PUT operations. Each in-flight PUT allocates up to MaxShardSize
+	// (64 MiB) for the shard payload, so the cap bounds peak memory to
+	// n×MaxShardSize even when the rcmgr's per-scope limits are wider. A PUT that
+	// cannot acquire a slot is rejected with ErrRateLimited (transient — the client
+	// may retry). Nil means no cap. Set via SetPutConcurrency before Register.
+	putSem chan struct{}
 }
 
 // Announcer publishes a DHT provider record announcing that this node holds a
@@ -107,7 +127,20 @@ func NewServer(s store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Server{store: s, log: log}
+	return &Server{store: s, log: log, tokenCache: newAuthCache()}
+}
+
+// SetContext wires the node's process-lifetime context into stream handlers so
+// in-flight operations cancel on shutdown. Call before Register.
+func (srv *Server) SetContext(ctx context.Context) { srv.ctx = ctx }
+
+// handlerCtx returns the context to use for a handler invocation. It falls back
+// to context.Background() when no shutdown context has been wired (e.g. in tests).
+func (srv *Server) handlerCtx() context.Context {
+	if srv.ctx != nil {
+		return srv.ctx
+	}
+	return context.Background()
 }
 
 // SetAnnouncer attaches a DHT announcer so accepted shards are advertised as
@@ -172,6 +205,18 @@ func (srv *Server) SetRateLimiter(l *OwnerRateLimiter) { srv.limiter = l }
 // regardless of identity — the backstop that does not depend on identity scarcity.
 // Call before Register; a nil limiter (the default) meters nothing.
 func (srv *Server) SetSubnetRateLimiter(l *SubnetRateLimiter) { srv.subnetLimiter = l }
+
+// SetPutConcurrency installs an application-level semaphore capping the number of
+// PUT operations that may be in-flight at once. Each in-flight PUT allocates up to
+// MaxShardSize (64 MiB) for the shard payload, so bounding concurrency keeps peak
+// allocations at n×MaxShardSize regardless of the rcmgr's per-scope limit. A PUT
+// that cannot acquire a slot is rejected with ErrRateLimited so the client can
+// retry. n ≤ 0 disables the cap (default). Call before Register.
+func (srv *Server) SetPutConcurrency(n int) {
+	if n > 0 {
+		srv.putSem = make(chan struct{}, n)
+	}
+}
 
 // enforcePoW reports whether owner satisfies the node's proof-of-work admission
 // policy, returning ErrUnauthorized if not. A zero minimum difficulty accepts
@@ -239,7 +284,7 @@ func (srv *Server) handleShard(s network.Stream) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := srv.handlerCtx()
 	switch op(opByte) {
 	case opPut:
 		srv.handlePut(ctx, s, peer)
@@ -249,6 +294,10 @@ func (srv *Server) handleShard(s network.Stream) {
 		srv.handleHas(ctx, s, peer)
 	case opDelete:
 		srv.handleDelete(ctx, s, peer)
+	case opRenew:
+		srv.handleRenew(ctx, s, peer)
+	case opRevokeGrant:
+		srv.handleRevokeGrant(ctx, s, peer)
 	default:
 		srv.log.Debug("shard: unknown op", "peer", peer, "op", opByte)
 		srv.replyErr(s, fmt.Errorf("unknown op %d", opByte))
@@ -257,6 +306,22 @@ func (srv *Server) handleShard(s network.Stream) {
 
 func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 	start := time.Now()
+
+	// Concurrency cap: acquire a slot before allocating the shard buffer so the
+	// total live allocation is bounded to cap×MaxShardSize. Reject immediately if
+	// all slots are taken — queuing would itself be a DoS vector — so the client
+	// gets ErrRateLimited and retries later.
+	if srv.putSem != nil {
+		select {
+		case srv.putSem <- struct{}{}:
+			defer func() { <-srv.putSem }()
+		default:
+			srv.log.Debug("shard put: concurrency cap reached", "event", "shard.put.rejected", "reason", "put_concurrency_cap", "peer", peer)
+			srv.replyErr(s, ErrRateLimited)
+			return
+		}
+	}
+
 	data, err := readBlob(s, MaxShardSize)
 	if err != nil {
 		srv.log.Debug("shard put: read blob", "peer", peer, "err", err)
@@ -313,6 +378,21 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 			}
 		}
 	}
+	// Revocation check: if the grant verified, confirm its nonce has not been
+	// revoked. A revoked nonce means the owner explicitly invalidated this grant
+	// after issuance (e.g. after a suspected interception), so even a
+	// cryptographically valid grant must be refused.
+	if stripeOK {
+		if nonce, nonceErr := stripe.GrantNonce(grant); nonceErr == nil {
+			if srv.ledger != nil {
+				if revoked, rErr := srv.ledger.IsGrantRevoked(nonce); rErr == nil && revoked {
+					srv.log.Debug("shard put: grant revoked", "event", "shard.put.rejected", "reason", "grant_revoked", "peer", peer, "id", id)
+					srv.replyErr(s, ErrUnauthorized)
+					return
+				}
+			}
+		}
+	}
 
 	var owner []byte
 	if srv.ledger != nil {
@@ -325,6 +405,16 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 			if err != nil {
 				srv.log.Debug("shard put: unauthorized", "event", "shard.put.rejected", "reason", "bad_token", "peer", peer, "id", id, "err", err)
 				srv.replyErr(s, err)
+				return
+			}
+			// Replay check: the signature is bound to (op, shard, node, timestamp),
+			// so any second presentation of the same token within its validity window
+			// is a replay — reject it even though writes are idempotent.
+			var sig [cap.SignatureSize]byte
+			copy(sig[:], token[cap.SignPubKeySize+8:])
+			if srv.tokenCache.seen(sig, now) {
+				srv.log.Debug("shard put: token replay rejected", "event", "shard.put.rejected", "reason", "token_replay", "peer", peer, "id", id)
+				srv.replyErr(s, ErrUnauthorized)
 				return
 			}
 			// Proof-of-work admission: a fresh, owner-initiated write is only
@@ -418,6 +508,11 @@ func (srv *Server) announce(id store.ShardID) {
 		return
 	}
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				srv.log.Error("announce panicked", "event", "goroutine.panic", "label", "announce", "panic", fmt.Sprintf("%v", r))
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), provideTimeout)
 		defer cancel()
 		if err := srv.announcer.Announce(ctx, id); err != nil {
@@ -510,6 +605,15 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 		srv.replyErr(s, err)
 		return
 	}
+	// Replay check: same policy as PUT — the signature is bound to (op, shard,
+	// node, timestamp) and must not be reused within its validity window.
+	var deleteSig [cap.SignatureSize]byte
+	copy(deleteSig[:], token[cap.SignPubKeySize+8:])
+	if srv.tokenCache.seen(deleteSig, now) {
+		srv.log.Debug("shard delete: token replay rejected", "event", "shard.delete.rejected", "reason", "token_replay", "peer", peer, "id", id)
+		srv.replyErr(s, ErrUnauthorized)
+		return
+	}
 	// Write-rate cap: DELETE is metered per owner alongside PUT (same token bucket),
 	// so a flood of deletes cannot pin the node either.
 	if !srv.limiter.Allow(owner, now) {
@@ -545,6 +649,47 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 	_ = writeByte(s, byte(statusOK))
 }
 
+func (srv *Server) handleRenew(ctx context.Context, s network.Stream, peer any) {
+	id, err := readID(s)
+	if err != nil {
+		srv.log.Debug("shard renew: read id", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	token, err := readBlob(s, authTokenSize)
+	if err != nil {
+		srv.log.Debug("shard renew: read token", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	now := time.Now()
+	owner, err := verifyToken(token, opRenew, id, s.Conn().LocalPeer(), now)
+	if err != nil {
+		srv.log.Debug("shard renew: unauthorized", "peer", peer, "id", id, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	// Replay check — same policy as PUT/DELETE.
+	var sig [cap.SignatureSize]byte
+	copy(sig[:], token[cap.SignPubKeySize+8:])
+	if srv.tokenCache.seen(sig, now) {
+		srv.log.Debug("shard renew: token replay rejected", "event", "shard.renew.rejected", "reason", "token_replay", "peer", peer, "id", id)
+		srv.replyErr(s, ErrUnauthorized)
+		return
+	}
+	if srv.ledger == nil {
+		_ = writeByte(s, byte(statusOK))
+		return
+	}
+	if err := srv.ledger.RenewLease(id, owner, now); err != nil {
+		srv.log.Debug("shard renew: renew lease", "peer", peer, "id", id, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	srv.log.Debug("shard renewed", "event", "shard.renew", "peer", peer, "id", id)
+	_ = writeByte(s, byte(statusOK))
+}
+
 // handleProbe answers a proof-of-possession challenge: given a shardID and a
 // random nonce, it returns SHA-256(nonce || shardBytes). Because the nonce is
 // fresh per challenge, a node cannot precompute or replay the answer — it must
@@ -577,7 +722,7 @@ func (srv *Server) handleProbe(s network.Stream) {
 		_ = s.Reset()
 		return
 	}
-	data, err := srv.store.Get(context.Background(), id)
+	data, err := srv.store.Get(srv.handlerCtx(), id)
 	if err != nil {
 		// The node cannot answer the challenge for a shard it does not hold — the
 		// RX-side signal of a failed possession proof (a mover's proof-gated release
@@ -598,6 +743,52 @@ func (srv *Server) handleProbe(s network.Stream) {
 	// Probes are a frequent repair heartbeat, so this stays at Debug — it proves
 	// the node answered a possession challenge for a shard it holds.
 	srv.log.Debug("probe answered", "event", "probe", "peer", peer, "id", id)
+}
+
+func (srv *Server) handleRevokeGrant(ctx context.Context, s network.Stream, peer any) {
+	// Read the 8-byte grant nonce the client wants to revoke.
+	var nonce [8]byte
+	if _, err := io.ReadFull(s, nonce[:]); err != nil {
+		srv.log.Debug("shard revoke-grant: read nonce", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	token, err := readBlob(s, authTokenSize)
+	if err != nil {
+		srv.log.Debug("shard revoke-grant: read token", "peer", peer, "err", err)
+		_ = s.Reset()
+		return
+	}
+	// Verify the auth token. The zero ShardID binds the token to the revoke
+	// operation without tying it to a specific shard.
+	now := time.Now()
+	owner, err := verifyToken(token, opRevokeGrant, store.ShardID{}, s.Conn().LocalPeer(), now)
+	if err != nil {
+		srv.log.Debug("shard revoke-grant: unauthorized", "peer", peer, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	// Replay check: same policy as PUT/DELETE — the signature must not be reused
+	// within its validity window.
+	var sig [cap.SignatureSize]byte
+	copy(sig[:], token[cap.SignPubKeySize+8:])
+	if srv.tokenCache.seen(sig, now) {
+		srv.log.Debug("shard revoke-grant: token replay rejected", "event", "shard.revoke_grant.rejected", "reason", "token_replay", "peer", peer)
+		srv.replyErr(s, ErrUnauthorized)
+		return
+	}
+	// Without a ledger there is no revocation store; treat as a no-op.
+	if srv.ledger == nil {
+		_ = writeByte(s, byte(statusOK))
+		return
+	}
+	if err := srv.ledger.RevokeGrant(nonce[:], owner); err != nil {
+		srv.log.Warn("shard revoke-grant: ledger", "peer", peer, "err", err)
+		srv.replyErr(s, err)
+		return
+	}
+	srv.log.Debug("grant revoked", "event", "shard.revoke_grant", "peer", peer)
+	_ = writeByte(s, byte(statusOK))
 }
 
 // replyErr sends a mapped status byte, and for a generic error a short message

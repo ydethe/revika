@@ -80,10 +80,12 @@ const (
 type op byte
 
 const (
-	opPut    op = 1
-	opGet    op = 2
-	opHas    op = 3
-	opDelete op = 4
+	opPut          op = 1
+	opGet          op = 2
+	opHas          op = 3
+	opDelete       op = 4
+	opRenew        op = 5
+	opRevokeGrant  op = 6
 )
 
 // status is the first byte of every response.

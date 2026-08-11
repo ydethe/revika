@@ -53,6 +53,14 @@ func (d *DiskStore) Put(_ context.Context, data []byte) (ShardID, error) {
 		os.Remove(tmpName)
 		return id, fmt.Errorf("store: write: %w", err)
 	}
+	// Flush the file data to the storage device before renaming so that a power
+	// loss after Rename but before the OS writes back the page cache does not
+	// silently leave a zero-length or partial file at the content address.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return id, fmt.Errorf("store: sync: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		return id, fmt.Errorf("store: close: %w", err)
@@ -60,6 +68,18 @@ func (d *DiskStore) Put(_ context.Context, data []byte) (ShardID, error) {
 	if err := os.Rename(tmpName, file); err != nil {
 		os.Remove(tmpName)
 		return id, fmt.Errorf("store: rename: %w", err)
+	}
+	// Fsync the parent directory so the rename (i.e. the directory entry for the
+	// new file) is durable. Without this the rename itself can be lost on crash,
+	// leaving the directory pointing at a stale entry or nothing at all.
+	dfd, err := os.Open(dir)
+	if err != nil {
+		return id, fmt.Errorf("store: open dir: %w", err)
+	}
+	syncErr := dfd.Sync()
+	dfd.Close()
+	if syncErr != nil {
+		return id, fmt.Errorf("store: sync dir: %w", syncErr)
 	}
 	return id, nil
 }

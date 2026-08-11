@@ -12,6 +12,15 @@ import (
 	"revika/internal/store"
 )
 
+// Decode-time allocation caps. A manifest is the user's own read-cap, but an
+// accidentally or intentionally oversized array forces a large allocation
+// before any shard is verified, which can exhaust memory. These limits are
+// generous enough to never constrain legitimate files.
+const (
+	maxManifestChunks        = 1 << 20  // 1 M chunks → ~4 TiB at 4 MiB each
+	maxManifestShardsPerChunk = 256     // well above any real k+m
+)
+
 // manifestVersion tags the on-disk format so a future reader can detect and
 // migrate older files. v4 added filesystem metadata (mode/uid/gid/times/flags/
 // content-type/symlink/xattr + version tokens) for native cloud-provider
@@ -196,6 +205,12 @@ func decodeManifest(data []byte) (pipeline.FileManifest, error) {
 	if err != nil {
 		return pipeline.FileManifest{}, fmt.Errorf("parse metadata: %w", err)
 	}
+	if len(jm.Chunks) > maxManifestChunks {
+		return pipeline.FileManifest{}, fmt.Errorf("manifest: chunk count %d exceeds limit %d", len(jm.Chunks), maxManifestChunks)
+	}
+	if jm.Size < 0 {
+		return pipeline.FileManifest{}, fmt.Errorf("manifest: negative declared size %d", jm.Size)
+	}
 	m := pipeline.FileManifest{
 		Name: jm.Name, // empty for v1 manifests, which carried no name
 		Params: pipeline.Config{
@@ -208,6 +223,9 @@ func decodeManifest(data []byte) (pipeline.FileManifest, error) {
 		Chunks: make([]pipeline.ChunkRef, len(jm.Chunks)),
 	}
 	for i, jc := range jm.Chunks {
+		if len(jc.Shards) > maxManifestShardsPerChunk {
+			return pipeline.FileManifest{}, fmt.Errorf("chunk %d: shard count %d exceeds limit %d", i, len(jc.Shards), maxManifestShardsPerChunk)
+		}
 		key, err := decodeKey(jc.Key)
 		if err != nil {
 			return pipeline.FileManifest{}, fmt.Errorf("chunk %d key: %w", i, err)

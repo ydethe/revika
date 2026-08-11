@@ -150,7 +150,7 @@ func (w *Workspace) ownerMLKEM() (priv cap.PrivateKey, pub cap.PublicKey, ok boo
 		return cap.PrivateKey{}, cap.PublicKey{}, false, nil
 	}
 	path := w.keyPrefix() + ".key"
-	data, err := os.ReadFile(path)
+	data, err := readSecret(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cap.PrivateKey{}, cap.PublicKey{}, false, nil

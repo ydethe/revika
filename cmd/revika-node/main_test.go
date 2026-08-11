@@ -189,7 +189,7 @@ func TestLoopsExitOnCancel(t *testing.T) {
 	// Each of these selects on ctx.Done() first, so a cancelled context ends the
 	// loop on the first iteration. nil host/discovery/rebalancer are never used.
 	gcLoop(ctx, blobs, led, log, time.Hour, false, net.NewGCStats())
-	repairLoop(ctx, nil, blobs, nil, led, log, time.Hour, false)
+	repairLoop(ctx, nil, blobs, nil, led, log, time.Hour, false, false)
 	rebalanceLoop(ctx, nil, log, time.Hour)
 }
 
@@ -200,5 +200,5 @@ func TestRunRepairEmptyLedger(t *testing.T) {
 	led := openLedger(t, ledger.Options{})
 	// h, disc, and blobs are only dereferenced inside the per-stripe loop, which
 	// never runs for an empty ledger — nil is safe here.
-	runRepair(t.Context(), nil, store.NewMemStore(), nil, led, discardLogger(), time.Hour, false)
+	runRepair(t.Context(), nil, store.NewMemStore(), nil, led, discardLogger(), time.Hour, false, false)
 }

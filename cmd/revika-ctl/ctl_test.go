@@ -6,11 +6,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"revika/internal/atrest"
 	"revika/internal/cap"
 	"revika/internal/crypto"
 	"revika/internal/net"
@@ -269,6 +271,52 @@ func TestDiscoverNodeInfos(t *testing.T) {
 		if n.Info.ID == h.ID() {
 			t.Fatalf("client host %s listed itself as a storage node", h.ID())
 		}
+	}
+}
+
+// TestAtRestEncryptedKeys verifies that when REVIKA_PASSPHRASE is set, keygen
+// writes encrypted private key files and loadSignKey/readPrivateKey can open
+// them, while omitting the passphrase produces an error.
+func TestAtRestEncryptedKeys(t *testing.T) {
+	t.Setenv(passphraseEnv, "test-passphrase")
+	ppOnce = sync.Once{} // reset the cache so the new env is picked up
+	t.Cleanup(func() { ppOnce = sync.Once{}; ppValue = nil })
+
+	prefix := filepath.Join(t.TempDir(), "user")
+	if _, err := mintAndWriteIdentity(prefix, cap.DefaultArgon2id(), 0, false); err != nil {
+		t.Fatalf("mintAndWriteIdentity: %v", err)
+	}
+
+	// The private key files must NOT be readable as plain text.
+	for _, p := range []string{prefix + ".key", prefix + ".sign.key"} {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("ReadFile %s: %v", p, err)
+		}
+		if !atrest.IsEncrypted(raw) {
+			t.Errorf("key file %s is not encrypted (REVIKA_PASSPHRASE was set)", p)
+		}
+	}
+
+	// loadSignKey must succeed with the correct passphrase in env.
+	if _, err := loadSignKey(prefix + ".sign.key"); err != nil {
+		t.Fatalf("loadSignKey: %v", err)
+	}
+
+	// readPrivateKey must succeed with the correct passphrase in env.
+	if _, err := readPrivateKey(prefix + ".key"); err != nil {
+		t.Fatalf("readPrivateKey: %v", err)
+	}
+
+	// Without the passphrase the files must not open.
+	ppValue = nil
+	ppOnce = sync.Once{} // env still set; clear cached value and re-init without env
+	t.Setenv(passphraseEnv, "")
+	ppOnce = sync.Once{}
+	ppValue = nil
+
+	if _, err := loadSignKey(prefix + ".sign.key"); err == nil {
+		t.Fatal("loadSignKey without passphrase: expected error, got nil")
 	}
 }
 
