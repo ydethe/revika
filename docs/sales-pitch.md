@@ -14,18 +14,19 @@ what closes B2B deals.
 
 The winning angle for sovereignty-minded B2B buyers: the gap between *"we promise
 not to look"* (the US cloud model) and *"we cannot look"* (revika). This is the
-pivot of the entire conversation.
+pivot of the entire conversation from "Software as a Service" to **"Infrastructure as a Property."**
 
-## 2. The three differentiators
+## 2. The four differentiators
 
-### Sovereignty — real control of the keys
+### Sovereignty — immunity to de-platforming & geo-politics
 
 - **Client-side encryption**: data leaves your machine already encrypted. Servers
   only ever see illegible fragments addressed by content hash.
 - **Zero-knowledge by design**: a node never holds a whole file nor any key.
   Confidentiality does not rest on an operator's promise.
-- **Self-hostable, no third-party dependency**: offline geolocation (local MaxMind
-  database), no calls to an external service. Your metadata does not leak.
+- **Strategic Independence**: For enterprises in sensitive sectors, the risk of being 
+  locked out of a SaaS tenant due to policy changes or international sanctions is a 
+  existential risk. Revika’s P2P nature ensures data access as long as your nodes exist.
 - **Regulatory angle**: de facto immunity to the **CLOUD Act / FISA** — a subpoena
   served on the host returns only unusable ciphertext. Position this against GDPR,
   NIS2, DORA, and SecNumCloud requirements.
@@ -38,6 +39,14 @@ pivot of the entire conversation.
   ciphertext, without ever decrypting.
 - **No single point of failure**: a distributed P2P network, unlike the single
   datacenter a SharePoint tenant depends on.
+
+### Efficiency — turning idle CAPEX into "Internal Cloud"
+
+- **Edge Computing & LAN speeds**: utilize idle storage on branch office servers or 
+  workstations as nodes. This turns internal infrastructure into a resilient, 
+  high-speed storage mesh that doesn't saturate the WAN like centralized SaaS.
+- **Zero-trust by default**: nodes are "blind," so you can use even untrusted or 
+  lower-security hardware for storage without risking data confidentiality.
 
 ### Longevity — post-quantum cryptography
 
@@ -53,7 +62,9 @@ pivot of the entire conversation.
 | Vendor cleartext access | Technically possible | **Impossible by design** |
 | CLOUD Act exposure | Yes | **No** (client-side encryption) |
 | Quantum resistance | No | **Yes (ML-KEM)** |
-| Data loss on outage | Depends on SLA | **Automatic reconstruction** |
+| Data loss on outage | Depends on SLA | **Algorithmic reconstruction** |
+| Ownership | Rented (SaaS) | **Owned (Property)** |
+| Infrastructure | Centralized | **Distributed/P2P** |
 | Sharing | Copy + vendor-managed rights | **Key sharing** — never a cleartext copy |
 
 ## 4. Ease of use — defusing "sovereign means complicated"
@@ -73,7 +84,22 @@ This is the number-one objection in B2B. Address it head-on:
 - OS filesystem integration on the roadmap (macOS File Provider / Windows Cloud
   Filter / Linux GVfs) → **the familiar network drive** for the end user.
 
-## 5. Closing by target
+## 5. Commercial Roadmap & Evolutions
+
+To bridge the gap between P2P tool and Enterprise Suite, revika is evolving along these axes:
+
+- **Identity & IAM Integration**: Bridging Corporate Identity (Active Directory/Okta) 
+  to revika keys for automated on/offboarding.
+- **Cryptographic Audit Trails**: User-signed, immutable access logs published to the 
+  DHT to prove compliance (GDPR/HIPAA) without revealing content.
+- **Collaboration Primitives**: Real-time collaborative editing using CRDTs (Conflict-free 
+  Replicated Data Types) integrated into the manifest layer.
+- **Geographic Pinning**: The ability to mandate data residency (e.g., "Germany only") 
+  at the shard placement level for legal compliance.
+- **Managed Node Marketplace**: A hybrid model mixing private nodes with "Professional 
+  Nodes" for 99.99% availability guarantees.
+
+## 6. Closing by target
 
 - **Sectors to target**: defense, healthcare, legal, R&D, public sector, finance —
   those for whom a leak is existential and compliance is binding.
