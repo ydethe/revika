@@ -9,7 +9,8 @@ internal_port = 9_096
 min_machines_running = 0
 
 [deploy]
-  release_command = "/usr/local/bin/revika-node -data=/data -listen=/ip4/0.0.0.0/tcp/$REVIKA_PORT -public-ip=$PUBLIC_IP -advertise=true -capacity=$CAPACITY -log-format=json -log-level=$LOGLEVEL -metrics=:9096 -quota=$STORAGE_QUOTA -geoip=ip-api -bootstrap $SEED_ADDR"
+  release_command = "-data=/data -listen=/ip4/0.0.0.0/tcp/$REVIKA_PORT -public-ip=$PUBLIC_IP -advertise=true -capacity=$CAPACITY -log-format=json -log-level=$LOGLEVEL -metrics=:9096 -quota=$STORAGE_QUOTA -geoip=ip-api -bootstrap $SEED_ADDR"
+  # release_command = "/usr/local/bin/revika-node -data=/data -listen=/ip4/0.0.0.0/tcp/$REVIKA_PORT -public-ip=$PUBLIC_IP -advertise=true -capacity=$CAPACITY -log-format=json -log-level=$LOGLEVEL -metrics=:9096 -quota=$STORAGE_QUOTA -geoip=ip-api -bootstrap $SEED_ADDR"
 
 [env]
   REPAIR_INTERVAL="1h"
