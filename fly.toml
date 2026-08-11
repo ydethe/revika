@@ -46,7 +46,7 @@ cmd = ["exec /usr/local/bin/revika-node -data /data -listen /ip4/0.0.0.0/tcp/${R
 
 # --- persistent storage --------------------------------------------------
 [[mounts]]
-  source = "revika_data"
+  source = "vol_42k6zyl0qm2ey974"
   destination = "/data"
 
 # --- libp2p TCP transport -------------------------------------------------
