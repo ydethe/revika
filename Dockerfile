@@ -90,8 +90,7 @@ ENTRYPOINT ["/usr/local/bin/revika-node"]
 # Append -bootstrap <multiaddr> (and any overrides) after the image name.
 CMD ["-data", "/data", \
      "-listen", "/ip4/0.0.0.0/tcp/4001", \
-     "-listen", "/ip4/0.0.0.0/udp/4001/quic-v1", \
-     "-mdns=false"]
+     "-listen", "/ip4/0.0.0.0/udp/4001/quic-v1"]
 
 # ---- client stage ----------------------------------------------------------
 # A shell-capable image bundling the User client (revika-ctl) plus the harness
