@@ -7,7 +7,7 @@
 #   fly ips allocate-v4           # dedicated IPv4 (needed if you enable QUIC/UDP below)
 #   fly deploy
 
-app = "revika-node"
+app = "revika"
 primary_region = "ams"
 
 # Use the published image directly, same as docker-compose.
