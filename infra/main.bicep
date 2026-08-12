@@ -15,6 +15,23 @@ param publicIp string = ''
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
+// Node command line. Optional flags (public IP, bootstrap seed) are only added
+// when a value is supplied, so an unset azd env var never injects a broken flag.
+var baseArgs = [
+  '-data=/data'
+  '-listen=/ip4/0.0.0.0/tcp/4001'
+  '-advertise=true'
+  '-capacity=100'
+  '-log-format=json'
+  '-log-level=info'
+  '-metrics=:9096'
+  '-quota=1073741824'
+  '-geoip=ip-api'
+]
+var publicIpArgs = empty(publicIp) ? [] : [ '-public-ip=${publicIp}' ]
+var bootstrapArgs = empty(seedAddr) ? [] : [ '-bootstrap', seedAddr ]
+var containerArgs = concat(baseArgs, publicIpArgs, bootstrapArgs)
+
 // 1. Storage Account for persistent /data volume (1 GiB)
 resource storage 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   name: 'st${resourceToken}'
@@ -89,6 +106,10 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   properties: {
     managedEnvironmentId: containerEnv.id
     configuration: {
+      // Single-revision mode: a new rollout deactivates the previous revision
+      // before the next takes over, so two replicas never hold the single-writer
+      // ledger at once.
+      activeRevisionsMode: 'Single'
       ingress: {
         external: true
         targetPort: 4001
@@ -100,20 +121,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         {
           name: 'node'
           image: 'ghcr.io/ydethe/revika-node:latest'
-          args: [
-            '-data=/data'
-            '-listen=/ip4/0.0.0.0/tcp/4001'
-            '-public-ip=${publicIp}'
-            '-advertise=true'
-            '-capacity=100'
-            '-log-format=json'
-            '-log-level=info'
-            '-metrics=:9096'
-            '-quota=1GB'
-            '-geoip=ip-api'
-            '-bootstrap'
-            seedAddr
-          ]
+          args: containerArgs
           volumeMounts: [
             {
               volumeName: 'revika-data'
@@ -129,6 +137,13 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
           storageName: 'revikadata'
         }
       ]
+      // The node ledger is a single-writer SQLite DB on the shared AzureFile
+      // mount: a second replica opening it would deadlock on SQLITE_BUSY. Pin
+      // to exactly one replica so there is only ever one ledger writer.
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
+      }
     }
   }
 }
