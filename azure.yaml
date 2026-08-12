@@ -1,0 +1,36 @@
+# Update the PUBLIC_IP and SEED_ADDR environment through :
+#   azd env set SEED_ADDR <your-seed-address>
+
+name: revika-node
+metadata:
+  template: container-app@0.0.1
+services:
+  node:
+    host: containerapp
+    image: ghcr.io/ydethe/revika-node:latest
+    port: 4001
+    resources:
+      cpu: 0.5
+      memory: 1.0Gi
+    volumes:
+      - name: revika-data
+        type: AzureFile
+        storageName: revikadata
+        mountPath: /data
+        capacity: 1Gi
+    env:
+      REVIKA_PORT: "4001"
+      PUBLIC_IP: "0.0.0.0"
+      CAPACITY: "100"
+      LOGLEVEL: "info"
+      STORAGE_QUOTA: "1GB"
+    command:
+      - /usr/local/bin/revika-node
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -advertise=true
+      - -log-format=json
+      - -metrics=:9096
+      - -geoip=ip-api
+      - -bootstrap
+      - $SEED_ADDR
