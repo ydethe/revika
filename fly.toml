@@ -1,33 +1,94 @@
+# fly.toml — revika-node
+#
+# Adapted from docker-compose.yml. Deploy with:
+#   fly launch --no-deploy        # first time, to create the app
+#   fly volumes create revika_data --region <region> --size 10
+#   fly secrets set SEED_ADDR=/ip4/.../tcp/4001/p2p/<peer-id>
+#   fly ips allocate-v4           # dedicated IPv4 (needed if you enable QUIC/UDP below)
+#   fly deploy
+
 app = "revika"
 primary_region = "ams"
 
-[http_service]
-auto_start_machines = true
-auto_stop_machines = true
-force_https = true
-internal_port = 9_096
-min_machines_running = 0
+# Use the published image directly, same as docker-compose.
+# If you'd rather build from source, replace this with:
+#   [build]
+#     dockerfile = "Dockerfile"
+#     target = "node"
+[build]
+  image = "ghcr.io/ydethe/revika-node:latest"
 
-[deploy]
-  release_command = "-data=/data -listen=/ip4/0.0.0.0/tcp/$REVIKA_PORT -public-ip=$PUBLIC_IP -advertise=true -capacity=$CAPACITY -log-format=json -log-level=$LOGLEVEL -metrics=:9096 -quota=$STORAGE_QUOTA -geoip=ip-api -bootstrap $SEED_ADDR"
-  # release_command = "/usr/local/bin/revika-node -data=/data -listen=/ip4/0.0.0.0/tcp/$REVIKA_PORT -public-ip=$PUBLIC_IP -advertise=true -capacity=$CAPACITY -log-format=json -log-level=$LOGLEVEL -metrics=:9096 -quota=$STORAGE_QUOTA -geoip=ip-api -bootstrap $SEED_ADDR"
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+# --- runtime flags -----------------------------------------------------
+# The Dockerfile's ENTRYPOINT is fixed to /usr/local/bin/revika-node with no
+# shell, so docker-compose's ${VAR} expansion in `command:` doesn't carry
+# over as-is. We re-run the binary through a shell so env vars/secrets
+# (SEED_ADDR in particular) get substituted at container start.
+entrypoint = ["/bin/sh", "-c"]
+cmd = ["exec /usr/local/bin/revika-node -data /data -listen /ip4/0.0.0.0/tcp/${REVIKA_PORT} -public-ip \"$PUBLIC_IP\" -advertise=true -capacity \"$CAPACITY\" -log-format=json -log-level \"$LOGLEVEL\" -metrics :9096 -quota \"$STORAGE_QUOTA\" -geoip ip-api -bootstrap \"$SEED_ADDR\""]
 
 [env]
-  REPAIR_INTERVAL="1h"
-  POW_DIFFICULTY=12
-  PUBLIC_IP="0.0.0.0"
-  CAPACITY=0
-  LOGLEVEL="info"
-  STORAGE_QUOTA=0
-  REBALANCE_INTERVAL="1h"
-  REVIKA_PORT=4001
+  REVIKA_PORT = "4001"
+  LOGLEVEL = "info"
+  CAPACITY = "1GB"
+  STORAGE_QUOTA = "1GB"
+  # Set to the app's dedicated IPv4 once allocated (`fly ips list`).
+  # libp2p advertises this address to peers, so it needs to be the real
+  # reachable IP, not a placeholder.
+  PUBLIC_IP = "0.0.0.0"
 
+# SEED_ADDR is NOT set here — it's a Fly secret:
+#   fly secrets set SEED_ADDR="/ip4/.../tcp/4001/p2p/<peer-id>"
+# Fly injects secrets as env vars into the machine, so the shell cmd above
+# picks it up via $SEED_ADDR at start.
+
+# --- persistent storage --------------------------------------------------
 [[mounts]]
-destination = "/data"
-source = "data"
+  source = "revika_data"
+  destination = "/data"
+
+# --- libp2p TCP transport -------------------------------------------------
+[[services]]
+  internal_port = 4001
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 4001
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "20s"
+
+# --- QUIC/UDP transport (optional, disabled by default) ------------------
+# Fly's UDP proxy requires the process to bind UDP to the special address
+# "fly-global-services" (not 0.0.0.0), and requires a dedicated IPv4.
+# revika-node's -listen flag would need something like
+#   -listen=/dns4/fly-global-services/udp/4001/quic-v1
+# which depends on whether its libp2p multiaddr parsing accepts a DNS host
+# there. Confirm that before relying on it — until then, the node runs
+# TCP-only, which is enough for libp2p connectivity, just without QUIC.
+#
+# [[services]]
+#   internal_port = 4001
+#   protocol = "udp"
+#
+#   [[services.ports]]
+#     port = 4001
+
+# --- HTTP health/metrics check (not publicly exposed) ---------------------
+[checks]
+  [checks.healthz]
+    port = 9096
+    type = "http"
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/healthz"
 
 [[vm]]
-cpu_kind = "shared"
-cpus = 1
-memory = "1gb"
-memory_mb = 256
+  size = "shared-cpu-1x"
+  memory = "512mb"
