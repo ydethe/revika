@@ -12,8 +12,23 @@ param location string = resourceGroup().location
 param seedAddr string = ''
 param publicIp string = ''
 
+@description('Administrator login of the PostgreSQL flexible server holding the node ledger.')
+param postgresAdminUser string = 'revika'
+
+@secure()
+@minLength(8)
+@description('Administrator password of the PostgreSQL flexible server holding the node ledger.')
+param postgresAdminPassword string
+
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
+
+var postgresServerName = 'psql-${resourceToken}'
+var postgresDatabaseName = 'revika'
+var postgresFqdn = '${postgresServerName}.postgres.database.azure.com'
+
+// sslmode=require: Azure PostgreSQL refuses unencrypted connections.
+var ledgerDsn = 'postgres://${postgresAdminUser}:${uriComponent(postgresAdminPassword)}@${postgresFqdn}:5432/${postgresDatabaseName}?sslmode=require'
 
 // Node command line. Optional flags (public IP, bootstrap seed) are only added
 // when a value is supplied, so an unset azd env var never injects a broken flag.
@@ -27,40 +42,18 @@ var baseArgs = [
   '-metrics=:9096'
   '-quota=1073741824'
   '-geoip=ip-api'
-  // The ledger journal mode defaults to "delete" (a rollback journal), which is
-  // required on this Azure Files NFS /data mount because SQLite WAL needs a
-  // shared-memory mapping a network filesystem cannot provide. Pass
-  // -ledger-journal=wal here only if the mount is ever moved to local disk.
+  // The ledger lives in PostgreSQL, so no file share is mounted: /data is the
+  // container's ephemeral disk holding only shard blobs and the libp2p identity.
+  '-ledger-driver=postgres'
+  '-ledger-dsn=${ledgerDsn}'
 ]
 var publicIpArgs = empty(publicIp) ? [] : [ '-public-ip=${publicIp}' ]
 var bootstrapArgs = empty(seedAddr) ? [] : [ '-bootstrap', seedAddr ]
 var containerArgs = concat(baseArgs, publicIpArgs, bootstrapArgs)
 
-// 1. Network required by Container Apps and Azure Files NFS.
-resource nfsNsg 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
-  name: 'nsg-${resourceToken}'
-  location: location
-  tags: tags
-  properties: {
-    securityRules: [
-      {
-        name: 'allow-nfs-outbound'
-        properties: {
-          priority: 100
-          access: 'Allow'
-          direction: 'Outbound'
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '2049'
-          sourceAddressPrefix: '*'
-          destinationAddressPrefix: 'Storage'
-        }
-      }
-    ]
-  }
-}
-
-resource nfsVnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
+// 1. Network: one subnet delegated to Container Apps, one delegated to the
+// PostgreSQL flexible server so the ledger is reachable privately only.
+resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: 'vnet-${resourceToken}'
   location: location
   tags: tags
@@ -75,11 +68,6 @@ resource nfsVnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
         name: 'containerapps'
         properties: {
           addressPrefix: '10.0.0.0/23'
-          serviceEndpoints: [
-            {
-              service: 'Microsoft.Storage'
-            }
-          ]
           delegations: [
             {
               name: 'containerapps-delegation'
@@ -88,51 +76,88 @@ resource nfsVnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
               }
             }
           ]
-          networkSecurityGroup: {
-            id: nfsNsg.id
-          }
+        }
+      }
+      {
+        name: 'postgres'
+        properties: {
+          addressPrefix: '10.0.2.0/24'
+          delegations: [
+            {
+              name: 'postgres-delegation'
+              properties: {
+                serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers'
+              }
+            }
+          ]
         }
       }
     ]
   }
 }
 
-// 2. Premium Azure Files account and NFS share for the persistent /data volume.
-resource storage 'Microsoft.Storage/storageAccounts@2022-09-01' = {
-  name: 'st${resourceToken}'
-  location: location
-  kind: 'FileStorage'
-  sku: { name: 'Premium_LRS' }
+// 2. Private DNS zone so the container app resolves the server's private address.
+resource postgresDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: 'privatelink.postgres.database.azure.com'
+  location: 'global'
+  tags: tags
+}
+
+resource postgresDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: postgresDnsZone
+  name: 'link-${resourceToken}'
+  location: 'global'
   tags: tags
   properties: {
-    supportsHttpsTrafficOnly: false
-    minimumTlsVersion: 'TLS1_2'
-    publicNetworkAccess: 'Enabled'
-    networkAcls: {
-      defaultAction: 'Deny'
-      bypass: 'AzureServices'
-      virtualNetworkRules: [
-        {
-          action: 'Allow'
-          id: resourceId('Microsoft.Network/virtualNetworks/subnets', nfsVnet.name, 'containerapps')
-        }
-      ]
-    }
-  }
-
-  resource fileServices 'fileServices' = {
-    name: 'default'
-    resource share 'shares' = {
-      name: 'revikadata'
-      properties: {
-        shareQuota: 100 // Premium NFS classic shares require at least 100 GiB.
-        enabledProtocols: 'NFS'
-      }
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
     }
   }
 }
 
-// 3. Log Analytics workspace
+// 3. PostgreSQL flexible server: the node's ledger backend.
+resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
+  name: postgresServerName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard_B1ms'
+    tier: 'Burstable'
+  }
+  properties: {
+    version: '16'
+    administratorLogin: postgresAdminUser
+    administratorLoginPassword: postgresAdminPassword
+    storage: {
+      storageSizeGB: 32
+    }
+    backup: {
+      backupRetentionDays: 7
+      geoRedundantBackup: 'Disabled'
+    }
+    highAvailability: {
+      mode: 'Disabled'
+    }
+    network: {
+      delegatedSubnetResourceId: resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, 'postgres')
+      privateDnsZoneArmResourceId: postgresDnsZone.id
+    }
+  }
+  dependsOn: [
+    postgresDnsLink
+  ]
+
+  resource database 'databases' = {
+    name: postgresDatabaseName
+    properties: {
+      charset: 'UTF8'
+      collation: 'en_US.utf8'
+    }
+  }
+}
+
+// 4. Log Analytics workspace
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   name: 'log-${resourceToken}'
   location: location
@@ -143,7 +168,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   }
 }
 
-// 4. Container App Environment
+// 5. Container App Environment
 resource containerEnv 'Microsoft.App/managedEnvironments@2023-11-02-preview' = {
   name: 'cae-${resourceToken}'
   location: location
@@ -157,55 +182,23 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2023-11-02-preview' = {
       }
     }
     vnetConfiguration: {
-      infrastructureSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', nfsVnet.name, 'containerapps')
+      infrastructureSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, 'containerapps')
       internal: false
     }
   }
 }
 
-// 5. Attach the NFS storage mount to the environment.
-resource envStorage 'Microsoft.App/managedEnvironments/storages@2023-11-02-preview' = {
-  parent: containerEnv
-  name: 'revikadata'
-  properties: {
-    nfsAzureFile: {
-      server: '${storage.name}.${environment().suffixes.storage}'
-      shareName: '/${storage.name}/${storage::fileServices::share.name}'
-      accessMode: 'ReadWrite'
-    }
-  }
-}
-
-// 6. Container App deployment (depends explicitly on storage mount being ready)
+// 6. Container App deployment
 resource containerApp 'Microsoft.App/containerApps@2023-11-02-preview' = {
   name: 'app-${resourceToken}'
   location: location
   tags: union(tags, { 'azd-service-name': 'node' })
   dependsOn: [
-    envStorage
+    postgres::database
   ]
   properties: {
     managedEnvironmentId: containerEnv.id
     configuration: {
-      // Single-revision mode. NOTE: this does NOT serialize writers across a
-      // rollout. Container Apps does a *rolling* update even in Single mode — it
-      // starts the new revision's replica and only deactivates the old one once
-      // the new one is healthy. During that window BOTH replicas mount this
-      // Azure Files /data share and open the single-writer SQLite ledger, so the
-      // new node's startup migration cannot get the exclusive COMMIT lock and
-      // dies with "database is locked (SQLITE_BUSY)". The new replica then
-      // crash-loops (never healthy), the old revision is never torn down, and the
-      // rollout deadlocks. minReplicas=maxReplicas=1 prevents scale-out
-      // concurrency but NOT this revision overlap.
-      //
-      // Operational rule for a redeploy: free the ledger before the new revision
-      // migrates by deactivating the previous revision first, e.g.
-      //   az containerapp revision list -n <app> -g <rg> \
-      //     --query "[?properties.active].name" -o tsv
-      //   az containerapp revision deactivate -n <app> -g <rg> --revision <old>
-      //   az containerapp revision restart    -n <app> -g <rg> --revision <new>
-      // (Durable alternative: move the ledger DB off the shared NFS mount onto
-      // per-node block storage; SQLite on Azure Files is single-writer-only.)
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
@@ -217,28 +210,12 @@ resource containerApp 'Microsoft.App/containerApps@2023-11-02-preview' = {
       containers: [
         {
           name: 'node'
-          image: 'ghcr.io/ydethe/revika-node:0.5.8'
+          image: 'ghcr.io/ydethe/revika-node:0.5.9'
           args: containerArgs
-          volumeMounts: [
-            {
-              volumeName: 'revika-data'
-              mountPath: '/data'
-            }
-          ]
         }
       ]
-      volumes: [
-        {
-          name: 'revika-data'
-          storageType: 'NfsAzureFile'
-          storageName: 'revikadata'
-        }
-      ]
-      // The node ledger is a single-writer SQLite DB on the shared AzureFile
-      // mount: a second replica opening it deadlocks on SQLITE_BUSY. Pin to
-      // exactly one replica so a running revision has only one ledger writer.
-      // (This does not cover the cross-revision overlap during a rollout — see
-      // the activeRevisionsMode note above.)
+      // The ledger is per-node state: two replicas sharing one database would
+      // claim each other's shards. Keep exactly one node per deployment.
       scale: {
         minReplicas: 1
         maxReplicas: 1
@@ -248,3 +225,5 @@ resource containerApp 'Microsoft.App/containerApps@2023-11-02-preview' = {
 }
 
 output AZURE_CONTAINER_APP_ENDPOINT string = containerApp.properties.configuration.ingress.fqdn
+output AZURE_POSTGRES_HOST string = postgresFqdn
+output AZURE_POSTGRES_DATABASE string = postgresDatabaseName

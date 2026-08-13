@@ -13,6 +13,12 @@
     },
     "publicIp": {
       "value": "${PUBLIC_IP}"
+    },
+    "postgresAdminUser": {
+      "value": "${POSTGRES_ADMIN_USER=revika}"
+    },
+    "postgresAdminPassword": {
+      "value": "$(secretOrRandomPassword)"
     }
   }
 }
