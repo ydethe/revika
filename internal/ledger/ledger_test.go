@@ -27,7 +27,7 @@ func TestResolveJournalMode(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"", "WAL", false},
+		{"", "DELETE", false},
 		{"wal", "WAL", false},
 		{"WAL", "WAL", false},
 		{"delete", "DELETE", false},
@@ -62,6 +62,15 @@ func TestOpenRollbackJournal(t *testing.T) {
 	}
 	if mode != "delete" {
 		t.Fatalf("journal_mode = %q, want delete", mode)
+	}
+	// The default (empty JournalMode) must also resolve to the network-safe
+	// rollback journal, not WAL.
+	def := open(t, Options{})
+	if err := def.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("read default journal_mode: %v", err)
+	}
+	if mode != "delete" {
+		t.Fatalf("default journal_mode = %q, want delete", mode)
 	}
 	// An unsupported mode must fail fast rather than silently falling back.
 	if _, err := Open(filepath.Join(t.TempDir(), "bad.db"), Options{JournalMode: "nope"}); err == nil {

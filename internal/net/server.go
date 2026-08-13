@@ -310,11 +310,23 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 	// Concurrency cap: acquire a slot before allocating the shard buffer so the
 	// total live allocation is bounded to cap×MaxShardSize. Reject immediately if
 	// all slots are taken — queuing would itself be a DoS vector — so the client
-	// gets ErrRateLimited and retries later.
+	// gets ErrRateLimited and retries later. releasePutSlot frees the slot exactly
+	// once; the defer covers every error path, and the success path calls it
+	// explicitly before replying so a client issuing sequential PUTs against a
+	// small cap does not race the deferred release. handlePut runs single-threaded
+	// per stream, so the guard flag needs no synchronisation.
+	releasePutSlot := func() {}
 	if srv.putSem != nil {
 		select {
 		case srv.putSem <- struct{}{}:
-			defer func() { <-srv.putSem }()
+			slotReleased := false
+			releasePutSlot = func() {
+				if !slotReleased {
+					slotReleased = true
+					<-srv.putSem
+				}
+			}
+			defer releasePutSlot()
 		default:
 			srv.log.Debug("shard put: concurrency cap reached", "event", "shard.put.rejected", "reason", "put_concurrency_cap", "peer", peer)
 			srv.replyErr(s, ErrRateLimited)
@@ -492,6 +504,11 @@ func (srv *Server) handlePut(ctx context.Context, s network.Stream, peer any) {
 	srv.log.Info("shard received",
 		"event", "shard.put", "peer", peer, "id", id, "bytes", len(data), "stripe", stripeOK,
 		"dur", time.Since(start).Round(time.Millisecond))
+	// Free the concurrency slot before the client observes success: the shard
+	// buffer is already committed to the store, so holding the slot across the
+	// reply write only lets a client's next sequential PUT race the deferred
+	// release and draw a spurious ErrRateLimited.
+	releasePutSlot()
 	// OK + the content address the caller can verify against its own hash.
 	if err := writeByte(s, byte(statusOK)); err != nil {
 		return

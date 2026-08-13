@@ -32,12 +32,14 @@ a bare content-addressed blob store cannot:
   single connection (`SetMaxOpenConns(1)`) so concurrent PUT/DELETE never hit
   "database is locked".
 - Journal mode is selectable via `Options.JournalMode` (node flag `-ledger-journal`):
-  `wal` (default, best on a local disk) or `delete`/`truncate` (rollback journal). WAL
-  relies on a shared-memory (`-shm`) mapping that a **network filesystem cannot
-  provide**, so a ledger placed on an SMB/CIFS or NFS mount — e.g. an Azure Files
-  volume — must use `delete`, otherwise even a single opener fails at open with
-  `database is locked` (SQLITE_BUSY). The DB is also single-writer, so a node backed by
-  a shared mount must run exactly one replica.
+  `delete`/`truncate` (rollback journal — the **default**) or `wal`. WAL relies on a
+  shared-memory (`-shm`) mapping that a **network filesystem cannot provide**, so a
+  ledger placed on an SMB/CIFS or NFS mount — e.g. an Azure Files volume — opened in WAL
+  mode fails at open with `database is locked` (SQLITE_BUSY) even for a single opener.
+  Since writes are already serialised through one connection, WAL's extra read
+  concurrency buys little, so `delete` is the safe default everywhere; opt into `wal`
+  only for a local-disk node. The DB is also single-writer, so a node backed by a shared
+  mount must run exactly one replica.
 
 ## Schema / concepts
 

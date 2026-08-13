@@ -72,12 +72,15 @@ type Options struct {
 	QuotaInitialFraction float64
 
 	// JournalMode selects the SQLite rollback/WAL journalling mode. Empty defaults
-	// to "wal", which is best on a local filesystem. WAL relies on a shared-memory
-	// (-shm) mapping that a *network* filesystem cannot provide, so a ledger placed
-	// on an SMB/CIFS or NFS mount (e.g. an Azure Files volume) must use a rollback
-	// journal instead — set this to "delete" or "truncate" there, otherwise even a
-	// single opener fails with "database is locked" (SQLITE_BUSY). Accepted values:
-	// "wal", "delete", "truncate" (case-insensitive).
+	// to "delete" (a rollback journal), which is the safe universal choice: WAL
+	// relies on a shared-memory (-shm) mapping that a *network* filesystem cannot
+	// provide, so a ledger on an SMB/CIFS or NFS mount (e.g. an Azure Files volume)
+	// opened in WAL mode fails even for a single opener with "database is locked"
+	// (SQLITE_BUSY). Since the ledger already serialises writes through one
+	// connection (SetMaxOpenConns(1)), WAL's added read concurrency buys little, so
+	// "delete" is the default everywhere; set "wal" explicitly only for a local-disk
+	// deployment that wants it. Accepted values: "wal", "delete", "truncate"
+	// (case-insensitive).
 	JournalMode string
 }
 
@@ -175,15 +178,16 @@ var ledgerMigrations = []func(*sql.Tx) error{
 }
 
 // resolveJournalMode validates a requested SQLite journal mode and returns the
-// pragma token to embed in the DSN. An empty request defaults to WAL (best for a
-// local filesystem). "delete"/"truncate" are the rollback-journal modes required
-// on a network filesystem where WAL's shared-memory mapping is unavailable.
+// pragma token to embed in the DSN. An empty request defaults to DELETE (a
+// rollback journal), the safe universal choice that also works on a network
+// filesystem where WAL's shared-memory mapping is unavailable. Pass "wal"
+// explicitly to opt into WAL on a local disk.
 func resolveJournalMode(mode string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", "wal":
-		return "WAL", nil
-	case "delete":
+	case "", "delete":
 		return "DELETE", nil
+	case "wal":
+		return "WAL", nil
 	case "truncate":
 		return "TRUNCATE", nil
 	default:
