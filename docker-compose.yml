@@ -52,6 +52,16 @@
 #
 #   docker compose run --build --rm tree
 #
+# The `postgres-e2e` profile repeats the authorized round-trip with every node
+# keeping its ownership ledger in PostgreSQL instead of SQLite (one database per
+# node, created by deploy/postgres-init.sql). It has its own seed identity and its
+# own nodes, so it does not disturb the SQLite network above:
+#
+#   export PG_SEED_ADDR="$(SEED_HOST=pg-seed ./deploy/gen-seed-key.sh deploy/pg-seed.key)"
+#   docker compose --profile postgres-e2e up --build \
+#     --abort-on-container-exit --exit-code-from pg-client pg-client
+#   docker compose --profile postgres-e2e down -v
+#
 # These runs share one seed/nodes network; tear it down with:
 #
 #   docker compose down -v
@@ -68,6 +78,13 @@
 #   export SEED_ADDR="$(./deploy/gen-seed-key.sh)"
 # Peers reference it as `*seed_addr`.
 x-seed-addr: &seed_addr '${SEED_ADDR:?SEED_ADDR must be set — run: export SEED_ADDR="$$(./deploy/gen-seed-key.sh)"}'
+# PostgreSQL profile seed address. Compose interpolates the WHOLE file whatever
+# profile is selected, so this must not be a required (:?) variable — that would
+# break plain `docker compose up` for everyone not running the postgres profile.
+# It falls back to a placeholder peer ID that only fails, with a pointed message,
+# if the postgres-e2e profile is actually started without setting it:
+#   export PG_SEED_ADDR="$(SEED_HOST=pg-seed ./deploy/gen-seed-key.sh deploy/pg-seed.key)"
+x-pg-seed-addr: &pg_seed_addr '${PG_SEED_ADDR:-/dns4/pg-seed/tcp/4001/p2p/set-PG_SEED_ADDR-with-deploy-gen-seed-key-sh}'
 
 # Shared healthcheck for every node service: curl the node's HTTP /healthz
 # endpoint (the -metrics server, on :9096 by default). curl ships in the node
@@ -203,6 +220,125 @@ services:
       # rw: after the round-trip, verify.sh drops artifacts here for the attacker
       # (a cap wrapped for a third party + the plaintext canary — never the keys).
       - handoff:/handoff
+    restart: "no"
+
+  # PostgreSQL-backed end-to-end scenario (profile: postgres-e2e). A separate
+  # profile so the default local network stays the SQLite scenario above. Each
+  # node gets its OWN database (deploy/postgres-init.sql) — the ledger is
+  # per-node state, so two nodes must never share one database.
+  postgres:
+    profiles: ["postgres-e2e"]
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: revika
+      POSTGRES_PASSWORD: revika
+      POSTGRES_DB: revika
+    # -h 127.0.0.1 forces a TCP probe: during initdb the entrypoint runs a
+    # temporary server on the unix socket only, so a socket probe reports ready
+    # before the init scripts have created the per-node databases.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U revika -d revika"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    volumes:
+      # PostgreSQL 18 stores data below a major-version-specific directory.
+      # Mount the parent so the image can manage that layout and upgrades.
+      - postgres-data:/var/lib/postgresql
+      - ./deploy/postgres-init.sql:/docker-entrypoint-initdb.d/10-revika-databases.sql:ro
+    restart: "no"
+
+  pg-seed:
+    profiles: ["postgres-e2e"]
+    build:
+      context: .
+      target: node
+    image: revika-node
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -repair-interval=${REPAIR_INTERVAL:-1h}
+      - -pow-difficulty=2
+      - -ledger-driver=postgres
+      - -ledger-dsn=postgres://revika:revika@postgres:5432/revika_seed?sslmode=disable
+    healthcheck: *node_healthcheck
+    volumes:
+      - ./deploy/pg-seed.key:/data/keys/node.key:ro
+      - pg-seed-data:/data
+
+  pg-node2:
+    profiles: ["postgres-e2e"]
+    build:
+      context: .
+      target: node
+    image: revika-node
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg-seed:
+        condition: service_healthy
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -bootstrap
+      - *pg_seed_addr
+      - -ledger-driver=postgres
+      - -ledger-dsn=postgres://revika:revika@postgres:5432/revika_node2?sslmode=disable
+    healthcheck: *node_healthcheck
+    volumes:
+      - pg-node2-data:/data
+
+  pg-node3:
+    profiles: ["postgres-e2e"]
+    build:
+      context: .
+      target: node
+    image: revika-node
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg-seed:
+        condition: service_healthy
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/4001
+      - -listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - -bootstrap
+      - *pg_seed_addr
+      - -ledger-driver=postgres
+      - -ledger-dsn=postgres://revika:revika@postgres:5432/revika_node3?sslmode=disable
+    healthcheck: *node_healthcheck
+    volumes:
+      - pg-node3-data:/data
+
+  pg-client:
+    profiles: ["postgres-e2e"]
+    build:
+      context: .
+      target: client
+    image: revika-ctl
+    depends_on:
+      pg-seed:
+        condition: service_healthy
+      pg-node2:
+        condition: service_healthy
+      pg-node3:
+        condition: service_healthy
+    environment:
+      SEED_ADDR: *pg_seed_addr
+    volumes:
+      - pg-seed-data:/nodes/seed:ro
+      - pg-node2-data:/nodes/node2:ro
+      - pg-node3-data:/nodes/node3:ro
     restart: "no"
 
   # Directory round-trip client (profile: tree). Reuses the same image but runs
@@ -443,3 +579,7 @@ volumes:
   node4-data:
   node5-data:
   handoff:
+  postgres-data:
+  pg-seed-data:
+  pg-node2-data:
+  pg-node3-data:

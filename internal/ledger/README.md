@@ -2,9 +2,9 @@
 
 A Node's per-node index of *what it stores, for whom, and under what accounting*.
 
-This is the "ledger" reserved in `.gitignore` — a **local SQLite bookkeeping
-database, not a global blockchain**. There is no consensus and no shared state:
-each node owns its own ledger.
+This is the "ledger" reserved in `.gitignore` — a **local bookkeeping database,
+not a global blockchain**. There is no consensus and no shared state: each node
+owns its own ledger.
 
 ## Purpose
 
@@ -25,13 +25,28 @@ a bare content-addressed blob store cannot:
 
 ## Location & backend
 
-- DB path: `.revika/ledger/ledger.db` (pass `":memory:"` for an ephemeral test DB).
-- Backend: SQLite via the pure-Go, cgo-free `modernc.org/sqlite` driver, keeping
-  revika's build cgo-free.
+- Default DB path: `.revika/ledger/ledger.db` (pass `":memory:"` for an ephemeral
+  SQLite test DB).
+- Default backend: SQLite via the pure-Go, cgo-free `modernc.org/sqlite` driver.
+- PostgreSQL is available by setting `-ledger-driver=postgres` and providing
+  `-ledger-dsn`, for example:
+
+  ```text
+  postgres://revika:secret@localhost:5432/revika?sslmode=disable
+  ```
+
+  PostgreSQL uses the pure-Go `pgx` database/sql driver. The DSN must identify an
+  isolated database or schema for one node; nodes must not share ledger tables.
+- Content-hash IDs, owner keys, and binary grants remain 32-byte values. They are
+  stored as SQLite `BLOB` or PostgreSQL `BYTEA`; they are not PostgreSQL
+  `BIGINT`. Numeric metadata such as sizes, timestamps, counters, `k`, and `m`
+  uses PostgreSQL `BIGINT`.
 - Opened with `busy_timeout` and `foreign_keys=on`; writes are serialised through a
-  single connection (`SetMaxOpenConns(1)`) so concurrent PUT/DELETE never hit
-  "database is locked".
-- Journal mode is selectable via `Options.JournalMode` (node flag `-ledger-journal`):
+  single connection (`SetMaxOpenConns(1)`) for SQLite so concurrent PUT/DELETE
+  never hit "database is locked". PostgreSQL uses its normal connection pool and
+  transaction locking.
+- Journal mode is selectable via `Options.JournalMode` (node flag `-ledger-journal`),
+  and applies to the **SQLite driver only** (PostgreSQL ignores it):
   `delete`/`truncate` (rollback journal — the **default**) or `wal`. WAL relies on a
   shared-memory (`-shm`) mapping that a **network filesystem cannot provide**, so a
   ledger placed on an SMB/CIFS or NFS mount — e.g. an Azure Files volume — opened in WAL
@@ -98,7 +113,7 @@ on the node's `/status` (`defense.quota_ramp`), `/metrics` (`revika_quota_ramp_*
 ## Exported API
 
 Types:
-- `Ledger` — the SQLite-backed index; safe for concurrent use.
+- `Ledger` — the SQLite- or PostgreSQL-backed index; safe for concurrent use.
 - `Options` — `QuotaBytes` (0 = unlimited), `LeaseTTL` (0 = no expiry), and the
   Axis B graduated-quota knobs `QuotaRamp` (0 = disabled: flat quota) +
   `QuotaInitialFraction` (the fraction of the full quota a brand-new owner starts
@@ -112,6 +127,9 @@ Types:
 
 Functions / methods:
 - `Open(path, opts) (*Ledger, error)` — open/create the DB and init the schema.
+  Empty `Options.Driver` selects SQLite. PostgreSQL requires `Options.Driver` to
+  be `postgres` and `Options.DSN` to be set. SQLite `JournalMode` does not apply
+  to PostgreSQL.
 - `(*Ledger) Close()` — close the underlying DB.
 - `(*Ledger) QuotaBytes()` — configured per-owner quota.
 - `(*Ledger) AddOwner(id, owner, size, now) (added, err)` — record a claim or renew

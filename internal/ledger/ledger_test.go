@@ -52,6 +52,32 @@ func TestResolveJournalMode(t *testing.T) {
 	}
 }
 
+func TestBindPostgres(t *testing.T) {
+	query := `SELECT * FROM shards WHERE id=? AND owner=? LIMIT ? OFFSET ?`
+	want := `SELECT * FROM shards WHERE id=$1 AND owner=$2 LIMIT $3 OFFSET $4`
+	if got := bindPostgres(query); got != want {
+		t.Fatalf("bindPostgres() = %q, want %q", got, want)
+	}
+}
+
+func TestOpenDriverValidation(t *testing.T) {
+	if _, err := Open(filepath.Join(t.TempDir(), "ledger.db"), Options{Driver: "unknown"}); err == nil {
+		t.Fatal("Open with unknown driver: want error, got nil")
+	}
+	if _, err := Open(filepath.Join(t.TempDir(), "ledger.db"), Options{Driver: "postgres"}); err == nil {
+		t.Fatal("Open without PostgreSQL DSN: want error, got nil")
+	}
+	// The sqlite driver stays the zero-value default so existing callers are unchanged.
+	l, err := Open(filepath.Join(t.TempDir(), "ledger.db"), Options{})
+	if err != nil {
+		t.Fatalf("Open with default driver: %v", err)
+	}
+	defer l.Close()
+	if l.driver != "sqlite" {
+		t.Fatalf("default driver = %q, want sqlite", l.driver)
+	}
+}
+
 // TestOpenRollbackJournal proves the ledger opens and functions in the rollback
 // journal mode required on a network filesystem (Azure Files), not just WAL.
 func TestOpenRollbackJournal(t *testing.T) {

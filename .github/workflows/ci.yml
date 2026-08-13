@@ -102,6 +102,44 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  e2e-postgres:
+    name: multi-node end-to-end, postgres ledger (compose)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # Own seed identity so this job is independent of the sqlite e2e job.
+      - name: Generate PostgreSQL profile seed identity
+        run: echo "PG_SEED_ADDR=$(SEED_HOST=pg-seed ./deploy/gen-seed-key.sh deploy/pg-seed.key)" >> "$GITHUB_ENV"
+
+      # The same authorized round-trip as the sqlite e2e job, but every node keeps
+      # its ownership ledger in PostgreSQL (one database per node). It exercises the
+      # postgres schema, bytea/bigint values, placeholder binding, upserts and
+      # transactions through the real network path.
+      - name: PostgreSQL-backed authorized round-trip
+        run: docker compose --profile postgres-e2e up --build --abort-on-container-exit --exit-code-from pg-client pg-client
+
+      # Fail loudly if the nodes silently fell back to a sqlite ledger.
+      - name: Assert the ledger really lives in PostgreSQL
+        run: |
+          set -euo pipefail
+          for db in revika_seed revika_node2 revika_node3; do
+            shards=$(docker exec revika-postgres-1 psql -U revika -d "$db" -tAc 'SELECT count(*) FROM shards;')
+            echo "$db: $shards shards"
+            [ "$shards" -gt 0 ] || { echo "FAIL: $db holds no shards"; exit 1; }
+          done
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile postgres-e2e down -v
+
   resilience:
     name: node-down resilience (compose)
     runs-on: ubuntu-latest
@@ -150,7 +188,7 @@ jobs:
     runs-on: ubuntu-latest
     # Gate on every test job: an image is pushed only if the whole test suite
     # (unit + all four compose end-to-end runs + resilience + repair) is green.
-    needs: [test, e2e, resilience, repair]
+    needs: [test, e2e, e2e-postgres, resilience, repair]
     # Push only on a version tag (v1.2.3). On branch/PR pushes the job still
     # builds the multi-arch image to validate the Dockerfile, but never pushes.
     permissions:

@@ -120,50 +120,52 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func run() error {
 	var (
-		dataDir       = flag.String("data", ".revika", "root directory for node state (shards, identity)")
-		verbose       = flag.Bool("v", false, "verbose (debug) logging; shorthand for -log-level debug")
-		logFormat     = flag.String("log-format", "auto", "log encoding: auto (text on a terminal, JSON otherwise), text, or json. JSON is structured for Grafana Alloy/Loki (time, level, msg, event fields)")
-		logLevel      = flag.String("log-level", "info", "minimum log level: debug, info, warn, or error")
-		dhtOn         = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
-		advertiseOn   = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
-		quota         = flag.Int64("quota", defaultQuotaBytes, "per-owner storage quota in bytes (default 90 GiB = 90% of a nominal 100 GiB node; explicit 0 = unlimited, logged as a warning). A non-zero quota also activates the Axis B age-graduated ramp")
-		leaseTTL      = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
-		ledgerJournal = flag.String("ledger-journal", "delete", "SQLite ledger journal mode: delete/truncate (rollback journal, the default) or wal. WAL needs a shared-memory mapping a NETWORK filesystem cannot provide, so on an SMB/CIFS or NFS -data mount (e.g. an Azure Files volume) WAL fails to open with \"database is locked\" (SQLITE_BUSY); delete works everywhere. Set wal only for a local-disk node that wants its read concurrency")
-		gcInterval    = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
-		gcExpired     = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
-		repairOn      = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
-		repairEvery   = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
-		repairVerify  = flag.Bool("repair-verify", false, "harden the repair survival check: confirm a remote shard by fetching and self-verifying it (hash==ID) instead of trusting the holder's presence byte, so a lying node cannot fake availability. Costs a shard download per remote check. LOCAL defence, never inherited")
-		repairProbe   = flag.Bool("repair-probe", false, "harden the repair survival check with a fresh-nonce Probe challenge after fetch+verify (requires -repair-verify). A node that served valid shard bytes but fails the nonce challenge is counted missing. More expensive: one extra round-trip per remote shard check. LOCAL defence, never inherited")
-		relayService  = flag.Bool("relay", false, "run as a circuit-relay v2 server for peers behind NAT (needs a public IP and sufficient bandwidth; implies NAT traversal)")
-		rebalanceOn   = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
-		rebalEvery    = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
-		rebalThresh   = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
-		capacity      = flag.Int64("capacity", 0, "usable storage budget in bytes for load balancing (0 = use the shard filesystem's total capacity)")
-		metricsAddr   = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics /admin over plain HTTP — put TLS on a reverse proxy")
-		geoipMode     = flag.String("geoip", "off", "geolocation source for the /admin map: 'off' (no lookups), 'ip-api' (best-effort cached lookups via ip-api.com — sends peer PUBLIC IPs to that third party), or a path to an offline MaxMind GeoLite2/GeoIP2 *City* .mmdb file (no third party, privacy-preserving). Private/loopback IPs are never located. LOCAL/operator-facing only, never inherited")
-		blocklist     = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
-		blocklistAuto = flag.String("blocklist-auto", "", "path to the persistent auto-blocklist the abuse detector appends banned peers to and reloads on restart (empty = derive as <data>/blocklist.auto; set to 'off' to disable persistence)")
-		abuseTol      = flag.Duration("rebalance-abuse-tolerance", 0, "fast-side slack on the rebalance schedule before a peer is judged off-schedule; absorbs jitter (0 = built-in default 10m). LOCAL defence, never inherited")
-		abuseCoalesce = flag.Duration("rebalance-abuse-coalesce", 0, "rebalance-move PUTs from a peer within this window count as one sweep (0 = built-in default min(interval/4, 5m)). LOCAL defence, never inherited")
-		abuseStrikes  = flag.Int("rebalance-abuse-strikes", 0, "possession lies from a peer before it is locally banned (0 = built-in default 3). LOCAL defence, never inherited")
-		abuseDecay    = flag.Duration("rebalance-abuse-decay", 0, "window over which a peer's possession-lie strikes expire (0 = built-in default 24h). LOCAL defence, never inherited")
-		connLow       = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
-		connHigh      = flag.Int("conn-high", 0, "connection-manager high watermark, above which idle connections are trimmed (0 = built-in default; <0 disables)")
-		connGrace     = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
-		writeRate     = flag.Float64("write-rate", 0, "per-owner write-verb rate cap in writes/second on PUT/DELETE (0 = disabled). A token bucket keyed on the Ed25519 owner refuses over-rate writes with statusRateLimited; grant-authorized repair/rebalance writes are exempt. LOCAL defence, never inherited")
-		writeBurst    = flag.Float64("write-burst", 0, "per-owner write burst allowance: max back-to-back writes before -write-rate throttles (0 = default to -write-rate, i.e. a ~1s burst; clamped to >=1). LOCAL defence, never inherited")
-		subnetRate    = flag.Float64("subnet-rate", defaultSubnetRate, "Axis A: identity-agnostic per-subnet request rate cap in requests/second across ALL shard/probe verbs (ON by default; 0 = disabled). A token bucket keyed on the source IP subnet bounds a flood from one network location no matter how many owner identities it mints; over-cap requests are torn down. Set generously (above legit inter-node repair/rebalance volume) — unlike -write-rate it cannot exempt maintenance. LOCAL defence, never inherited")
-		subnetBurst   = flag.Float64("subnet-burst", 0, "Axis A: per-subnet burst allowance: max back-to-back requests before -subnet-rate throttles (0 = default to 4×-subnet-rate; clamped to >=1). LOCAL defence, never inherited")
-		subnetPrefix4 = flag.Int("subnet-prefix4", 24, "Axis A: IPv4 prefix length aggregating source IPs into one -subnet-rate bucket (default /24)")
-		subnetPrefix6 = flag.Int("subnet-prefix6", 56, "Axis A: IPv6 prefix length aggregating source IPs into one -subnet-rate bucket (default /56)")
-		quotaRamp     = flag.Duration("quota-ramp", defaultQuotaRamp, "Axis B: graduate a new owner's effective storage quota from -quota-initial of -quota up to full over this age (ON by default; 0 = no ramp, full quota immediately). Only bites when a per-owner -quota is set. A fresh identity starts weak, so minting a new one to evade a ban buys little write capacity; the owner's first shard is always admitted. LOCAL defence, never inherited")
-		quotaInitial  = flag.Float64("quota-initial", 0.05, "Axis B: fraction (0,1) of -quota a brand-new owner may use at age zero, ramping linearly to full over -quota-ramp (ignored when -quota-ramp is 0 or -quota is 0)")
+		dataDir        = flag.String("data", ".revika", "root directory for node state (shards, identity)")
+		verbose        = flag.Bool("v", false, "verbose (debug) logging; shorthand for -log-level debug")
+		logFormat      = flag.String("log-format", "auto", "log encoding: auto (text on a terminal, JSON otherwise), text, or json. JSON is structured for Grafana Alloy/Loki (time, level, msg, event fields)")
+		logLevel       = flag.String("log-level", "info", "minimum log level: debug, info, warn, or error")
+		dhtOn          = flag.Bool("dht", true, "join the Kademlia DHT (WAN discovery + provider records)")
+		advertiseOn    = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
+		quota          = flag.Int64("quota", defaultQuotaBytes, "per-owner storage quota in bytes (default 90 GiB = 90% of a nominal 100 GiB node; explicit 0 = unlimited, logged as a warning). A non-zero quota also activates the Axis B age-graduated ramp")
+		leaseTTL       = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
+		ledgerDriver   = flag.String("ledger-driver", "sqlite", "ledger database engine: sqlite (default, a local file under -data) or postgres (requires -ledger-dsn). Each node needs its OWN database: never point two nodes at one postgres database")
+		ledgerDSN      = flag.String("ledger-dsn", "", "PostgreSQL connection string for -ledger-driver=postgres, e.g. postgres://user:pass@host:5432/revika_node1?sslmode=disable (ignored by the sqlite driver)")
+		ledgerJournal  = flag.String("ledger-journal", "delete", "SQLite ledger journal mode: delete/truncate (rollback journal, the default) or wal. WAL needs a shared-memory mapping a NETWORK filesystem cannot provide, so on an SMB/CIFS or NFS -data mount (e.g. an Azure Files volume) WAL fails to open with \"database is locked\" (SQLITE_BUSY); delete works everywhere. Set wal only for a local-disk node that wants its read concurrency")
+		gcInterval     = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
+		gcExpired      = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
+		repairOn       = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
+		repairEvery    = flag.Duration("repair-interval", time.Hour, "how often the repair loop runs")
+		repairVerify   = flag.Bool("repair-verify", false, "harden the repair survival check: confirm a remote shard by fetching and self-verifying it (hash==ID) instead of trusting the holder's presence byte, so a lying node cannot fake availability. Costs a shard download per remote check. LOCAL defence, never inherited")
+		repairProbe    = flag.Bool("repair-probe", false, "harden the repair survival check with a fresh-nonce Probe challenge after fetch+verify (requires -repair-verify). A node that served valid shard bytes but fails the nonce challenge is counted missing. More expensive: one extra round-trip per remote shard check. LOCAL defence, never inherited")
+		relayService   = flag.Bool("relay", false, "run as a circuit-relay v2 server for peers behind NAT (needs a public IP and sufficient bandwidth; implies NAT traversal)")
+		rebalanceOn    = flag.Bool("rebalance", true, "run the rebalance loop: offload cold shards to emptier nodes so storage load converges across the network (needs the DHT)")
+		rebalEvery     = flag.Duration("rebalance-interval", time.Hour, "how often the rebalance loop runs")
+		rebalThresh    = flag.Float64("rebalance-threshold", 0.10, "minimum load-fraction gap (0-1) before offloading a shard: a dead-band that prevents thrashing")
+		capacity       = flag.Int64("capacity", 0, "usable storage budget in bytes for load balancing (0 = use the shard filesystem's total capacity)")
+		metricsAddr    = flag.String("metrics", ":9096", "address for the HTTP metrics/status server (host:port; empty disables). Serves /healthz /readyz /status /metrics /admin over plain HTTP — put TLS on a reverse proxy")
+		geoipMode      = flag.String("geoip", "off", "geolocation source for the /admin map: 'off' (no lookups), 'ip-api' (best-effort cached lookups via ip-api.com — sends peer PUBLIC IPs to that third party), or a path to an offline MaxMind GeoLite2/GeoIP2 *City* .mmdb file (no third party, privacy-preserving). Private/loopback IPs are never located. LOCAL/operator-facing only, never inherited")
+		blocklist      = flag.String("blocklist", "", "path to a static blocklist file (one peer ID, CIDR, or IP per line; '#' comments) refused by the connection gater")
+		blocklistAuto  = flag.String("blocklist-auto", "", "path to the persistent auto-blocklist the abuse detector appends banned peers to and reloads on restart (empty = derive as <data>/blocklist.auto; set to 'off' to disable persistence)")
+		abuseTol       = flag.Duration("rebalance-abuse-tolerance", 0, "fast-side slack on the rebalance schedule before a peer is judged off-schedule; absorbs jitter (0 = built-in default 10m). LOCAL defence, never inherited")
+		abuseCoalesce  = flag.Duration("rebalance-abuse-coalesce", 0, "rebalance-move PUTs from a peer within this window count as one sweep (0 = built-in default min(interval/4, 5m)). LOCAL defence, never inherited")
+		abuseStrikes   = flag.Int("rebalance-abuse-strikes", 0, "possession lies from a peer before it is locally banned (0 = built-in default 3). LOCAL defence, never inherited")
+		abuseDecay     = flag.Duration("rebalance-abuse-decay", 0, "window over which a peer's possession-lie strikes expire (0 = built-in default 24h). LOCAL defence, never inherited")
+		connLow        = flag.Int("conn-low", 0, "connection-manager low watermark (0 = built-in default)")
+		connHigh       = flag.Int("conn-high", 0, "connection-manager high watermark, above which idle connections are trimmed (0 = built-in default; <0 disables)")
+		connGrace      = flag.Duration("conn-grace", 0, "grace period protecting a new connection from trimming (0 = built-in default)")
+		writeRate      = flag.Float64("write-rate", 0, "per-owner write-verb rate cap in writes/second on PUT/DELETE (0 = disabled). A token bucket keyed on the Ed25519 owner refuses over-rate writes with statusRateLimited; grant-authorized repair/rebalance writes are exempt. LOCAL defence, never inherited")
+		writeBurst     = flag.Float64("write-burst", 0, "per-owner write burst allowance: max back-to-back writes before -write-rate throttles (0 = default to -write-rate, i.e. a ~1s burst; clamped to >=1). LOCAL defence, never inherited")
+		subnetRate     = flag.Float64("subnet-rate", defaultSubnetRate, "Axis A: identity-agnostic per-subnet request rate cap in requests/second across ALL shard/probe verbs (ON by default; 0 = disabled). A token bucket keyed on the source IP subnet bounds a flood from one network location no matter how many owner identities it mints; over-cap requests are torn down. Set generously (above legit inter-node repair/rebalance volume) — unlike -write-rate it cannot exempt maintenance. LOCAL defence, never inherited")
+		subnetBurst    = flag.Float64("subnet-burst", 0, "Axis A: per-subnet burst allowance: max back-to-back requests before -subnet-rate throttles (0 = default to 4×-subnet-rate; clamped to >=1). LOCAL defence, never inherited")
+		subnetPrefix4  = flag.Int("subnet-prefix4", 24, "Axis A: IPv4 prefix length aggregating source IPs into one -subnet-rate bucket (default /24)")
+		subnetPrefix6  = flag.Int("subnet-prefix6", 56, "Axis A: IPv6 prefix length aggregating source IPs into one -subnet-rate bucket (default /56)")
+		quotaRamp      = flag.Duration("quota-ramp", defaultQuotaRamp, "Axis B: graduate a new owner's effective storage quota from -quota-initial of -quota up to full over this age (ON by default; 0 = no ramp, full quota immediately). Only bites when a per-owner -quota is set. A fresh identity starts weak, so minting a new one to evade a ban buys little write capacity; the owner's first shard is always admitted. LOCAL defence, never inherited")
+		quotaInitial   = flag.Float64("quota-initial", 0.05, "Axis B: fraction (0,1) of -quota a brand-new owner may use at age zero, ramping linearly to full over -quota-ramp (ignored when -quota-ramp is 0 or -quota is 0)")
 		putConcurrency = flag.Int("put-concurrency", 32, "max concurrent in-flight PUT operations (each may allocate up to 64 MiB for the shard buffer); over-cap PUTs are rejected with statusRateLimited so the client can retry. 0 = no application-level cap (bounded only by the libp2p resource manager). LOCAL defence, never inherited")
 		powDiff        = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
-		publicIP      = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
-		listen        multiFlag
-		bootstrap     multiFlag
+		publicIP       = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
+		listen         multiFlag
+		bootstrap      multiFlag
 	)
 	flag.Var(&listen, "listen", "multiaddr to listen on (repeatable; default all interfaces, random TCP+QUIC ports)")
 	flag.Var(&bootstrap, "bootstrap", "DHT bootstrap peer multiaddr with /p2p/<id> (repeatable)")
@@ -240,10 +242,27 @@ func run() error {
 	// of truth for ownership, while blobs on disk are the source of truth for
 	// bytes. Reconcile the two on startup before serving.
 	ledgerPath := filepath.Join(*dataDir, "ledger", "ledger.db")
-	if err := os.MkdirAll(filepath.Dir(ledgerPath), 0o700); err != nil {
-		return fmt.Errorf("create ledger dir: %w", err)
+	usingSQLiteLedger := strings.TrimSpace(*ledgerDriver) == "" ||
+		strings.EqualFold(strings.TrimSpace(*ledgerDriver), "sqlite")
+	if usingSQLiteLedger {
+		if err := os.MkdirAll(filepath.Dir(ledgerPath), 0o700); err != nil {
+			return fmt.Errorf("create ledger dir: %w", err)
+		}
+	} else {
+		if *ledgerDSN == "" {
+			return fmt.Errorf("-ledger-driver=%s requires -ledger-dsn", *ledgerDriver)
+		}
+		// -ledger-journal is a SQLite-only knob; the ledger ignores it here.
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "ledger-journal" {
+				log.Warn("-ledger-journal ignored: it applies to the sqlite ledger driver only",
+					"event", "ledger.flag_ignored", "driver", *ledgerDriver)
+			}
+		})
 	}
 	led, err := ledger.Open(ledgerPath, ledger.Options{
+		Driver:               *ledgerDriver,
+		DSN:                  *ledgerDSN,
 		QuotaBytes:           *quota,
 		LeaseTTL:             *leaseTTL,
 		QuotaRamp:            *quotaRamp,

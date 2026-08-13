@@ -15,8 +15,9 @@
 //   - What is collectible? Shards with no remaining owner (and, optionally,
 //     shards whose leases have all expired) can be garbage-collected.
 //
-// Backend is SQLite via the pure-Go, cgo-free modernc.org/sqlite driver, keeping
-// revika's build cgo-free.
+// The default backend is SQLite via the pure-Go, cgo-free modernc.org/sqlite
+// driver. PostgreSQL is also supported through the pure-Go pgx database/sql
+// driver.
 //
 // Defence controls (security/Defence.md; primitives P13, P10 in security/frameworks.md):
 //
@@ -34,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 
 	"revika/internal/store"
@@ -49,6 +51,14 @@ var ErrUnauthorized = errors.New("ledger: caller does not own this shard")
 
 // Options configures a Ledger.
 type Options struct {
+	// Driver selects the database engine. Empty selects SQLite for backwards
+	// compatibility. PostgreSQL requires DSN to be set to a PostgreSQL connection
+	// string.
+	Driver string
+	// DSN is the database connection string used by PostgreSQL. For SQLite, the
+	// path passed to Open is used instead.
+	DSN string
+
 	// QuotaBytes caps the total bytes any single owner may hold. 0 = unlimited.
 	QuotaBytes int64
 	// LeaseTTL is how long a PUT's lease lasts before it is considered expired.
@@ -71,7 +81,8 @@ type Options struct {
 	// accruing standing.
 	QuotaInitialFraction float64
 
-	// JournalMode selects the SQLite rollback/WAL journalling mode. Empty defaults
+	// JournalMode selects the SQLite rollback/WAL journalling mode, and applies to
+	// the sqlite driver only (the postgres driver ignores it). Empty defaults
 	// to "delete" (a rollback journal), which is the safe universal choice: WAL
 	// relies on a shared-memory (-shm) mapping that a *network* filesystem cannot
 	// provide, so a ledger on an SMB/CIFS or NFS mount (e.g. an Azure Files volume)
@@ -84,18 +95,19 @@ type Options struct {
 	JournalMode string
 }
 
-// Ledger is a SQLite-backed ownership/lease/quota index. It is safe for
-// concurrent use.
+// Ledger is a SQLite- or PostgreSQL-backed ownership/lease/quota index. It is
+// safe for concurrent use.
 type Ledger struct {
-	db   *sql.DB
-	opts Options
+	db     *sql.DB
+	opts   Options
+	driver string
 }
 
 // schemaVersion is the ledger schema version this binary targets. It is
-// stored in SQLite's PRAGMA user_version after every migration so Open can
-// detect whether it needs to migrate and whether the database was written by a
-// newer binary (in which case it refuses to open and tells the operator to
-// upgrade). Bump this constant whenever a new migration is added.
+// stored in SQLite's PRAGMA user_version or PostgreSQL's ledger_schema table
+// after every migration so Open can detect whether it needs to migrate and
+// whether the database was written by a newer binary. Bump this constant
+// whenever a new migration is added.
 const schemaVersion = 2
 
 // schemaV0 is the original table layout (created with IF NOT EXISTS so it is
@@ -130,7 +142,40 @@ CREATE TABLE IF NOT EXISTS stripes (
 	grant    BLOB NOT NULL
 );`
 
-// ledgerMigrations is the ordered list of forward migrations. Each entry
+const schemaPostgres = `
+CREATE TABLE IF NOT EXISTS shards (
+	id      BYTEA PRIMARY KEY,
+	size    BIGINT NOT NULL,
+	created BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS owners (
+	shard_id BYTEA NOT NULL,
+	owner    BYTEA NOT NULL,
+	put_at   BIGINT NOT NULL,
+	expiry   BIGINT NOT NULL,
+	PRIMARY KEY (shard_id, owner)
+);
+CREATE INDEX IF NOT EXISTS owners_by_owner ON owners(owner);
+CREATE TABLE IF NOT EXISTS accounts (
+	owner       BYTEA PRIMARY KEY,
+	bytes_used  BIGINT NOT NULL,
+	shard_count BIGINT NOT NULL,
+	first_seen  BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS stripes (
+	shard_id BYTEA PRIMARY KEY REFERENCES shards(id) ON DELETE CASCADE,
+	k        BIGINT NOT NULL,
+	m        BIGINT NOT NULL,
+	siblings BYTEA NOT NULL,
+	"grant"  BYTEA NOT NULL
+);
+CREATE TABLE IF NOT EXISTS revoked_grants (
+	nonce      BYTEA PRIMARY KEY,
+	owner      BYTEA NOT NULL,
+	revoked_at BIGINT NOT NULL
+);`
+
+// ledgerMigrations is the ordered list of SQLite forward migrations. Each entry
 // migrates the schema from (index) to (index+1). A new migration is appended
 // here and schemaVersion is bumped by one. Migrations run inside a single
 // transaction that also advances user_version, so a crash mid-migration leaves
@@ -195,33 +240,78 @@ func resolveJournalMode(mode string) (string, error) {
 	}
 }
 
+// Engine names accepted by Options.Driver, and the database/sql driver each maps
+// to. The pgx stdlib driver registers itself as "pgx", not "postgres".
+const (
+	driverSQLite   = "sqlite"
+	driverPostgres = "postgres"
+
+	sqlDriverSQLite   = "sqlite"
+	sqlDriverPostgres = "pgx"
+)
+
+// resolveDriver normalises Options.Driver to a canonical engine name. An empty
+// value selects SQLite so pre-existing callers are unchanged.
+func resolveDriver(name string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", driverSQLite, "sqlite3":
+		return driverSQLite, nil
+	case driverPostgres, "postgresql", "pgx":
+		return driverPostgres, nil
+	default:
+		return "", fmt.Errorf("unsupported database driver %q (want sqlite or postgres)", name)
+	}
+}
+
 // Open opens (creating if needed) a ledger database at path. Pass ":memory:" for
 // an ephemeral in-memory ledger (tests).
 func Open(path string, opts Options) (*Ledger, error) {
-	journal, err := resolveJournalMode(opts.JournalMode)
+	driver, err := resolveDriver(opts.Driver)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: %w", err)
 	}
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(" + journal + ")&_pragma=foreign_keys(on)"
-	db, err := sql.Open("sqlite", dsn)
+
+	var dsn, sqlDriver string
+	if driver == driverSQLite {
+		journal, err := resolveJournalMode(opts.JournalMode)
+		if err != nil {
+			return nil, fmt.Errorf("ledger: %w", err)
+		}
+		sqlDriver = sqlDriverSQLite
+		dsn = "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(" + journal + ")&_pragma=foreign_keys(on)"
+	} else {
+		if strings.TrimSpace(opts.DSN) == "" {
+			return nil, fmt.Errorf("ledger: postgres driver requires Options.DSN")
+		}
+		// JournalMode is a SQLite-only knob and is ignored here; revika-node warns
+		// when an operator sets it explicitly alongside the postgres driver.
+		sqlDriver = sqlDriverPostgres
+		dsn = opts.DSN
+	}
+	db, err := sql.Open(sqlDriver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: open %s: %w", path, err)
 	}
-	// SQLite tolerates a single writer; serialise access through one connection
-	// so concurrent PUT/DELETE never hit "database is locked".
-	db.SetMaxOpenConns(1)
-	if err := migrateSchema(db); err != nil {
+	if driver == driverSQLite {
+		// SQLite tolerates a single writer; serialise access through one connection
+		// so concurrent PUT/DELETE never hit "database is locked".
+		db.SetMaxOpenConns(1)
+	}
+	if err := migrateSchema(db, driver); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ledger: %w", err)
 	}
-	return &Ledger{db: db, opts: opts}, nil
+	return &Ledger{db: db, opts: opts, driver: driver}, nil
 }
 
-// migrateSchema reads PRAGMA user_version and runs any pending migrations up to
-// schemaVersion. Each migration runs in its own transaction that also advances
-// user_version, so a mid-migration crash leaves the database at the version
-// before the failed migration and Open retries from that point on the next start.
-func migrateSchema(db *sql.DB) error {
+// migrateSchema reads the backend-specific schema version and runs any pending
+// SQLite migrations up to schemaVersion. Each migration runs in its own
+// transaction that also advances the version, so a mid-migration crash leaves
+// the database at the version before the failed migration.
+func migrateSchema(db *sql.DB, driver string) error {
+	if driver == driverPostgres {
+		return migratePostgresSchema(db)
+	}
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
@@ -255,6 +345,64 @@ func migrateSchema(db *sql.DB) error {
 	return nil
 }
 
+func migratePostgresSchema(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("postgres migration begin: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS ledger_schema (version BIGINT NOT NULL)`); err != nil {
+		return fmt.Errorf("create schema version table: %w", err)
+	}
+	var version int
+	err = tx.QueryRow(`SELECT version FROM ledger_schema LIMIT 1`).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		version = 0
+	} else if err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version > schemaVersion {
+		return fmt.Errorf("schema version %d is newer than this binary (max supported: %d); upgrade revika-node", version, schemaVersion)
+	}
+	if version == 0 {
+		if _, err := tx.Exec(schemaPostgres); err != nil {
+			return fmt.Errorf("create base tables: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO ledger_schema (version) VALUES ($1)`, schemaVersion); err != nil {
+			return fmt.Errorf("set schema version: %w", err)
+		}
+	} else if version < schemaVersion {
+		return fmt.Errorf("postgres schema version %d is unsupported; recreate or migrate the database", version)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("postgres migration commit: %w", err)
+	}
+	return nil
+}
+
+// bindPostgres rewrites database/sql '?' placeholders into postgres' $N form.
+// It rewrites every '?', so ledger queries must not embed one in a string literal.
+func bindPostgres(query string) string {
+	var out strings.Builder
+	argument := 1
+	for _, character := range query {
+		if character == '?' {
+			fmt.Fprintf(&out, "$%d", argument)
+			argument++
+			continue
+		}
+		out.WriteRune(character)
+	}
+	return out.String()
+}
+
+func (l *Ledger) bind(query string) string {
+	if l.driver == driverPostgres {
+		return bindPostgres(query)
+	}
+	return query
+}
+
 // Close closes the underlying database.
 func (l *Ledger) Close() error { return l.db.Close() }
 
@@ -282,8 +430,8 @@ func (l *Ledger) AddOwner(id store.ShardID, owner []byte, size int64, now time.T
 
 	// Already an owner? Renew the lease and return without charging again.
 	var existing int
-	if err := tx.QueryRow(`SELECT 1 FROM owners WHERE shard_id=? AND owner=?`, id[:], owner).Scan(&existing); err == nil {
-		if _, err := tx.Exec(`UPDATE owners SET put_at=?, expiry=? WHERE shard_id=? AND owner=?`,
+	if err := tx.QueryRow(l.bind(`SELECT 1 FROM owners WHERE shard_id=? AND owner=?`), id[:], owner).Scan(&existing); err == nil {
+		if _, err := tx.Exec(l.bind(`UPDATE owners SET put_at=?, expiry=? WHERE shard_id=? AND owner=?`),
 			now.Unix(), expiry, id[:], owner); err != nil {
 			return false, err
 		}
@@ -302,7 +450,7 @@ func (l *Ledger) AddOwner(id store.ShardID, owner []byte, size int64, now time.T
 			used      int64
 			firstSeen int64
 		)
-		err := tx.QueryRow(`SELECT bytes_used, first_seen FROM accounts WHERE owner=?`, owner).Scan(&used, &firstSeen)
+		err := tx.QueryRow(l.bind(`SELECT bytes_used, first_seen FROM accounts WHERE owner=?`), owner).Scan(&used, &firstSeen)
 		if errors.Is(err, sql.ErrNoRows) {
 			// Brand-new owner: no account yet. first_seen is set to now on insert
 			// below; the used==0 path admits this first shard unconditionally.
@@ -316,17 +464,21 @@ func (l *Ledger) AddOwner(id store.ShardID, owner []byte, size int64, now time.T
 	}
 
 	// Ensure the shard row exists (first owner records its size).
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO shards (id, size, created) VALUES (?, ?, ?)`,
+	if _, err := tx.Exec(l.bind(`INSERT INTO shards (id, size, created) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING`),
 		id[:], size, now.Unix()); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`INSERT INTO owners (shard_id, owner, put_at, expiry) VALUES (?, ?, ?, ?)`,
+	if _, err := tx.Exec(l.bind(`INSERT INTO owners (shard_id, owner, put_at, expiry) VALUES (?, ?, ?, ?)`),
 		id[:], owner, now.Unix(), expiry); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`
+	// Postgres requires the target column be table-qualified in DO UPDATE SET,
+	// otherwise it is ambiguous with excluded; SQLite accepts the same form.
+	if _, err := tx.Exec(l.bind(`
 		INSERT INTO accounts (owner, bytes_used, shard_count, first_seen) VALUES (?, ?, 1, ?)
-		ON CONFLICT(owner) DO UPDATE SET bytes_used = bytes_used + excluded.bytes_used, shard_count = shard_count + 1`,
+		ON CONFLICT(owner) DO UPDATE SET
+			bytes_used  = accounts.bytes_used + excluded.bytes_used,
+			shard_count = accounts.shard_count + 1`),
 		owner, size, now.Unix()); err != nil {
 		return false, err
 	}
@@ -368,7 +520,7 @@ func (l *Ledger) RenewLease(id store.ShardID, owner []byte, now time.Time) error
 	}
 	expiry := now.Add(l.opts.LeaseTTL).Unix()
 	res, err := l.db.Exec(
-		`UPDATE owners SET put_at=?, expiry=? WHERE shard_id=? AND owner=?`,
+		l.bind(`UPDATE owners SET put_at=?, expiry=? WHERE shard_id=? AND owner=?`),
 		now.Unix(), expiry, id[:], owner,
 	)
 	if err != nil {
@@ -392,7 +544,7 @@ func (l *Ledger) RemoveOwner(id store.ShardID, owner []byte) (remaining int, err
 	defer tx.Rollback()
 
 	var size int64
-	err = tx.QueryRow(`SELECT s.size FROM owners o JOIN shards s ON s.id=o.shard_id WHERE o.shard_id=? AND o.owner=?`,
+	err = tx.QueryRow(l.bind(`SELECT s.size FROM owners o JOIN shards s ON s.id=o.shard_id WHERE o.shard_id=? AND o.owner=?`),
 		id[:], owner).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrUnauthorized
@@ -400,13 +552,13 @@ func (l *Ledger) RemoveOwner(id store.ShardID, owner []byte) (remaining int, err
 		return 0, err
 	}
 
-	if _, err := tx.Exec(`DELETE FROM owners WHERE shard_id=? AND owner=?`, id[:], owner); err != nil {
+	if _, err := tx.Exec(l.bind(`DELETE FROM owners WHERE shard_id=? AND owner=?`), id[:], owner); err != nil {
 		return 0, err
 	}
-	if err := chargeDown(tx, owner, size); err != nil {
+	if err := chargeDown(tx, owner, size, l.bind); err != nil {
 		return 0, err
 	}
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM owners WHERE shard_id=?`, id[:]).Scan(&remaining); err != nil {
+	if err := tx.QueryRow(l.bind(`SELECT COUNT(*) FROM owners WHERE shard_id=?`), id[:]).Scan(&remaining); err != nil {
 		return 0, err
 	}
 	return remaining, tx.Commit()
@@ -422,7 +574,7 @@ func (l *Ledger) DropRecord(id store.ShardID) error {
 		return err
 	}
 	defer tx.Rollback()
-	dropped, err := dropRecordTx(tx, id)
+	dropped, err := dropRecordTx(tx, id, l.bind)
 	if err != nil || !dropped {
 		return err
 	}
@@ -446,10 +598,10 @@ func (l *Ledger) CollectRecord(id store.ShardID, now time.Time, expireLeases boo
 
 	var live int
 	if expireLeases {
-		err = tx.QueryRow(`SELECT COUNT(*) FROM owners WHERE shard_id=? AND (expiry = 0 OR expiry >= ?)`,
+		err = tx.QueryRow(l.bind(`SELECT COUNT(*) FROM owners WHERE shard_id=? AND (expiry = 0 OR expiry >= ?)`),
 			id[:], now.Unix()).Scan(&live)
 	} else {
-		err = tx.QueryRow(`SELECT COUNT(*) FROM owners WHERE shard_id=?`, id[:]).Scan(&live)
+		err = tx.QueryRow(l.bind(`SELECT COUNT(*) FROM owners WHERE shard_id=?`), id[:]).Scan(&live)
 	}
 	if err != nil {
 		return false, err
@@ -457,7 +609,7 @@ func (l *Ledger) CollectRecord(id store.ShardID, now time.Time, expireLeases boo
 	if live > 0 {
 		return false, nil // re-claimed since the snapshot; keep it
 	}
-	dropped, err := dropRecordTx(tx, id)
+	dropped, err := dropRecordTx(tx, id, l.bind)
 	if err != nil || !dropped {
 		return false, err
 	}
@@ -467,9 +619,9 @@ func (l *Ledger) CollectRecord(id store.ShardID, now time.Time, expireLeases boo
 // dropRecordTx removes id's shard row and any owner rows within tx, crediting
 // each owner's account. Returns false (no error) if the shard row was already
 // gone. The caller commits.
-func dropRecordTx(tx *sql.Tx, id store.ShardID) (bool, error) {
+func dropRecordTx(tx *sql.Tx, id store.ShardID, bind func(string) string) (bool, error) {
 	var size int64
-	err := tx.QueryRow(`SELECT size FROM shards WHERE id=?`, id[:]).Scan(&size)
+	err := tx.QueryRow(bind(`SELECT size FROM shards WHERE id=?`), id[:]).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil // already gone
 	} else if err != nil {
@@ -477,7 +629,7 @@ func dropRecordTx(tx *sql.Tx, id store.ShardID) (bool, error) {
 	}
 
 	// Credit back every remaining owner before removing their rows.
-	rows, err := tx.Query(`SELECT owner FROM owners WHERE shard_id=?`, id[:])
+	rows, err := tx.Query(bind(`SELECT owner FROM owners WHERE shard_id=?`), id[:])
 	if err != nil {
 		return false, err
 	}
@@ -496,14 +648,14 @@ func dropRecordTx(tx *sql.Tx, id store.ShardID) (bool, error) {
 	}
 	rows.Close()
 	for _, o := range owners {
-		if err := chargeDown(tx, o, size); err != nil {
+		if err := chargeDown(tx, o, size, bind); err != nil {
 			return false, err
 		}
 	}
-	if _, err := tx.Exec(`DELETE FROM owners WHERE shard_id=?`, id[:]); err != nil {
+	if _, err := tx.Exec(bind(`DELETE FROM owners WHERE shard_id=?`), id[:]); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`DELETE FROM shards WHERE id=?`, id[:]); err != nil {
+	if _, err := tx.Exec(bind(`DELETE FROM shards WHERE id=?`), id[:]); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -511,12 +663,12 @@ func dropRecordTx(tx *sql.Tx, id store.ShardID) (bool, error) {
 
 // chargeDown debits an owner's account by size (one shard). It removes the
 // account row once it reaches zero so empty owners don't accumulate.
-func chargeDown(tx *sql.Tx, owner []byte, size int64) error {
-	if _, err := tx.Exec(`UPDATE accounts SET bytes_used = bytes_used - ?, shard_count = shard_count - 1 WHERE owner=?`,
+func chargeDown(tx *sql.Tx, owner []byte, size int64, bind func(string) string) error {
+	if _, err := tx.Exec(bind(`UPDATE accounts SET bytes_used = bytes_used - ?, shard_count = shard_count - 1 WHERE owner=?`),
 		size, owner); err != nil {
 		return err
 	}
-	_, err := tx.Exec(`DELETE FROM accounts WHERE owner=? AND shard_count <= 0`, owner)
+	_, err := tx.Exec(bind(`DELETE FROM accounts WHERE owner=? AND shard_count <= 0`), owner)
 	return err
 }
 
@@ -535,7 +687,7 @@ func (l *Ledger) Collectible(now time.Time, expireLeases bool) ([]store.ShardID,
 	} else {
 		q = `SELECT id FROM shards WHERE id NOT IN (SELECT shard_id FROM owners)`
 	}
-	rows, err := l.db.Query(q, args...)
+	rows, err := l.db.Query(l.bind(q), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +697,7 @@ func (l *Ledger) Collectible(now time.Time, expireLeases bool) ([]store.ShardID,
 
 // Account reports an owner's current usage.
 func (l *Ledger) Account(owner []byte) (bytesUsed int64, shardCount int, err error) {
-	err = l.db.QueryRow(`SELECT bytes_used, shard_count FROM accounts WHERE owner=?`, owner).
+	err = l.db.QueryRow(l.bind(`SELECT bytes_used, shard_count FROM accounts WHERE owner=?`), owner).
 		Scan(&bytesUsed, &shardCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, nil
@@ -652,13 +804,13 @@ func (l *Ledger) Entries(f LedgerFilter) (EntriesResult, error) {
 		limit = DefaultEntryLimit
 	}
 	offset := max(f.Offset, 0)
-	where, args := ledgerFilterClause(f)
+	where, args := ledgerFilterClause(f, l.driver)
 
 	res := EntriesResult{Limit: limit, Offset: offset}
 	// Total matching rows (for pagination), independent of the page window. The
 	// WHERE only touches `shards s` and correlated subqueries, so it is valid here
 	// without the stripe join.
-	if err := l.db.QueryRow(`SELECT COUNT(*) FROM shards s`+where, args...).Scan(&res.Total); err != nil {
+	if err := l.db.QueryRow(l.bind(`SELECT COUNT(*) FROM shards s`+where), args...).Scan(&res.Total); err != nil {
 		return EntriesResult{}, err
 	}
 
@@ -668,7 +820,7 @@ func (l *Ledger) Entries(f LedgerFilter) (EntriesResult, error) {
 	      FROM shards s
 	      LEFT JOIN stripes st ON st.shard_id = s.id` + where +
 		` ORDER BY s.created DESC, s.id LIMIT ? OFFSET ?`
-	rows, err := l.db.Query(q, append(append([]any{}, args...), limit, offset)...)
+	rows, err := l.db.Query(l.bind(q), append(append([]any{}, args...), limit, offset)...)
 	if err != nil {
 		return EntriesResult{}, err
 	}
@@ -702,11 +854,15 @@ func (l *Ledger) Entries(f LedgerFilter) (EntriesResult, error) {
 // non-empty) and its bound arguments for a LedgerFilter. The shard prefix matches
 // against SQLite's uppercase hex() of the id; the owner is an exact-key membership
 // test via a correlated EXISTS.
-func ledgerFilterClause(f LedgerFilter) (string, []any) {
+func ledgerFilterClause(f LedgerFilter, driver string) (string, []any) {
 	var conds []string
 	var args []any
 	if p := strings.TrimSpace(f.ShardHexPrefix); p != "" {
-		conds = append(conds, `hex(s.id) LIKE ? ESCAPE '\'`)
+		hexExpression := `hex(s.id)`
+		if driver == driverPostgres {
+			hexExpression = `UPPER(encode(s.id, 'hex'))`
+		}
+		conds = append(conds, hexExpression+` LIKE ? ESCAPE '\'`)
 		args = append(args, escapeLike(strings.ToUpper(p))+"%")
 	}
 	if len(f.Owner) > 0 {
@@ -750,7 +906,8 @@ func (l *Ledger) PutStripe(id store.ShardID, k, m int, siblings []store.ShardID,
 	for _, s := range siblings {
 		blob = append(blob, s[:]...)
 	}
-	_, err := l.db.Exec(`INSERT OR REPLACE INTO stripes (shard_id, k, m, siblings, grant) VALUES (?, ?, ?, ?, ?)`,
+	_, err := l.db.Exec(l.bind(`INSERT INTO stripes (shard_id, k, m, siblings, "grant") VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(shard_id) DO UPDATE SET k = excluded.k, m = excluded.m, siblings = excluded.siblings, "grant" = excluded."grant"`),
 		id[:], k, m, blob, grant)
 	return err
 }
@@ -759,7 +916,7 @@ func (l *Ledger) PutStripe(id store.ShardID, k, m int, siblings []store.ShardID,
 // loop deduplicates by sibling set (several rows can describe the same stripe
 // when a node holds more than one of its shards).
 func (l *Ledger) Stripes() ([]StripeRow, error) {
-	rows, err := l.db.Query(`SELECT shard_id, k, m, siblings, grant FROM stripes`)
+	rows, err := l.db.Query(`SELECT shard_id, k, m, siblings, "grant" FROM stripes`)
 	if err != nil {
 		return nil, err
 	}
@@ -774,7 +931,7 @@ func (l *Ledger) Stripes() ([]StripeRow, error) {
 // repair grant on that row is exactly what authorizes moving the shard to another
 // node without the User's signing key. A limit <= 0 returns all such shards.
 func (l *Ledger) ColdShards(limit int) ([]StripeRow, error) {
-	q := `SELECT st.shard_id, st.k, st.m, st.siblings, st.grant
+	q := `SELECT st.shard_id, st.k, st.m, st.siblings, st."grant"
 	      FROM stripes st JOIN shards s ON s.id = st.shard_id
 	      ORDER BY s.created ASC, st.shard_id ASC`
 	var args []any
@@ -782,7 +939,7 @@ func (l *Ledger) ColdShards(limit int) ([]StripeRow, error) {
 		q += ` LIMIT ?`
 		args = append(args, limit)
 	}
-	rows, err := l.db.Query(q, args...)
+	rows, err := l.db.Query(l.bind(q), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -917,7 +1074,7 @@ func (l *Ledger) recomputeAccounts(ctx context.Context) error {
 // the same nonce is a no-op).
 func (l *Ledger) RevokeGrant(nonce, owner []byte) error {
 	_, err := l.db.Exec(
-		`INSERT OR IGNORE INTO revoked_grants (nonce, owner, revoked_at) VALUES (?, ?, ?)`,
+		l.bind(`INSERT INTO revoked_grants (nonce, owner, revoked_at) VALUES (?, ?, ?) ON CONFLICT(nonce) DO NOTHING`),
 		nonce, owner, time.Now().Unix(),
 	)
 	return err
@@ -927,7 +1084,7 @@ func (l *Ledger) RevokeGrant(nonce, owner []byte) error {
 // when the nonce is unknown (not revoked).
 func (l *Ledger) IsGrantRevoked(nonce []byte) (bool, error) {
 	var count int
-	err := l.db.QueryRow(`SELECT COUNT(*) FROM revoked_grants WHERE nonce=?`, nonce).Scan(&count)
+	err := l.db.QueryRow(l.bind(`SELECT COUNT(*) FROM revoked_grants WHERE nonce=?`), nonce).Scan(&count)
 	if err != nil {
 		return false, err
 	}
