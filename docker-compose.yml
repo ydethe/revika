@@ -77,7 +77,11 @@
 # the git-ignored dev seed key and prints the matching multiaddr:
 #   export SEED_ADDR="$(./deploy/gen-seed-key.sh)"
 # Peers reference it as `*seed_addr`.
-x-seed-addr: &seed_addr '${SEED_ADDR:?SEED_ADDR must be set — run: export SEED_ADDR="$$(./deploy/gen-seed-key.sh)"}'
+# Compose interpolates the WHOLE file whatever profile is selected, so this must
+# not be a required (:?) variable — that would break docker compose when running
+# the postgres-e2e profile. It falls back to a placeholder that fails only if
+# the regular default profile is actually started without setting SEED_ADDR.
+x-seed-addr: &seed_addr '${SEED_ADDR:-/dns4/seed/tcp/4001/p2p/set-SEED_ADDR-with-deploy-gen-seed-key-sh}'
 # PostgreSQL profile seed address. Compose interpolates the WHOLE file whatever
 # profile is selected, so this must not be a required (:?) variable — that would
 # break plain `docker compose up` for everyone not running the postgres profile.
