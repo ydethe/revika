@@ -128,6 +128,7 @@ func run() error {
 		advertiseOn   = flag.Bool("advertise", true, "advertise this node as a storage provider on the DHT")
 		quota         = flag.Int64("quota", defaultQuotaBytes, "per-owner storage quota in bytes (default 90 GiB = 90% of a nominal 100 GiB node; explicit 0 = unlimited, logged as a warning). A non-zero quota also activates the Axis B age-graduated ramp")
 		leaseTTL      = flag.Duration("lease-ttl", 720*time.Hour, "lease lifetime granted on PUT (advisory unless -gc-expired-leases)")
+		ledgerJournal = flag.String("ledger-journal", "wal", "SQLite ledger journal mode: wal (default, best on local disk) or delete/truncate (rollback journal). WAL needs a shared-memory mapping a NETWORK filesystem cannot provide, so on an SMB/CIFS or NFS -data mount (e.g. an Azure Files volume) set this to delete, else the ledger fails to open with \"database is locked\" (SQLITE_BUSY)")
 		gcInterval    = flag.Duration("gc-interval", time.Hour, "how often the garbage collector runs")
 		gcExpired     = flag.Bool("gc-expired-leases", false, "also collect shards whose leases have all expired (off: own-until-delete)")
 		repairOn      = flag.Bool("repair", true, "run the repair loop: probe stripes this node holds and regenerate missing shards")
@@ -247,6 +248,7 @@ func run() error {
 		LeaseTTL:             *leaseTTL,
 		QuotaRamp:            *quotaRamp,
 		QuotaInitialFraction: *quotaInitial,
+		JournalMode:          *ledgerJournal,
 	})
 	if err != nil {
 		return fmt.Errorf("open ledger: %w", err)

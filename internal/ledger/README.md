@@ -28,9 +28,16 @@ a bare content-addressed blob store cannot:
 - DB path: `.revika/ledger/ledger.db` (pass `":memory:"` for an ephemeral test DB).
 - Backend: SQLite via the pure-Go, cgo-free `modernc.org/sqlite` driver, keeping
   revika's build cgo-free.
-- Opened WAL-mode with `busy_timeout` and `foreign_keys=on`; writes are serialised
-  through a single connection (`SetMaxOpenConns(1)`) so concurrent PUT/DELETE never
-  hit "database is locked".
+- Opened with `busy_timeout` and `foreign_keys=on`; writes are serialised through a
+  single connection (`SetMaxOpenConns(1)`) so concurrent PUT/DELETE never hit
+  "database is locked".
+- Journal mode is selectable via `Options.JournalMode` (node flag `-ledger-journal`):
+  `wal` (default, best on a local disk) or `delete`/`truncate` (rollback journal). WAL
+  relies on a shared-memory (`-shm`) mapping that a **network filesystem cannot
+  provide**, so a ledger placed on an SMB/CIFS or NFS mount — e.g. an Azure Files
+  volume — must use `delete`, otherwise even a single opener fails at open with
+  `database is locked` (SQLITE_BUSY). The DB is also single-writer, so a node backed by
+  a shared mount must run exactly one replica.
 
 ## Schema / concepts
 

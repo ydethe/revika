@@ -21,6 +21,54 @@ func open(t *testing.T, opts Options) *Ledger {
 	return l
 }
 
+func TestResolveJournalMode(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"", "WAL", false},
+		{"wal", "WAL", false},
+		{"WAL", "WAL", false},
+		{"delete", "DELETE", false},
+		{"  Delete ", "DELETE", false},
+		{"truncate", "TRUNCATE", false},
+		{"memory", "", true},
+		{"garbage", "", true},
+	} {
+		got, err := resolveJournalMode(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("resolveJournalMode(%q) = %q, want error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("resolveJournalMode(%q) unexpected error: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("resolveJournalMode(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestOpenRollbackJournal proves the ledger opens and functions in the rollback
+// journal mode required on a network filesystem (Azure Files), not just WAL.
+func TestOpenRollbackJournal(t *testing.T) {
+	l := open(t, Options{JournalMode: "delete"})
+	var mode string
+	if err := l.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if mode != "delete" {
+		t.Fatalf("journal_mode = %q, want delete", mode)
+	}
+	// An unsupported mode must fail fast rather than silently falling back.
+	if _, err := Open(filepath.Join(t.TempDir(), "bad.db"), Options{JournalMode: "nope"}); err == nil {
+		t.Fatal("Open with invalid journal mode: want error, got nil")
+	}
+}
+
 func id(b byte) store.ShardID {
 	var s store.ShardID
 	for i := range s {

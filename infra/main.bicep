@@ -27,6 +27,10 @@ var baseArgs = [
   '-metrics=:9096'
   '-quota=1073741824'
   '-geoip=ip-api'
+  // The /data volume is an Azure Files (SMB) mount. SQLite WAL mode needs a
+  // shared-memory mapping a network filesystem cannot provide, so the ledger
+  // must use a rollback journal here, else it fails to open with SQLITE_BUSY.
+  '-ledger-journal=delete'
 ]
 var publicIpArgs = empty(publicIp) ? [] : [ '-public-ip=${publicIp}' ]
 var bootstrapArgs = empty(seedAddr) ? [] : [ '-bootstrap', seedAddr ]

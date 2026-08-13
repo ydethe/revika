@@ -70,6 +70,15 @@ type Options struct {
 	// the wire's max shard size) so it can record its first_seen timestamp and begin
 	// accruing standing.
 	QuotaInitialFraction float64
+
+	// JournalMode selects the SQLite rollback/WAL journalling mode. Empty defaults
+	// to "wal", which is best on a local filesystem. WAL relies on a shared-memory
+	// (-shm) mapping that a *network* filesystem cannot provide, so a ledger placed
+	// on an SMB/CIFS or NFS mount (e.g. an Azure Files volume) must use a rollback
+	// journal instead — set this to "delete" or "truncate" there, otherwise even a
+	// single opener fails with "database is locked" (SQLITE_BUSY). Accepted values:
+	// "wal", "delete", "truncate" (case-insensitive).
+	JournalMode string
 }
 
 // Ledger is a SQLite-backed ownership/lease/quota index. It is safe for
@@ -165,10 +174,31 @@ var ledgerMigrations = []func(*sql.Tx) error{
 	},
 }
 
+// resolveJournalMode validates a requested SQLite journal mode and returns the
+// pragma token to embed in the DSN. An empty request defaults to WAL (best for a
+// local filesystem). "delete"/"truncate" are the rollback-journal modes required
+// on a network filesystem where WAL's shared-memory mapping is unavailable.
+func resolveJournalMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "wal":
+		return "WAL", nil
+	case "delete":
+		return "DELETE", nil
+	case "truncate":
+		return "TRUNCATE", nil
+	default:
+		return "", fmt.Errorf("unsupported journal mode %q (want wal, delete, or truncate)", mode)
+	}
+}
+
 // Open opens (creating if needed) a ledger database at path. Pass ":memory:" for
 // an ephemeral in-memory ledger (tests).
 func Open(path string, opts Options) (*Ledger, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
+	journal, err := resolveJournalMode(opts.JournalMode)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: %w", err)
+	}
+	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(" + journal + ")&_pragma=foreign_keys(on)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: open %s: %w", path, err)
