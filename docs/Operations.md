@@ -44,6 +44,23 @@ This is a development-grade, trusted-operator deployment. The following are defe
 
 ## 2. First-time setup
 
+### Azure Container Apps deployment
+
+The Azure deployment uses an Azure Files NFS share mounted at `/data`. NFS is available
+only on premium SSD `FileStorage` accounts and requires network-level access rather than
+SMB credentials. The Bicep template creates the required custom VNet, delegated Container
+Apps subnet, NSG, and storage network rule. Confirm that the target Azure region supports
+NFS Azure Files before provisioning.
+
+```bash
+azd up
+```
+
+The Container Apps environment remains externally reachable for the node's libp2p ingress,
+while the NFS traffic stays on the provisioned VNet. The share is provisioned at 100 GiB,
+the minimum for premium NFS classic shares, and the node is pinned to one replica because
+its SQLite ledger is single-writer.
+
 ### Prerequisites
 
 - Linux host (the node is Linux-only today; `diskUsage` and `fsmeta` return

@@ -8,6 +8,24 @@
 # Set the deployment inputs before `azd up`:
 #   azd env set SEED_ADDR <your-seed-multiaddr>   # DHT bootstrap peer (required)
 #   azd env set PUBLIC_IP <node-public-ip>        # advertised public IP (optional)
+#
+# Azure deployment uses an NFS Azure Files /data mount. NFS requires the custom VNet
+# provisioned by infra/main.bicep and a premium FileStorage account.
+#
+# REDEPLOY gotcha (SQLITE_BUSY): the ledger is single-writer SQLite on the shared
+# Azure Files NFS /data mount. Single-revision mode still does a ROLLING update, so a
+# redeploy briefly runs the old and new revisions at once; the new node's startup
+# migration then can't get the ledger's exclusive lock and dies with
+# "open ledger: ... commit: database is locked (SQLITE_BUSY)", crash-looping while
+# the old revision keeps the lock. Free the ledger before the new revision boots:
+#   RG=<resource-group>; APP=<container-app-name>
+#   OLD=$(az containerapp revision list -n "$APP" -g "$RG" \
+#          --query "[?properties.active].name" -o tsv)
+#   az containerapp revision deactivate -n "$APP" -g "$RG" --revision "$OLD"
+#   # provision the new revision (azd up / azd provision), then:
+#   NEW=$(az containerapp revision list -n "$APP" -g "$RG" \
+#          --query "[?properties.active].name | [0]" -o tsv)
+#   az containerapp revision restart -n "$APP" -g "$RG" --revision "$NEW"
 name: revika-node
 metadata:
   template: revika-node@0.0.1
