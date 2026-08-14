@@ -45,6 +45,8 @@ var baseArgs = [
   // container's ephemeral disk holding only shard blobs and the libp2p identity.
   '-ledger-driver=postgres'
   '-ledger-dsn=${ledgerDsn}'
+  '-repair-interval=1h'
+  '-rebalance-interval=1h'
 ]
 var bootstrapArgs = empty(seedAddr) ? [] : [ '-bootstrap', seedAddr ]
 var containerArgs = concat(baseArgs, bootstrapArgs)
@@ -219,7 +221,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-11-02-preview' = {
       containers: [
         {
           name: 'node'
-          image: 'ghcr.io/ydethe/revika-node:0.5.10'
+          image: 'ghcr.io/ydethe/revika-node:0.5.11'
           args: containerArgs
         }
       ]
