@@ -18,6 +18,11 @@ type Locator interface {
     Locate(ctx context.Context, ip netip.Addr) (Location, bool)
 }
 
+// Optional capability for a backend that can discover the machine's public IP.
+type SelfLocator interface {
+  LocateSelf(ctx context.Context) (Location, bool)
+}
+
 type Location struct {
     Lat, Lon    float64
     City        string
@@ -28,6 +33,11 @@ type Location struct {
 
 `MetricsServer.SetGeolocator(Locator)` wires one in; leaving it nil (the default)
 disables geolocation and the dashboard renders peers without map markers.
+When the node has no geolocatable advertised address, `/admin` also uses the
+optional `SelfLocator` capability when the configured backend provides it. The
+IP API backend implements this by asking its service to infer the caller's
+public address, which is useful behind NAT; the offline MMDB backend does not
+discover public addresses.
 
 ## Two invariants, regardless of backend
 
@@ -52,6 +62,8 @@ disables geolocation and the dashboard renders peers without map markers.
   - `Endpoint` is overridable (tests point it at a local stub); a 4s per-request
     timeout plus the caller's context bound each lookup, and any error resolves to
     not-located (cached briefly) rather than an error.
+  - `LocateSelf` uses the endpoint without an IP suffix and caches the result with
+    the same success/failure TTLs as ordinary lookups.
 - **`MMDBLocator`** (implemented) — an offline MaxMind **GeoLite2/GeoIP2 City** database
   (`.mmdb`) read via the pure-Go `github.com/oschwald/maxminddb-golang/v2`. Built with
   `OpenMMDB(path)`; `Close()` it at shutdown. It makes **no network calls** and discloses

@@ -102,7 +102,21 @@ func (m *MetricsServer) selfGeo(ctx context.Context) NodeGeo {
 			chosen = addr
 		}
 	}
+	canDiscoverSelf := !geoip.IsGlobal(chosen)
 	m.placeIP(ctx, &ng, chosen)
+	if canDiscoverSelf && m.geo != nil {
+		if selfLocator, ok := m.geo.(geoip.SelfLocator); ok {
+			if loc, located := selfLocator.LocateSelf(ctx); located {
+				// The self endpoint found the public address, but does not expose it
+				// through the Locator contract. Keep the local address in Addrs and
+				// avoid presenting it as the address that was geolocated.
+				ng.IP = ""
+				ng.Scope = "global"
+				ng.Location = loc
+				ng.Located = true
+			}
+		}
+	}
 	return ng
 }
 
@@ -427,6 +441,21 @@ const adminHTML = `<!DOCTYPE html>
     border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02);
   }
   #map { height: 460px; width: 100%; background: #0b0f14; }
+	.self-map-icon {
+		align-items: center;
+		background: #4c9aff;
+		border: 2px solid #fff;
+		border-radius: 50%;
+		box-shadow: 0 1px 5px rgba(0,0,0,.55);
+		color: #fff;
+		display: flex;
+		font-size: 16px;
+		font-weight: 700;
+		height: 24px;
+		justify-content: center;
+		line-height: 20px;
+		width: 24px;
+	}
   .list-wrap { max-height: 460px; overflow: auto; }
   .list-wrap.short { max-height: 300px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -660,9 +689,9 @@ const adminHTML = `<!DOCTYPE html>
     var bounds = [];
     located.forEach(function (n) {
       var lat = n.location.lat, lon = n.location.lon;
-      // This node draws as a filled accent circle to stand apart from the peer pins.
+			// This node uses a dedicated icon to stand apart from the peer pins.
       var m = n.self
-        ? L.circleMarker([lat, lon], { radius: 8, color: '#4c9aff', fillColor: '#4c9aff', fillOpacity: .9, weight: 2 }).addTo(map)
+				? L.marker([lat, lon], { icon: L.divIcon({ className: 'self-map-icon', html: '★', iconSize: [28, 28], iconAnchor: [14, 14] }) }).addTo(map)
         : L.marker([lat, lon]).addTo(map);
       // Build the popup as DOM so peer-supplied text can never inject HTML.
       var box = document.createElement('div');

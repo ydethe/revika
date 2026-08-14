@@ -47,6 +47,14 @@ type Locator interface {
 	Locate(ctx context.Context, ip netip.Addr) (Location, bool)
 }
 
+// SelfLocator is an optional extension for backends that can determine the
+// public address of the machine making the request. It is intentionally
+// separate from Locator because an offline database cannot discover a NAT's
+// public address.
+type SelfLocator interface {
+	LocateSelf(ctx context.Context) (Location, bool)
+}
+
 // IsGlobal reports whether ip is a publicly-routable address worth (and safe to)
 // geolocate. It excludes loopback, private (RFC 1918 / ULA), link-local,
 // multicast and unspecified addresses — the ones a peer is reached over on a LAN,
@@ -90,9 +98,11 @@ type IPAPILocator struct {
 	// overridden in tests to point at a local stub. Not mutated after construction.
 	Endpoint string
 
-	client *http.Client
-	mu     sync.Mutex
-	cache  map[netip.Addr]cacheEntry
+	client  *http.Client
+	mu      sync.Mutex
+	cache   map[netip.Addr]cacheEntry
+	self    cacheEntry
+	hasSelf bool
 }
 
 type cacheEntry struct {
@@ -128,6 +138,33 @@ func (l *IPAPILocator) Locate(ctx context.Context, ip netip.Addr) (Location, boo
 	return loc, ok
 }
 
+// LocateSelf asks ip-api to locate the public address of this machine. The
+// endpoint infers the address from the request, which makes this useful when
+// the node listens on a private address behind NAT. The result is cached using
+// the same success and failure TTLs as ordinary lookups.
+func (l *IPAPILocator) LocateSelf(ctx context.Context) (Location, bool) {
+	l.mu.Lock()
+	if l.hasSelf {
+		e := l.self
+		ttl := ipAPISuccessTTL
+		if !e.ok {
+			ttl = ipAPIFailureTTL
+		}
+		if time.Since(e.at) < ttl {
+			l.mu.Unlock()
+			return e.loc, e.ok
+		}
+	}
+	l.mu.Unlock()
+
+	loc, ok := l.fetchURL(ctx, l.Endpoint+"?fields=status,country,countryCode,city,lat,lon")
+	l.mu.Lock()
+	l.self = cacheEntry{loc: loc, ok: ok, at: time.Now()}
+	l.hasSelf = true
+	l.mu.Unlock()
+	return loc, ok
+}
+
 // cached returns a still-valid cache entry for ip. fresh is false when there is
 // no entry or it has aged past the TTL for its outcome.
 func (l *IPAPILocator) cached(ip netip.Addr) (loc Location, ok, fresh bool) {
@@ -151,6 +188,10 @@ func (l *IPAPILocator) cached(ip netip.Addr) (loc Location, ok, fresh bool) {
 // dashboard shows, keeping the response small.
 func (l *IPAPILocator) fetch(ctx context.Context, ip netip.Addr) (Location, bool) {
 	url := l.Endpoint + ip.String() + "?fields=status,country,countryCode,city,lat,lon"
+	return l.fetchURL(ctx, url)
+}
+
+func (l *IPAPILocator) fetchURL(ctx context.Context, url string) (Location, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return Location{}, false

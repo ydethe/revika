@@ -571,7 +571,8 @@ tests. Endpoints:
     accounting table links straight to that owner's filtered view.
   - **Nodes + map** — a detailed peer table (peer ID, connection direction, chosen IP +
     scope pill, estimated location, remote multiaddrs) beside a Leaflet/OpenStreetMap map
-    with a marker per located peer. `nodeGeos` gathers the view from
+    with a standard marker per located peer and a distinct star marker for this
+    node. `nodeGeos` gathers the peer view from
     `Network().Peers()`/`ConnsToPeer`, preferring a global remote IP over a private one
     for placement and classifying it (`global`/`local`/`unknown`). Positions come from an
     optional [`geoip.Locator`](../geoip/README.md) wired by `SetGeolocator` (nil = off,

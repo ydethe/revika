@@ -117,9 +117,9 @@ func (m *MetricsServer) SetProtocols(ps []protocol.ID) {
 }
 
 // SetGeolocator attaches the position estimator the /admin dashboard uses to
-// place connected peers on its map. Optional; left unset (nil), the map renders
-// with no markers and the list still shows every peer — positions simply read
-// "unknown". Call before Serve.
+// place connected peers and, when the backend implements geoip.SelfLocator, the
+// serving node itself on its map. Optional; left unset (nil), the map renders
+// with no markers and the list still shows every node. Call before Serve.
 func (m *MetricsServer) SetGeolocator(g geoip.Locator) { m.geo = g }
 
 // SetBlocklister attaches the live connection blocklist so the /admin dashboard

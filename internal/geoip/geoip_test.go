@@ -91,6 +91,25 @@ func TestIPAPILocatorFetchAndCache(t *testing.T) {
 	}
 }
 
+func TestIPAPILocatorLocateSelfAndCache(t *testing.T) {
+	l, hits := stubIPAPI(t)
+
+	loc, ok := l.LocateSelf(context.Background())
+	if !ok {
+		t.Fatal("LocateSelf = not ok, want located")
+	}
+	if loc.City != "Mountain View" || loc.CountryCode != "US" {
+		t.Fatalf("self location = %+v, want Mountain View/US", loc)
+	}
+
+	if _, ok := l.LocateSelf(context.Background()); !ok {
+		t.Fatal("second LocateSelf = not ok")
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("self upstream hit %d times, want 1 (second call should be cached)", n)
+	}
+}
+
 func TestIPAPILocatorFailure(t *testing.T) {
 	// A server reporting a lookup failure resolves to not-located, not an error.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

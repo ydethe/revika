@@ -30,6 +30,12 @@ func (f fakeLocator) Locate(_ context.Context, ip netip.Addr) (geoip.Location, b
 	return f.loc, true
 }
 
+type fakeSelfLocator struct{ fakeLocator }
+
+func (f fakeSelfLocator) LocateSelf(_ context.Context) (geoip.Location, bool) {
+	return f.loc, true
+}
+
 // mustNodesJSON marshals nodes the way the handler does, for template tests.
 func mustNodesJSON(t *testing.T, nodes []NodeGeo) template.JS {
 	t.Helper()
@@ -68,6 +74,7 @@ func TestAdminPageNoPeers(t *testing.T) {
 // apart from its peers, even when no peer is connected.
 func TestAdminPageSelf(t *testing.T) {
 	ms, _, ts := newMetricsFixture(t)
+	ms.SetGeolocator(fakeSelfLocator{fakeLocator{loc: geoip.Location{Lat: 1, Lon: 2, City: "Self City"}}})
 	code, body := getBody(t, ts.URL+"/admin")
 	if code != 200 {
 		t.Fatalf("/admin = %d, want 200", code)
@@ -81,6 +88,9 @@ func TestAdminPageSelf(t *testing.T) {
 	// The self row's JSON must carry the self flag so the map can mark it too.
 	if !strings.Contains(body, `"self":true`) {
 		t.Errorf("/admin map JSON missing the self flag")
+	}
+	if !strings.Contains(body, `"located":true`) {
+		t.Errorf("/admin map JSON missing the self location")
 	}
 	// The self view renders the /status snapshot: the PoW admission line must show
 	// the fixture's difficulty (12) and the served protocols must appear.
@@ -292,6 +302,7 @@ func TestAdminTemplateRender(t *testing.T) {
 		"203.0.113.7",
 		`"located":true`, // the map JSON carries the located flag
 		`"lat":48.85`,
+		"self-map-icon",       // the map has a dedicated self-node icon
 		"/revika/shard/1.2.0", // self view lists the served protocol
 		"4.0 KiB",             // human-readable bytes-used in the self view
 		"Self · defenses",     // the local abuse-control panel
