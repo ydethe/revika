@@ -1,0 +1,39 @@
+# All new node that want to join the cluster shall use this file with the seed
+# given as env var
+
+services:
+  node:
+    restart: unless-stopped
+    image: revika-node:latest
+    build:
+      context: .
+      target: node
+    volumes:
+      - node-data:/data
+    user: "65532:65532"
+    ports:
+      - "${REVIKA_PORT:-4001}:${REVIKA_PORT:-4001}"
+    command:
+      - -data=/data
+      - -listen=/ip4/0.0.0.0/tcp/${REVIKA_PORT:-4001}
+      - -advertise=true
+      - -capacity=$CAPACITY
+      - -log-format=json
+      - -log-level=$LOGLEVEL
+      - -metrics=:9096
+      - -quota=$STORAGE_QUOTA
+      - -geoip=ip-api 
+      - -bootstrap
+      - $SEED_ADDR
+      - -repair-interval=$REPAIR_INTERVAL
+      - -rebalance-interval=$REBALANCE_INTERVAL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9096/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  node-data:
+  
