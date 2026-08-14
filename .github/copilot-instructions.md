@@ -134,7 +134,7 @@ go test ./...             # run all tests (use -race)
 go test ./path/to/pkg     # test a single package
 go test -run TestName ./path/to/pkg
 go vet ./...
-go run ./cmd/revika-node  # Node daemon (-data -listen -public-ip -dht -bootstrap
+go run ./cmd/revika-node  # Node daemon (-data -listen -dht -bootstrap
                           #   -advertise -quota -lease-ttl -ledger-journal -gc-interval -gc-expired-leases
                           #   -repair -repair-interval -rebalance -rebalance-interval
                           #   -rebalance-threshold -capacity -metrics -blocklist

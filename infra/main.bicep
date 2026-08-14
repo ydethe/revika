@@ -10,7 +10,6 @@ param environmentName string
 param location string = resourceGroup().location
 
 param seedAddr string = ''
-param publicIp string = ''
 
 @description('Administrator login of the PostgreSQL flexible server holding the node ledger.')
 param postgresAdminUser string = 'revika'
@@ -30,8 +29,8 @@ var postgresFqdn = '${postgresServerName}.postgres.database.azure.com'
 // sslmode=require: Azure PostgreSQL refuses unencrypted connections.
 var ledgerDsn = 'postgres://${postgresAdminUser}:${uriComponent(postgresAdminPassword)}@${postgresFqdn}:5432/${postgresDatabaseName}?sslmode=require'
 
-// Node command line. Optional flags (public IP, bootstrap seed) are only added
-// when a value is supplied, so an unset azd env var never injects a broken flag.
+// Node command line. The node discovers its public IP at startup; only the
+// optional bootstrap seed is added when a value is supplied.
 var baseArgs = [
   '-data=/data'
   '-listen=/ip4/0.0.0.0/tcp/4001'
@@ -47,9 +46,8 @@ var baseArgs = [
   '-ledger-driver=postgres'
   '-ledger-dsn=${ledgerDsn}'
 ]
-var publicIpArgs = empty(publicIp) ? [] : [ '-public-ip=${publicIp}' ]
 var bootstrapArgs = empty(seedAddr) ? [] : [ '-bootstrap', seedAddr ]
-var containerArgs = concat(baseArgs, publicIpArgs, bootstrapArgs)
+var containerArgs = concat(baseArgs, bootstrapArgs)
 
 // 1. Network: one subnet delegated to Container Apps, one delegated to the
 // PostgreSQL flexible server so the ledger is reachable privately only.

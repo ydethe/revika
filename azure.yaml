@@ -7,7 +7,7 @@
 #
 # Set the deployment inputs before `azd up`:
 #   azd env set SEED_ADDR <your-seed-multiaddr>   # DHT bootstrap peer (required)
-#   azd env set PUBLIC_IP <node-public-ip>        # advertised public IP (optional)
+# The node discovers its public IP at startup through an external lookup service.
 #
 # The node's ownership/lease/quota ledger lives in an Azure Database for
 # PostgreSQL flexible server (`-ledger-driver=postgres -ledger-dsn=...`), reachable

@@ -163,7 +163,6 @@ func run() error {
 		quotaInitial   = flag.Float64("quota-initial", 0.05, "Axis B: fraction (0,1) of -quota a brand-new owner may use at age zero, ramping linearly to full over -quota-ramp (ignored when -quota-ramp is 0 or -quota is 0)")
 		putConcurrency = flag.Int("put-concurrency", 32, "max concurrent in-flight PUT operations (each may allocate up to 64 MiB for the shard buffer); over-cap PUTs are rejected with statusRateLimited so the client can retry. 0 = no application-level cap (bounded only by the libp2p resource manager). LOCAL defence, never inherited")
 		powDiff        = flag.Uint("pow-difficulty", 0, "require owner identities to be self-certifying: proof-of-work difficulty in leading zero bits admitted on PUT (0 = disabled). The puzzle is always Argon2id; clients must keygen with difficulty >= this")
-		publicIP       = flag.String("public-ip", "", "externally reachable public IP (IPv4/IPv6) to advertise for a NAT'd node; each listen address gains a public variant (assumes the public port equals the bound port)")
 		listen         multiFlag
 		bootstrap      multiFlag
 	)
@@ -325,10 +324,21 @@ func run() error {
 		Log:         log,
 	}
 
+	publicIP := ""
+	lookupCtx, cancelLookup := context.WithTimeout(context.Background(), 6*time.Second)
+	publicIP, lookupErr := net.DiscoverPublicIP(lookupCtx)
+	cancelLookup()
+	if lookupErr != nil {
+		log.Warn("public IP discovery failed; using observed addresses", "error", lookupErr)
+		publicIP = ""
+	} else {
+		log.Info("public IP discovered", "ip", publicIP)
+	}
+
 	h, err := net.NewHost(net.HostConfig{
 		ListenAddrs:        listen,
 		IdentityPath:       filepath.Join(*dataDir, "keys", "node.key"),
-		PublicIP:           *publicIP,
+		PublicIP:           publicIP,
 		Defense:            defense,
 		EnableNATTraversal: true,
 		EnableRelayService: *relayService,

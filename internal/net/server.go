@@ -666,7 +666,7 @@ func (srv *Server) handleDelete(ctx context.Context, s network.Stream, peer any)
 	_ = writeByte(s, byte(statusOK))
 }
 
-func (srv *Server) handleRenew(ctx context.Context, s network.Stream, peer any) {
+func (srv *Server) handleRenew(_ context.Context, s network.Stream, peer any) {
 	id, err := readID(s)
 	if err != nil {
 		srv.log.Debug("shard renew: read id", "peer", peer, "err", err)
@@ -762,7 +762,7 @@ func (srv *Server) handleProbe(s network.Stream) {
 	srv.log.Debug("probe answered", "event", "probe", "peer", peer, "id", id)
 }
 
-func (srv *Server) handleRevokeGrant(ctx context.Context, s network.Stream, peer any) {
+func (srv *Server) handleRevokeGrant(_ context.Context, s network.Stream, peer any) {
 	// Read the 8-byte grant nonce the client wants to revoke.
 	var nonce [8]byte
 	if _, err := io.ReadFull(s, nonce[:]); err != nil {

@@ -65,8 +65,9 @@ overwrite an existing file. It backs the `revika-ctl nodekey -o <path>` command 
 the `deploy/gen-seed-key.sh` dev helper.
 
 **Public IP / NAT.** A node behind NAT only observes private/unspecified listen
-addresses, so WAN peers cannot dial it. Set `HostConfig.PublicIP` (the node's
-`-public-ip` flag) to the node's externally reachable IPv4/IPv6 address:
+addresses, so WAN peers cannot dial it. The node queries `https://api.ipify.org`
+at startup for its externally reachable IPv4/IPv6 address and passes it to
+`HostConfig.PublicIP` when available:
 `publicAddrsFactory` then installs a libp2p `AddrsFactory` that advertises, for
 every listen address, a public variant with the IP swapped for `PublicIP` and the
 transport/port preserved (listed first so peers prefer the routable address). This

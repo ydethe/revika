@@ -115,7 +115,6 @@ before it is up), mint the key ahead of time:
   -data      /var/lib/revika \
   -listen    /ip4/0.0.0.0/tcp/4001 \
   -listen    /ip4/0.0.0.0/udp/4001/quic-v1 \
-  -public-ip <your-public-ip> \            # omit if behind a NAT you won't traverse
   -metrics   :9096                         # exposes /healthz /readyz /status /metrics /admin
 ```
 
@@ -129,7 +128,7 @@ docker run -d --name revika-node \
   -p 4001:4001 -p 4001:4001/udp \
   -v revika-data:/data \
   revika-node \
-  -data /data -public-ip <your-public-ip>
+  -data /data
 ```
 
 ---
@@ -144,7 +143,6 @@ policy: admission PoW difficulty, repair/rebalance cadence.
 ./revika-node -data /var/lib/revika-seed \
   -listen /ip4/0.0.0.0/tcp/4001 \
   -listen /ip4/0.0.0.0/udp/4001/quic-v1 \
-  -public-ip <seed-public-ip> \
   -pow-difficulty 12 \
   -repair-interval 1h \
   -rebalance-interval 1h
@@ -153,7 +151,6 @@ policy: admission PoW difficulty, repair/rebalance cadence.
 ./revika-node -data /var/lib/revika-node2 \
   -listen /ip4/0.0.0.0/tcp/4002 \
   -listen /ip4/0.0.0.0/udp/4002/quic-v1 \
-  -public-ip <node2-public-ip> \
   -bootstrap /ip4/<seed-ip>/tcp/4001/p2p/<seed-peer-id>
 ```
 
@@ -188,7 +185,7 @@ takes precedence.
 |------|---------|-------------|
 | `-data` | `.revika` | Root directory for node state (shards, identity key, ledger) |
 | `-listen` | random TCP+QUIC | libp2p multiaddr to listen on (repeatable) |
-| `-public-ip` | — | External IP to advertise for NAT'd nodes |
+| automatic lookup | startup | Public IP is discovered via `https://api.ipify.org` and advertised when available |
 | `-metrics` | `:9096` | Address for the HTTP status/metrics server; empty to disable |
 | `-log-format` | `auto` | `auto` (text on a TTY, JSON otherwise), `text`, or `json` |
 | `-log-level` | `info` | `debug`, `info`, `warn`, `error` |

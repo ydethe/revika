@@ -11,9 +11,6 @@
     "seedAddr": {
       "value": "${SEED_ADDR}"
     },
-    "publicIp": {
-      "value": "${PUBLIC_IP}"
-    },
     "postgresAdminUser": {
       "value": "${POSTGRES_ADMIN_USER=revika}"
     },
