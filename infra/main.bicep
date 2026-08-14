@@ -202,15 +202,26 @@ resource containerApp 'Microsoft.App/containerApps@2023-11-02-preview' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
-        targetPort: 4001
-        transport: 'auto'
+        // The primary HTTP ingress receives a managed TLS certificate and
+        // redirects HTTP requests to its HTTPS FQDN.
+        targetPort: 9096
+        transport: 'http'
+        // libp2p requires a raw TCP listener and is intentionally not
+        // terminated by the HTTP ingress.
+        additionalPortMappings: [
+          {
+            external: true
+            exposedPort: 4001
+            targetPort: 4001
+          }
+        ]
       }
     }
     template: {
       containers: [
         {
           name: 'node'
-          image: 'ghcr.io/ydethe/revika-node:0.5.9'
+          image: 'ghcr.io/ydethe/revika-node:0.5.10'
           args: containerArgs
         }
       ]
