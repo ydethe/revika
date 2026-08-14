@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strconv"
 	"time"
@@ -69,6 +70,7 @@ type MetricsServer struct {
 	protocols []string      // versioned libp2p stream protocols this node serves
 	geo       geoip.Locator // optional: estimates a peer's position for the /admin map (nil = positions unknown)
 	blocklist *Blocklister  // optional: the live connection blocklist, surfaced on /admin (nil = not shown)
+	publicIP  netip.Addr    // optional: this node's actively-discovered public IP (net.DiscoverPublicIP)
 	log       *slog.Logger
 }
 
@@ -121,6 +123,17 @@ func (m *MetricsServer) SetProtocols(ps []protocol.ID) {
 // serving node itself on its map. Optional; left unset (nil), the map renders
 // with no markers and the list still shows every node. Call before Serve.
 func (m *MetricsServer) SetGeolocator(g geoip.Locator) { m.geo = g }
+
+// SetPublicIP records the node's public IP as actively discovered at startup
+// (net.DiscoverPublicIP), so the /admin self view geolocates on the address the
+// node actually confirmed rather than only on whatever libp2p happens to
+// advertise in host.Addrs() (which, absent EnableNATTraversal's observed
+// addresses, stays private/unspecified behind NAT). Optional; an invalid or
+// unset ip leaves self-placement to host addresses and geoip.SelfLocator as
+// before. Call before Serve.
+func (m *MetricsServer) SetPublicIP(ip string) {
+	m.publicIP, _ = netip.ParseAddr(ip)
+}
 
 // SetBlocklister attaches the live connection blocklist so the /admin dashboard
 // can display the peer IDs and subnets this node currently refuses (operator

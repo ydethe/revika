@@ -33,7 +33,12 @@ type Location struct {
 
 `MetricsServer.SetGeolocator(Locator)` wires one in; leaving it nil (the default)
 disables geolocation and the dashboard renders peers without map markers.
-When the node has no geolocatable advertised address, `/admin` also uses the
+The dashboard's self view (`/admin`) prefers `MetricsServer.SetPublicIP`, the
+public IP `revika-node` actively discovers at startup (`net.DiscoverPublicIP`,
+via `https://api.ipify.org`), over an address parsed from `host.Addrs()` — that
+discovered IP is placed with the ordinary `Locate` call, so it works with either
+backend, including the offline MMDB one. Only when no public IP was discovered
+does the dashboard fall back to a global advertised address, and then to the
 optional `SelfLocator` capability when the configured backend provides it. The
 IP API backend implements this by asking its service to infer the caller's
 public address, which is useful behind NAT; the offline MMDB backend does not

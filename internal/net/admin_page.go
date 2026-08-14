@@ -83,10 +83,18 @@ func (m *MetricsServer) placeIP(ctx context.Context, ng *NodeGeo, chosen netip.A
 
 // selfGeo builds the dashboard's view of the node serving the page. It places the
 // node by its own advertised addresses (m.h.Addrs()), preferring a global address
-// so a publicly-reachable node lands on the map alongside its peers.
+// so a publicly-reachable node lands on the map alongside its peers. The actively
+// discovered public IP (SetPublicIP, from net.DiscoverPublicIP at startup) always
+// wins over an address parsed from host.Addrs(): it is the address the node
+// confirmed by asking an external service, whereas an advertised addr can still be
+// private/unspecified when the node sits behind NAT with no port-forward or
+// AutoNAT observation yet.
 func (m *MetricsServer) selfGeo(ctx context.Context) NodeGeo {
 	ng := NodeGeo{ID: m.h.ID().String(), Direction: "self", Self: true, Scope: "unknown"}
 	var chosen netip.Addr
+	if geoip.IsGlobal(m.publicIP) {
+		chosen = m.publicIP
+	}
 	for _, a := range m.h.Addrs() {
 		ng.Addrs = append(ng.Addrs, a.String())
 		ip, err := manet.ToIP(a)

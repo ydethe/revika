@@ -624,6 +624,7 @@ func run() error {
 		ms.SetLoadSource(net.LoadSource(loadSource))
 		ms.SetProtocols(served)
 		ms.SetBlocklister(blocklister)
+		ms.SetPublicIP(publicIP)
 		if loc := geolocator(*geoipMode, log); loc != nil {
 			ms.SetGeolocator(loc)
 			// An offline .mmdb backend memory-maps a file; release it on

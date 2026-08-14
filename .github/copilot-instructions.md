@@ -1,6 +1,6 @@
-# CLAUDE.md
+# copilot-instructions.md
 
-Guidance for Claude Code working in this repo. These instructions override default behavior.
+Guidance for Copilot working in this repo. These instructions override default behavior.
 
 ## What revika is
 
