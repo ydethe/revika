@@ -7,6 +7,10 @@
 *.dll
 *.so
 *.dylib
+.jcloud
+.mcp.json
+.vscode
+*.mmdb
 
 # Test binary, built with `go test -c`
 *.test
