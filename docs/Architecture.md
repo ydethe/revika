@@ -56,7 +56,9 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system with
 - **Directory Trees:** Client operations (Daemon and CLI) work on complete directory trees as atomic units
 - **File → k+m Shards** via Reed–Solomon (using `klauspost/reedsolomon`)
   - Recommended: `k=3, m=2` (any 3 of 5 shards reconstruct the file)
-  - Shard size configurable; suggest 1–10 MB for typical files
+  - `SplitFile` uses the library's `Split` (data shards, zero-padded) followed by `Encode` (parity shards); reconstruction uses `Join` and trims back to the original file size
+- **Shard metadata:** `ShardInfo` is content-addressed and minimal — `{ID, Bytes, Index}`, where `ID = SHA256(Bytes)` (hex) and `Index` is the shard's position in the `k+m` array. It deliberately does **not** carry `K`, `M`, or the original file size, because the store only persists shard bytes and any such fields would be lost on a store round-trip.
+- **Reconstruction metadata is file-level, not per-shard:** `k` (data shards), `m` (parity shards), and the original unpadded file size live in `FileInfo`/the ledger. The caller reads them from there and passes them explicitly to `ReconstructFile(shards, k, m, originalSize)`, which initializes the matching Reed–Solomon decoder and trims padding.
 - **Shards are encrypted** individually with a file-derived symmetric key before leaving the User machine
 - **Ledger entry** maps Directory Tree ID → {Shard IDs, access grants}; shard ID acts as content address for IPFS-style retrieval
 
@@ -67,6 +69,8 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system with
 - **Key Sharing:** Wrap per-file key with recipient's public key; recipient unwraps to gain access
 - **Key Revocation:** Invalidate wrapped key by re-encrypting file with new per-file key; old wrapped key cannot decrypt
 - **Node Perspective:** Nodes hold ciphertext; cannot decrypt without user key
+- **Static decryption error policy:** `DecryptFile` and `UnwrapKey` return a single, static `"decryption failed"` error and never wrap the underlying AES-GCM authentication failure. This is deliberate — it prevents GCM internals from leaking to callers and avoids giving an attacker an oracle that distinguishes failure modes.
+- **Shard-ID validation at the store boundary:** `PutShard`/`GetShard`/`DeleteShard`/`HasShard` validate the shard ID against `^[0-9a-f]{64}$` (hex SHA256) before touching the filesystem, guarding against path traversal and invalid filenames.
 
 ### 3.3 Ledger Structure (Per-User, Not Per-File)
 
@@ -374,7 +378,7 @@ Connected to 2 known peers
 | Ledger scope | Per-user local + backup to trusted peer(s) **organized per directory tree, NOT per file** |
 | Ledger granularity | Directory trees as the primary unit (not individual files) |
 | Erasure params | k=3, m=2 (any 3 of 5 shards) |
-| Shard size | 1–10 MB (tunable) |
+| Shard sizing | Derived: file is `Split` into `k` equal, zero-padded data shards (no separately tunable shard size in Phase 1) |
 | Network types | Public (DHT), Hybrid (DHT + allowlist), Private (manual peers) |
 | CLI testing | REPL shell with subcommands for full system testing |
 | Access revocation | Cryptographic invalidation via re-encryption; no data deletion required |
