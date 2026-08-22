@@ -1,10 +1,8 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# Copilot Instructions
 
 ## Project status
 
-**Greenfield.** As of this writing the repo contains only `.gitignore` and `.claude/`
+**Greenfield.** As of this writing the repo contains only `.gitignore` and `.github/`
 config — no Go code, no `go.mod`, no commits. Everything below is the *intended*
 design, agreed with the maintainer, not yet-existing code. Verify against the actual
 tree before relying on any path or type named here, and update this file as the real
@@ -49,7 +47,8 @@ These are settled; treat them as constraints unless the maintainer changes them.
   leave the machine; nodes store ciphertext shards and cannot read content.
 - **Sharing** works through a system of User encryption keys — granting access means
   sharing/wrapping keys, not copying plaintext.
-
+- **Documentation** always keep track of design decisions in docs/Architecture.md, and update it as the design evolves. The code should be
+  self-documenting, but the architecture doc is the source of truth for design intent. In the same way, keep track of specs and reqs in docs/Specifications.md, and update it as the design evolves. The code should be self-documenting, but the specifications doc is the source of truth for design intent.
 ### Concepts to keep straight
 
 The `.gitignore` reserves `.revika/` for persisted runtime state: **node shares,
@@ -63,7 +62,7 @@ ledger, keys, and a mock store**. Expected meanings:
 
 ## Commands
 
-Standard Go toolchain (the `.claude` permissions are pre-approved for these):
+Standard Go toolchain:
 
 ```bash
 go build ./...            # build everything
