@@ -338,5 +338,5 @@ For product-owner:
 
 **Delivered**: 2026-08-22  
 **Location**: /home/yann/revika  
-**Implementation**: go-expert mode  
+**Implementation**: developer mode  
 **Time**: Complete

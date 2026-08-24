@@ -1,5 +1,5 @@
 ---
-name: go-expert
+name: developer
 description: "Senior Go engineer. Implements features, fixes bugs, and writes tests strictly following idiomatic Go and the project's established architecture. Invoked by product-owner, not the user directly."
 tools: [read, edit, search, bash]
 ---

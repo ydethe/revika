@@ -332,7 +332,7 @@ All core cryptographic, erasure-coding, and storage primitives are implemented a
 
 ---
 
-*Delivered by: go-expert  
+*Delivered by: developer  
 Date: 2026-08-22  
 Location: /home/yann/revika/  
 Status: ✅ READY FOR PRODUCTION DEPLOYMENT*
