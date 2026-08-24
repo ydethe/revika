@@ -113,6 +113,9 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system that
 - **Bandwidth Optimization:** Deduplication and delta-sync are not required (though not forbidden).
 - **Regulatory Compliance:** GDPR, HIPAA, etc. compliance is not a requirement.
 
+Scope note: the Out-of-Scope items above apply to V1 and V2 baseline releases unless explicitly promoted by a post-V2 release plan.
+Clarification: baseline sharing and revocation remain in scope for V1/V2 as specified in Section 2.5 and SHR001; only advanced collaboration capabilities listed as post-V2 remain out of scope.
+
 ---
 
 ## 5. Definitions
@@ -131,16 +134,16 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system that
     - PLK003 : All data stored on a Node is encrypted
     - PLK004 : All encryption routines shall be PQC compatible. Signatures are allowed to be Ed25519
 - **Sharing (SHR)** :
-    - SHR001 : One Client A can share access to one file to another Client B.
-    - SHR002 : Roles are given to Client B on file F : a combination of Read, Write, Delete permissions can be granted
-    - SHR003 : In case of Write permission, Client B can edit the file F with a conflict management
-    - SHR004 : Content-Defined Chunking (CDC) shall be implemented
-    - SHR005 : Conflict-free Replicated Data Type (CRDT) shall be implemented
-    - SHR006 : Modifications shall be traced with Vector Clocks
+    - SHR001 : One Client A shall be able to share access to a file or directory tree with another Client B.
+    - SHR002 : Capability-tiered sharing roles (Read/Write/Delete) are a post-V2 capability and shall not be required for V1/V2 baseline exits.
+    - SHR003 : Collaborative write conflict management is a post-V2 capability and shall not be required for V1/V2 baseline exits.
+    - SHR004 : Content-Defined Chunking (CDC) is a post-V2 capability and shall not be required for V1/V2 baseline exits.
+    - SHR005 : Conflict-free Replicated Data Type (CRDT) support is a post-V2 capability and shall not be required for V1/V2 baseline exits.
+    - SHR006 : Vector-clock-based change tracing is a post-V2 capability and shall not be required for V1/V2 baseline exits.
 - **Node discovery (DCV)** :
-    - DCV001 : Their shall be a seamless mechanism to let Nodes and Clients handle a Node's deconnection or reconnection, or a new Node joining revika
+    - DCV001 : There shall be a seamless mechanism to let Nodes and Clients handle a Node's disconnection or reconnection, or a new Node joining revika.
 - **IPFS compliance (IPFS)** :
-    - IPFS001 : revika shall be fully compliant with the IPFS stack. This shall be achieved either by implementing the relevant IPFS specifications (content identifiers/CIDs, multihash, multiaddr, peer routing, content exchange) directly, or by relying on an existing, conformant IPFS implementation (e.g. kubo) or an equivalent library, so revika Nodes interoperate with the wider IPFS/libp2p ecosystem
+    - IPFS001 : revika shall be fully compliant with the IPFS stack. V1 shall satisfy this via a Kubo-backed adapter. V2 may switch to a direct adapter only after interoperability contract tests pass against the same compliance expectations.
     - IPFS002 : Every shard and every blob (encrypted chunk, manifest, directory) shall be addressable by a standard IPFS content identifier (CID), so any IPFS-compliant tool can locate and integrity-check it without needing to decrypt it
     - IPFS003 : revika Nodes shall be discoverable and reachable as regular IPFS/libp2p peers; peer identity, transport security, and content routing shall follow the IPFS/libp2p specifications rather than a bespoke, incompatible protocol
     - IPFS004 : revika-specific operations that have no IPFS equivalent (e.g. encrypted sharing, per-owner quotas, proof-of-possession, repair/rebalancing) may be layered on top of the IPFS stack, but shall not replace or break compliance with the standard IPFS content-addressing and exchange mechanisms
@@ -177,3 +180,84 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system that
     - SEC002 : A Node shall enforce a per-Client storage quota to prevent a single Client from monopolizing its capacity
     - SEC003 : Creating a new Client identity shall have a real (non-negligible) cost, to deter an abusive actor from trivially discarding a banned identity and minting a new one
     - SEC004 : A Node shall be able to locally deny service to a Client or peer identified as abusive, independently of any central authority
+
+---
+
+## 6. Release Roadmap & Migration Requirements
+
+### 6.1 Milestones (M0..M8)
+
+- **MIG001 (M0 Port Freeze):** Revika shall define and freeze the Core<->Network port surface and canonical error taxonomy before adapter parity work begins.
+- **MIG002 (M1 Core Baseline):** Revika shall pass local integration tests for encrypt/split/store/reconstruct/share/revoke workflows without requiring network transport.
+- **MIG003 (M2 V1 Kubo Integration):** Revika shall provide a Kubo-backed adapter that passes adapter contract tests for shard put/get, provider discovery, and mutable root publish/resolve.
+- **MIG004 (M3 Dual-Stack Introduction):** Revika shall support a dual-stack mode with single-writer and optional dual-reader behavior, with migration telemetry.
+- **MIG005 (M4 V1 GA):** Revika shall release V1 with Kubo as default adapter and documented rollback/runbook procedures.
+- **MIG006 (M5 Direct Adapter Parity):** Revika shall implement a direct adapter exposing the same Core port semantics and canonical error behavior as Kubo mode.
+- **MIG007 (M6 Dual-Stack Hardening):** Revika shall validate mixed-cluster operation (Kubo-only, direct-only, mixed) without data format divergence.
+- **MIG008 (M7 Interoperability Gate):** Revika shall pass IPFS interoperability contract tests using the direct adapter prior to any default switch.
+- **MIG009 (M8 V2 GA):** Revika shall switch default adapter to direct only after M7 is complete; Kubo compatibility mode shall remain available for rollback.
+
+### 6.2 Dual-Stack Checkpoints (A..E)
+
+- **MIG010 (Checkpoint A - Interface Lock):** Both adapters shall implement identical Core-facing signatures and canonical errors.
+- **MIG011 (Checkpoint B - Data Contract Lock):** Manifest/root pointer schemas and ID normalization rules shall be identical across adapters.
+- **MIG012 (Checkpoint C - Compatibility Mode):** In dual-stack mode, writes shall go through one configured primary adapter; reads may fall back to secondary adapter.
+- **MIG013 (Checkpoint D - Heterogeneous Validation):** Mixed adapter clusters shall preserve retrieval, sharing, and revocation semantics.
+- **MIG014 (Checkpoint E - Safe Switch):** Switching default adapter shall require a no-migration rollback path and verified operational procedure.
+
+### 6.3 IPFS Compliance Gating
+
+- **MIG015:** V1 IPFS compliance shall be demonstrated via Kubo interoperability.
+- **MIG016:** V2 direct adapter shall not be the default until interoperability contract tests meet or exceed V1 compliance outcomes.
+
+---
+
+## 7. Core-Network Interface Requirements
+
+### 7.1 Required Port Surface
+
+- **INT001:** The Core shall interact with networking through a bounded port interface, not adapter-specific SDK types.
+- **INT002:** The interface shall include capabilities for shard put/get/exists, provider discovery, mutable root publish/resolve, wrapped-key exchange, and revocation notice delivery.
+- **INT003:** Adapter-specific payloads shall be translated at adapter boundaries; Core shall consume only canonical request/response models.
+
+### 7.2 Invariants
+
+- **INT010 (ID Canonicalization):** Owner IDs, peer IDs, shard IDs, and CID representations shall be canonicalized before persistence/comparison.
+- **INT011 (Canonical Errors):** Core-visible network/storage errors shall map to a bounded canonical set (`ErrNotFound`, `ErrUnauthorized`, `ErrUnavailable`, `ErrConflict`, `ErrInvalid`, `ErrCorrupt`, `ErrTimeout`, `ErrInternal`).
+- **INT012 (Consistency):** Mutable root versioning shall be monotonic and shall not regress.
+- **INT013 (Write Semantics):** Successful write acknowledgements shall imply durable ledger intent and read-after-write visibility for the writing client under normal network conditions.
+- **INT014 (Security):** Plaintext shall never be transmitted over network ports; wrapped keys and revocation notices shall be integrity-protected and authenticated.
+- **INT015 (Observability Safety):** Logs and metrics shall not expose key material or plaintext.
+
+### 7.3 Hexagonal Boundary Rules
+
+- **INT020:** Core domain packages shall not import Kubo-specific or direct-adapter-specific protocol packages.
+- **INT021:** Adapters shall act as anti-corruption layers and shall map external/protocol types into canonical Core types.
+- **INT022:** Contract tests shall verify equivalent Core semantics across adapters.
+
+---
+
+## 8. Release Scope & Capability Tiers
+
+- **RLS001 (Tier C1 / V1 Required):** Encrypted storage, erasure coding, base share/revoke, and Kubo-backed IPFS interoperability are required for V1 exit.
+- **RLS002 (Tier C2 / V2 Required):** Direct adapter parity, dual-stack compatibility checkpoints, and interoperability contract pass are required for V2 exit.
+- **RLS003 (Tier C3 / Post-V2):** Fine-grained ACL, collaborative writes with CRDT semantics, CDC, and vector clocks are post-V2 capabilities and shall not block V1/V2 exits.
+- **RLS004:** Out-of-Scope statements in Section 4 shall be interpreted in conjunction with tier gates; a capability becomes in-scope only when promoted by a release-tier requirement.
+
+---
+
+## 9. Package & Dependency Direction Requirements
+
+- **RLS010:** Core packages shall remain adapter-agnostic and shall depend on abstractions defined at the network port boundary.
+- **RLS011:** Kubo-specific dependencies shall be isolated to the Kubo adapter implementation.
+- **RLS012:** Direct adapter dependencies shall be limited to libraries required for IPFS/libp2p compliance and interoperability.
+- **RLS013:** New third-party dependencies shall require explicit architecture review and justification prior to adoption.
+
+---
+
+## 10. Risks & Mitigation Requirements
+
+- **RLS020 (Parity Drift Risk):** Release gates shall include adapter parity contract tests to prevent semantic drift.
+- **RLS021 (Schema Drift Risk):** Shared schema compatibility tests shall run at each release candidate before milestone exit.
+- **RLS022 (Migration Regression Risk):** Default-adapter switch shall require rollback validation and operational runbook checks.
+- **RLS023 (Scope Creep Risk):** Tier C3 features shall remain non-blocking for V1/V2 unless promoted by an explicit release decision.

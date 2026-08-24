@@ -115,6 +115,8 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system with
 
 ### 4.1 Protocols
 
+These protocol IDs are the canonical direct-adapter surface (V2 target and dual-stack validation path); in V1 default mode, equivalent operations are provided via the Kubo-backed adapter per the migration gates in Sections 17 and 18.
+
 - `/revika/1.0/put-shard` — User → Node: Upload encrypted shard
 - `/revika/1.0/get-shard` — User/Node → Node: Retrieve shard
 - `/revika/1.0/ledger-sync` — Node ↔ Node: Gossip shard placement
@@ -290,7 +292,7 @@ Connected to 2 known peers
 3. Daemon encrypts files with AES-256-GCM (per-file keys derived from master key)
 4. Daemon splits each file into **k=3, m=2 shards** (5 shards total per file)
 5. Daemon selects 3–5 Nodes (via DHT lookup, node reputation)
-6. Daemon uploads each shard via `/revika/1.0/put-shard` protocol
+6. Daemon uploads each shard via the active network adapter (`/revika/1.0/put-shard` in direct-adapter mode)
 7. Each Node acknowledges; Daemon updates local ledger with tree-level entry
 8. Daemon may replicate shards to additional nodes for redundancy
 
@@ -392,3 +394,133 @@ Connected to 2 known peers
 2. **Implement Phase 1:** `crypto/`, `shard/`, `store/` packages
 3. **Implement Phase 2:** `network/` (libp2p protocols), `ledger/`
 4. **Implement Phase 3:** `daemon/`, `node/`, and `cli/` binaries
+
+---
+
+## 16. Hexagonal Boundaries & Anti-Corruption Adapters
+
+Revika shall enforce a hexagonal architecture so core storage/crypto/ledger logic remains independent from transport and third-party protocol stacks.
+
+### 16.1 Boundary Principles
+
+- **Core domain inwards only:** `internal/crypto`, `internal/shard`, `internal/ledger`, and domain orchestration in `internal/daemon`/`internal/node` shall not import adapter-specific protocol packages.
+- **Ports over SDK types:** Core-facing interfaces shall use revika-native IDs, request/response structs, and canonical errors; adapter-native types (Kubo, raw libp2p, IPFS blocks) shall be translated at the edge.
+- **Deterministic behavior:** Given identical inputs, Core operations shall produce equivalent ledger effects regardless of the selected network adapter.
+- **Explicit adapter selection:** Runtime configuration shall select adapter mode (`kubo`, `direct`, `dual-read`) without changing Core logic paths.
+
+### 16.2 Anti-Corruption Adapter Guidance
+
+- **Inbound translation:** Adapter handlers shall validate and normalize peer/network payloads before invoking Core ports.
+- **Outbound translation:** Core responses/errors shall be converted to adapter protocol responses without leaking internal implementation details.
+- **No type leakage:** Adapter-specific identifiers shall never be persisted directly in the ledger without normalization into revika canonical fields.
+- **Contract tests required:** Each adapter shall satisfy the same interoperability contract test suite before being eligible as default.
+
+---
+
+## 17. Release Roadmap (V1 -> V2)
+
+### 17.1 Scope of V1 and V2
+
+- **V1 target:** IPFS compliance and production readiness through a Kubo-backed network adapter.
+- **V2 target:** Direct libp2p/IPFS-compatible adapter as default, with Kubo adapter retained as compatibility fallback until deprecation criteria are met.
+
+### 17.2 Milestones M0..M8
+
+| Milestone | Stage | Goal | Objective Exit Criteria | Implementation Status |
+|----------|-------|------|-------------------------|-----------------------|
+| **M0** | Foundation | Freeze port surface and canonical model contracts | Core <-> Network port definitions documented; canonical error set frozen; architecture decision record approved. | Done |
+| **M1** | Core Baseline | Complete local crypto/shard/store/ledger pipeline | Upload/download/reconstruct/share/revoke flows pass unit + integration tests locally without network dependency. | Done |
+| **M2** | V1 Build | Kubo adapter integration | Kubo adapter passes adapter contract tests for put/get/discover/publish/resolve; no Core package imports from Kubo SDK. | Not started |
+| **M3** | V1 Alpha | Dual-stack read path introduced | `dual-read` mode functional: writes through Kubo, and optional read fallback to direct is available behind configuration; migration telemetry emitted. | Not started |
+| **M4** | V1 GA | Kubo-first production release | Public/Hybrid/Private network modes validated; IPFS interoperability tests green via Kubo; operational runbook and rollback validated. | Not started |
+| **M5** | V2 Build | Direct adapter feature parity | Direct adapter implements all mandatory Core ports and canonical errors; parity tests vs Kubo produce equivalent ledger outcomes. | Not started |
+| **M6** | V2 Beta | Dual-stack migration hardening | Checkpoints A..D complete; mixed-peer clusters validated; no data-format divergence in manifests or root pointers. | Not started |
+| **M7** | V2 Readiness | Interoperability gate | Direct adapter passes IPFS interoperability contract suite end-to-end; failure budget/SLO checks met for reliability/performance/security. | Not started |
+| **M8** | V2 GA | Default switch to direct adapter | Default mode switched to direct; Kubo retained as compatibility fallback; checkpoint E complete with verified rollback path. | Not started |
+
+---
+
+## 18. Dual-Stack Migration Checkpoints (A..E)
+
+Migration shall proceed through five gated checkpoints to move from V1 (Kubo default) to V2 (direct default).
+
+| Checkpoint | Purpose | Compatibility Rules |
+|-----------|---------|---------------------|
+| **A. Port Freeze** | Freeze Core<->Network interface and canonical errors | Both adapters shall implement identical method signatures and canonical error mapping; no adapter-specific error strings propagated to Core. |
+| **B. Data Format Lock** | Freeze shared data contracts | Manifest/root pointer schema version shall be identical across adapters; IDs/CIDs and hash normalization rules shall match. |
+| **C. Dual Read / Single Write** | Safe mixed operation | Writes shall use one configured primary adapter; reads shall attempt primary then secondary when enabled; write acknowledgements shall include adapter provenance for debugging only (not ledger semantics). |
+| **D. Mixed-Cluster Validation** | Validate interoperability under heterogeneous peers | Cluster tests shall include Kubo-only, direct-only, and mixed nodes; retrieval and revocation behavior shall remain semantically equivalent. |
+| **E. Default Switch + Rollback** | Make direct adapter default safely | Direct becomes default only after M7 criteria pass; rollback to Kubo shall be a config change with no ledger migration required. |
+
+---
+
+## 19. Core <-> Network Interface Surface (Ports)
+
+### 19.1 Port Surface
+
+The Core shall depend on the following logical port capabilities (exact Go signatures may evolve without changing semantics):
+
+- **`PutShard(ctx, ownerID, shardID, ciphertext, metadata) -> Receipt`**
+- **`GetShard(ctx, ownerID, shardID) -> ciphertext`**
+- **`HasShard(ctx, ownerID, shardID) -> bool`**
+- **`AnnounceShard(ctx, shardID, locations) -> ack`**
+- **`FindShardProviders(ctx, shardID) -> []PeerLocation`**
+- **`PublishRoot(ctx, ownerID, rootPointer) -> version`**
+- **`ResolveRoot(ctx, ownerID) -> rootPointer`**
+- **`SendWrappedKey(ctx, ownerID, recipientID, wrappedKeyEnvelope) -> ack`**
+- **`SendRevocation(ctx, ownerID, recipientID, revocationNotice) -> ack`**
+
+### 19.2 Interface Invariants
+
+- **ID invariants:**
+  - `ownerID` and `peerID` shall be canonicalized before persistence or comparison.
+  - `shardID` shall be deterministic from ciphertext bytes and stable across adapters.
+  - CID/multihash representation shall be normalized at adapter boundaries.
+- **Canonical error invariants:**
+  - Core-visible errors shall be restricted to a fixed set (for example: `ErrNotFound`, `ErrUnauthorized`, `ErrUnavailable`, `ErrConflict`, `ErrInvalid`, `ErrCorrupt`, `ErrTimeout`, `ErrInternal`).
+  - Adapter-native errors shall be mapped to canonical errors with retained cause chains internally.
+- **Consistency invariants:**
+  - Root pointer version shall be monotonic and never move backwards.
+  - Read-after-successful-write consistency shall hold for the writing client under normal network conditions.
+  - Revocation state changes shall be durable in ledger before asynchronous network fan-out.
+- **Security invariants:**
+  - Plaintext shall never traverse network ports.
+  - Wrapped keys and revocation notices shall be authenticated and integrity-protected.
+  - Adapter logs/metrics shall not expose secret material.
+
+---
+
+## 20. Package & Dependency Direction
+
+- **Core packages remain adapter-agnostic:** `internal/crypto`, `internal/shard`, `internal/store`, `internal/ledger`, and domain orchestration shall avoid direct dependency on Kubo-specific code.
+- **Adapter packaging:**
+  - `internal/network/port` for Core-facing interfaces and canonical errors.
+  - `internal/network/adapter/kubo` for V1 compatibility path.
+  - `internal/network/adapter/direct` for V2 direct libp2p/IPFS-compatible path.
+  - `internal/network/contracttest` for shared adapter conformance suite.
+- **Dependency policy:**
+  - V1 may depend on Kubo APIs through the Kubo adapter only.
+  - V2 direct adapter shall depend only on libp2p/IPFS libraries necessary for compliance and shall avoid introducing non-essential dependencies.
+  - New third-party dependencies shall be justified through an architecture decision record before adoption.
+
+---
+
+## 21. Key Risks & Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Adapter behavioral drift (Kubo vs direct) | Inconsistent retrieval/share/revoke outcomes | Mandatory contract tests and parity test corpus; block milestone exit on divergence. |
+| Data format divergence during migration | Cross-version incompatibility and failed restores | Checkpoint B schema freeze; compatibility tests on every release candidate. |
+| Premature default switch to direct adapter | Reliability regressions in production | M7 interoperability and SLO gate before M8 switch; one-step config rollback to Kubo. |
+| Scope creep from advanced collaboration features | Delayed V1/V2 delivery | Capability tier gating: advanced ACL/CRDT/CDC/vector clocks explicitly post-V2. |
+| Security leakage via adapter logs/errors | Exposure of sensitive data or metadata | Canonical error mapping, redaction policy, and security log review in release checklist. |
+
+---
+
+## 22. Capability Tiers and Scope Gating
+
+- **Tier C1 (V1 required):** Core encrypted storage, shard redundancy, base share/revoke, Kubo-backed IPFS interoperability.
+- **Tier C2 (V2 required):** Direct adapter parity and default migration with dual-stack compatibility.
+- **Tier C3 (Post-V2 optional):** Fine-grained ACL roles, CRDT collaborative conflict models, CDC optimization, and vector-clock rich synchronization.
+
+Features in Tier C3 shall not block V1 or V2 exits unless explicitly promoted by a future release decision.
