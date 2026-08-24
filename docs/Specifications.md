@@ -9,7 +9,7 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system that
 ### 2.1 File Storage & Sync
 
 - **Directory Tree Handling:** The client (both CLI and Daemon) shall support upload, download, and synchronization of complete directory trees, including nested directories and their contents. Directory trees shall be treated as atomic units for the purposes of operations and ledger tracking.
-- **Local Sync:** The User Daemon shall monitor a designated local folder and automatically detect, encrypt, and upload changes to the network.
+- **Local Sync:** The User Daemon shall monitor a designated local folder and automatically detect, encrypt, and upload changes to the network. Daemon behavior shall conform to docs/CloudStorage.md.
 - **Lazy Loading:** Files shall be reconstructible on-demand; clients need not download entire trees locally unless explicitly requested.
 - **Consistency:** The state of files and directories on the network shall remain consistent with the user's ledger and local copies (subject to network delays).
 
@@ -153,6 +153,10 @@ Clarification: baseline sharing and revocation remain in scope for V1/V2 as spec
     - ROL002 : A Node stores encrypted shards on behalf of one or more Clients and never gains access to plaintext data or decryption keys
     - ROL003 : A single machine may act as both a Client and a Node at the same time
     - ROL004 : revika shall be released as two artifacts: a headless Node server, and a Client daemon that syncs a local folder with the network and may optionally also run a Node in-process
+- **Daemon & OS integration (DMN)** :
+    - DMN001 : The User Daemon shall be compliant with docs/CloudStorage.md, which is the authoritative specification for the daemon and its OS filesystem-integration surface
+    - DMN002 : The daemon shall present the user's encrypted, erasure-coded, network-resident namespace through the two complementary surfaces defined in docs/CloudStorage.md — Sync (mirrored local folder) and Mount (placeholders + on-demand hydration) — both resolving against the same core provider API
+    - DMN003 : Implementation of the daemon (cmd/daemon) is deferred to milestone M4; until then docs/CloudStorage.md governs its design intent
 - **Durability & repair (DUR)** :
     - DUR001 : The system shall detect when a shard becomes unavailable or corrupted
     - DUR002 : The system shall be able to regenerate a missing or corrupted shard from the surviving shards of the same chunk, without needing any decryption key
