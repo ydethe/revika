@@ -2,6 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"net"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/revika/revika/pkg/model"
@@ -181,5 +184,96 @@ func TestError_Parsing(t *testing.T) {
 
 	if resp.Error.Code != -32601 {
 		t.Errorf("expected error code -32601, got %d", resp.Error.Code)
+	}
+}
+
+// respondOK writes a generic successful IPC response the shell commands can parse.
+func respondOK(enc *json.Encoder, id int) error {
+	result, _ := json.Marshal(map[string]string{"cwd": "/", "status": "ok"})
+	return enc.Encode(&model.IPCResponse{Result: result, ID: id})
+}
+
+// TestShell_SelfHeal_ReconnectsOnWriteFailure verifies the CLI transparently
+// reconnects when a cached connection has been closed by the daemon. The mock
+// listener serves exactly one request on its first connection then closes it
+// (reproducing the original one-request-per-connection daemon), and behaves
+// persistently thereafter. The second (write-path) request must succeed.
+func TestShell_SelfHeal_ReconnectsOnWriteFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	sockPath := filepath.Join(tmpDir, "daemon.sock")
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	var mu sync.Mutex
+	connCount := 0
+	firstClosed := make(chan struct{})
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+			connCount++
+			n := connCount
+			mu.Unlock()
+
+			go func(c net.Conn, n int) {
+				dec := json.NewDecoder(c)
+				enc := json.NewEncoder(c)
+
+				if n == 1 {
+					// Buggy behavior: serve one request, then close.
+					var req model.IPCRequest
+					if err := dec.Decode(&req); err != nil {
+						c.Close()
+						return
+					}
+					_ = respondOK(enc, req.ID)
+					c.Close()
+					close(firstClosed)
+					return
+				}
+
+				// Persistent behavior for all later connections.
+				for {
+					var req model.IPCRequest
+					if err := dec.Decode(&req); err != nil {
+						c.Close()
+						return
+					}
+					_ = respondOK(enc, req.ID)
+				}
+			}(conn, n)
+		}
+	}()
+
+	shell := NewShell(sockPath)
+	defer shell.Close()
+
+	// First request establishes and uses connection #1.
+	if err := shell.Pwd(); err != nil {
+		t.Fatalf("first request (pwd) failed: %v", err)
+	}
+
+	// Wait until the mock has closed connection #1 so the cached conn is stale.
+	<-firstClosed
+
+	// Second request is a write-path command; it must self-heal by reconnecting.
+	if err := shell.Cp("/a", "/b"); err != nil {
+		t.Fatalf("second request (cp) failed to self-heal: %v", err)
+	}
+
+	mu.Lock()
+	got := connCount
+	mu.Unlock()
+	if got < 2 {
+		t.Errorf("expected CLI to reconnect (>=2 connections), got %d", got)
 	}
 }

@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"encoding/json"
+	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/revika/revika/pkg/model"
 )
@@ -230,4 +232,116 @@ func TestService_Multiple_Instances(t *testing.T) {
 		t.Fatalf("NewService 2 failed: %v", err)
 	}
 	defer svc2.Stop()
+}
+
+// TestService_PersistentConnection sends two sequential requests on the SAME
+// connection, guarding against the one-request-per-connection regression that
+// caused a "broken pipe" on the second command.
+func TestService_PersistentConnection(t *testing.T) {
+	tmpDir := t.TempDir()
+	ledgerPath := filepath.Join(tmpDir, "ledger.json")
+	ipcAddr := filepath.Join(tmpDir, "daemon.sock")
+
+	svc, err := NewService(ledgerPath, "127.0.0.1:5001", ipcAddr)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+	if err := svc.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer svc.Stop()
+
+	conn, err := net.Dial("unix", ipcAddr)
+	if err != nil {
+		t.Fatalf("failed to dial daemon: %v", err)
+	}
+	defer conn.Close()
+
+	encoder := json.NewEncoder(conn)
+	decoder := json.NewDecoder(conn)
+
+	methods := []string{"pwd", "ls"}
+	for i, method := range methods {
+		id := i + 1
+
+		var paramsJSON json.RawMessage
+		if method == "ls" {
+			p, _ := json.Marshal(model.LsParams{Path: "/"})
+			paramsJSON = p
+		}
+
+		req := &model.IPCRequest{Method: method, Params: paramsJSON, ID: id}
+		if err := encoder.Encode(req); err != nil {
+			t.Fatalf("request %d (%s): encode failed: %v", id, method, err)
+		}
+
+		var resp model.IPCResponse
+		if err := decoder.Decode(&resp); err != nil {
+			t.Fatalf("request %d (%s): decode failed: %v", id, method, err)
+		}
+
+		if resp.Error != nil {
+			t.Fatalf("request %d (%s): unexpected error: %v", id, method, resp.Error)
+		}
+		if resp.ID != id {
+			t.Errorf("request %d (%s): expected response ID %d, got %d", id, method, id, resp.ID)
+		}
+		if len(resp.Result) == 0 {
+			t.Errorf("request %d (%s): expected non-empty result", id, method)
+		}
+	}
+}
+
+// TestService_Stop_ClosesOpenConnection verifies Stop returns promptly with a
+// connection open and a handler goroutine parked on Decode, and that the
+// connection is force-closed (no goroutine leak).
+func TestService_Stop_ClosesOpenConnection(t *testing.T) {
+	tmpDir := t.TempDir()
+	ledgerPath := filepath.Join(tmpDir, "ledger.json")
+	ipcAddr := filepath.Join(tmpDir, "daemon.sock")
+
+	svc, err := NewService(ledgerPath, "127.0.0.1:5001", ipcAddr)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+	if err := svc.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	conn, err := net.Dial("unix", ipcAddr)
+	if err != nil {
+		t.Fatalf("failed to dial daemon: %v", err)
+	}
+	defer conn.Close()
+
+	// Issue one request so the handler goroutine is established and then parks
+	// on Decode awaiting the next request.
+	encoder := json.NewEncoder(conn)
+	decoder := json.NewDecoder(conn)
+	if err := encoder.Encode(&model.IPCRequest{Method: "pwd", ID: 1}); err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+	var resp model.IPCResponse
+	if err := decoder.Decode(&resp); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	// Stop must return promptly, waiting for the parked handler to unwind.
+	done := make(chan error, 1)
+	go func() { done <- svc.Stop() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Stop returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return promptly; handler goroutine likely leaked")
+	}
+
+	// The daemon closed its side; a read must now fail rather than block.
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Error("expected read to fail after Stop closed the connection")
+	}
 }

@@ -3,10 +3,13 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
+	"sync"
 
 	"github.com/revika/revika/internal/ipfs"
 	"github.com/revika/revika/internal/ipfs/kubo"
@@ -23,6 +26,10 @@ type Service struct {
 	ipcAddr    string // Unix socket or named pipe path
 	ipcServer  net.Listener
 	ledgerPath string
+
+	connMu sync.Mutex
+	conns  map[net.Conn]struct{} // live IPC connections, closed on Stop
+	wg     sync.WaitGroup        // tracks in-flight connection handlers
 }
 
 // NewService creates a new User Daemon service backed by a Kubo IPFS adapter.
@@ -54,6 +61,7 @@ func NewService(ledgerPath string, apiAddr string, ipcAddr string) (*Service, er
 		cancel:     cancel,
 		ipcAddr:    ipcAddr,
 		ledgerPath: ledgerPath,
+		conns:      make(map[net.Conn]struct{}),
 	}, nil
 }
 
@@ -99,37 +107,76 @@ func (s *Service) acceptConnections() {
 			continue
 		}
 
+		// Reject new connections once shutdown has begun.
+		if !s.registerConn(conn) {
+			conn.Close()
+			continue
+		}
+
 		// Handle connection in a goroutine
 		go s.handleIPCConnection(conn)
 	}
 }
 
-// handleIPCConnection handles a single IPC connection.
+// handleIPCConnection serves sequential requests on a single IPC connection
+// until the client disconnects or the service is stopped.
 func (s *Service) handleIPCConnection(conn net.Conn) {
+	defer s.wg.Done()
+	defer s.deregisterConn(conn)
 	defer conn.Close()
 
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
 
-	var req model.IPCRequest
-	if err := decoder.Decode(&req); err != nil {
-		log.Printf("failed to decode IPC request: %v", err)
-		return
-	}
+	for {
+		var req model.IPCRequest
+		if err := decoder.Decode(&req); err != nil {
+			if errors.Is(err, io.EOF) {
+				// Client hung up cleanly; not an error.
+				return
+			}
+			log.Printf("failed to decode IPC request: %v", err)
+			return
+		}
 
-	resp, err := s.HandleIPCRequest(&req)
-	if err != nil {
-		resp = &model.IPCResponse{
-			Error: &model.IPCError{
-				Code:    -1,
-				Message: err.Error(),
-			},
-			ID: req.ID,
+		resp, err := s.HandleIPCRequest(&req)
+		if err != nil {
+			resp = &model.IPCResponse{
+				Error: &model.IPCError{
+					Code:    -1,
+					Message: err.Error(),
+				},
+				ID: req.ID,
+			}
+		}
+
+		if err := encoder.Encode(resp); err != nil {
+			log.Printf("failed to encode IPC response: %v", err)
+			return
 		}
 	}
+}
 
-	if err := encoder.Encode(resp); err != nil {
-		log.Printf("failed to encode IPC response: %v", err)
+// registerConn tracks a live connection so Stop can force it closed.
+// It returns false if the service is already shutting down. The WaitGroup is
+// incremented under the same lock Stop uses, so Add cannot race with Wait.
+func (s *Service) registerConn(conn net.Conn) bool {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.conns == nil {
+		return false
+	}
+	s.conns[conn] = struct{}{}
+	s.wg.Add(1)
+	return true
+}
+
+// deregisterConn stops tracking a connection once its handler exits.
+func (s *Service) deregisterConn(conn net.Conn) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.conns != nil {
+		delete(s.conns, conn)
 	}
 }
 
@@ -336,6 +383,17 @@ func (s *Service) Stop() error {
 	if s.ipcServer != nil {
 		s.ipcServer.Close()
 	}
+
+	// Force-close live connections so any handler parked on Decode unblocks
+	// and returns instead of leaking.
+	s.connMu.Lock()
+	conns := s.conns
+	s.conns = nil
+	s.connMu.Unlock()
+	for conn := range conns {
+		conn.Close()
+	}
+	s.wg.Wait()
 
 	// Save ledger before shutdown
 	if err := s.ledger.Save(s.ledgerPath); err != nil {

@@ -271,6 +271,26 @@ revika/
 - **Local State** — Maintains current working directory, network config
 - **Error Handling** — Graceful feedback for network failures, permission errors
 
+### 6.1.1 CLI↔Daemon IPC
+
+Wire format is line-delimited JSON: `model.IPCRequest` / `model.IPCResponse`
+over a Unix socket (`pkg/model`).
+
+- **Persistent connection per session.** The CLI dials once and reuses a single
+  connection, caching its JSON encoder/decoder. The daemon serves **multiple
+  sequential requests** over that one connection (`handleIPCConnection` loops
+  decode → handle → encode until the client disconnects on `io.EOF`).
+  One-request-per-connection is **not** the model.
+- **Connection tracking & graceful shutdown.** The daemon tracks live
+  connections and counts in-flight handlers with a `sync.WaitGroup`. On `Stop()`
+  it stops accepting, force-closes every live connection (unblocking handlers
+  parked on `Decode`), and waits for handlers to exit before saving the ledger
+  and removing the socket — so no handler goroutine leaks.
+- **Write-only retry (self-heal).** A failed request **write** retries once with
+  a fresh dial (handling a stale connection the daemon already closed). A failed
+  **read** is never retried, because the request may already have executed and
+  commands such as `cp`/`rm`/`share`/`revoke` are not idempotent.
+
 ### 6.2 CLI Subcommand Behavior
 
 #### `cd <path>`
@@ -455,7 +475,7 @@ Connected to 2 known peers
 - **Shard corruption:** Reed–Solomon parity enables recovery
 - **Network partitions:** Users work offline; ledger syncs when network restores
 - **Key loss:** User can recover from key backup (if kept separately)
-- **CLI disconnection:** CLI reconnects to Daemon automatically; buffered commands retry
+- **CLI disconnection:** CLI reuses a persistent IPC connection and self-heals a stale one by re-dialing once on a failed write; read failures are surfaced (not retried) because non-idempotent commands may already have executed
 - **Partial revocation failure:** Revocation persists in ledger; re-sync on network recovery
 
 ---

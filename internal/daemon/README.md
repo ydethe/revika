@@ -14,6 +14,20 @@ The `daemon` package implements the User Daemon service — a background service
 - `HandleIPCRequest(req)` — Process a JSON-RPC 2.0 IPC request.
 - `GetPeerID()` — Get the IPFS peer ID of this daemon (via the Kubo adapter).
 
+## IPC Connection Lifecycle
+
+The IPC server serves **multiple sequential requests over a single persistent
+Unix-socket connection**. `handleIPCConnection` loops decode → handle → encode
+until the client disconnects (a clean `io.EOF` is not treated as an error). This
+is the intended design: the CLI dials once per session and reuses the
+connection, so there is **no** one-request-per-connection close.
+
+Live connections are tracked in a `map[net.Conn]struct{}` guarded by a mutex,
+and in-flight handlers are counted with a `sync.WaitGroup`. On `Stop()` the
+service stops accepting new connections, force-closes every live connection so
+handlers parked on `Decode` unblock instead of leaking, and waits for all
+handler goroutines to exit before saving the ledger and removing the socket.
+
 ## IPC Commands
 
 The daemon exposes the following commands via JSON-RPC 2.0 over Unix socket:
@@ -41,7 +55,8 @@ The daemon orchestrates:
 ```go
 svc, _ := NewService(ledgerPath, "127.0.0.1:5001", "/tmp/daemon.sock")
 svc.Start()  // Accept IPC connections
-defer svc.Stop() // Graceful shutdown, save ledger
+defer svc.Stop() // Graceful shutdown: force-close live connections, wait for
+                 // handlers, save ledger
 ```
 
 ## Error Handling

@@ -17,6 +17,8 @@ type Shell struct {
 	ipcAddr   string
 	cwd       string // current working directory
 	conn      net.Conn
+	encoder   *json.Encoder
+	decoder   *json.Decoder
 	requestID int
 }
 
@@ -136,7 +138,37 @@ func (s *Shell) executeCommand(line string) error {
 	}
 }
 
+// dial establishes a fresh IPC connection and its cached JSON codecs.
+// The persistent connection reuses a single decoder so buffered bytes are
+// never lost between requests.
+func (s *Shell) dial() error {
+	conn, err := net.Dial("unix", s.ipcAddr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to daemon: %w", err)
+	}
+	s.conn = conn
+	s.encoder = json.NewEncoder(conn)
+	s.decoder = json.NewDecoder(conn)
+	return nil
+}
+
+// resetConn tears down the cached connection and codecs so the next request
+// dials afresh.
+func (s *Shell) resetConn() {
+	if s.conn != nil {
+		s.conn.Close()
+	}
+	s.conn = nil
+	s.encoder = nil
+	s.decoder = nil
+}
+
 // sendIPCRequest sends a request to the daemon and receives a response.
+// The daemon serves multiple requests per connection, so the connection and
+// its codecs are cached. A failed write (e.g. the daemon closed a stale
+// connection) is retried once with a fresh dial. A failed read is never
+// retried because the request may have already executed, and commands such as
+// cp/rm/share/revoke are not idempotent.
 func (s *Shell) sendIPCRequest(method string, params interface{}) (*model.IPCResponse, error) {
 	s.requestID++
 
@@ -148,29 +180,34 @@ func (s *Shell) sendIPCRequest(method string, params interface{}) (*model.IPCRes
 		ID:     s.requestID,
 	}
 
-	// Connect to daemon if not already connected
-	if s.conn == nil {
-		conn, err := net.Dial("unix", s.ipcAddr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to daemon: %w", err)
+	freshDial := s.conn == nil
+	if freshDial {
+		if err := s.dial(); err != nil {
+			return nil, err
 		}
-		s.conn = conn
 	}
 
-	// Send request
-	encoder := json.NewEncoder(s.conn)
-	if err := encoder.Encode(req); err != nil {
-		s.conn.Close()
-		s.conn = nil
-		return nil, fmt.Errorf("failed to send IPC request: %w", err)
+	// Send request, retrying once on write failure with a fresh connection.
+	if err := s.encoder.Encode(req); err != nil {
+		s.resetConn()
+		if freshDial {
+			// The connection was already fresh; a write failure is fatal.
+			return nil, fmt.Errorf("failed to send IPC request: %w", err)
+		}
+		if err := s.dial(); err != nil {
+			return nil, err
+		}
+		if err := s.encoder.Encode(req); err != nil {
+			s.resetConn()
+			return nil, fmt.Errorf("failed to send IPC request: %w", err)
+		}
 	}
 
-	// Receive response
-	decoder := json.NewDecoder(s.conn)
+	// Receive response. Never retry a read failure: the request may already
+	// have been executed by the daemon.
 	var resp model.IPCResponse
-	if err := decoder.Decode(&resp); err != nil {
-		s.conn.Close()
-		s.conn = nil
+	if err := s.decoder.Decode(&resp); err != nil {
+		s.resetConn()
 		return nil, fmt.Errorf("failed to receive IPC response: %w", err)
 	}
 
@@ -358,7 +395,11 @@ Available commands:
 // Close closes the IPC connection.
 func (s *Shell) Close() error {
 	if s.conn != nil {
-		return s.conn.Close()
+		err := s.conn.Close()
+		s.conn = nil
+		s.encoder = nil
+		s.decoder = nil
+		return err
 	}
 	return nil
 }

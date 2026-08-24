@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed CLI↔Daemon IPC `write: broken pipe` on the second REPL command, caused by a connection-lifecycle mismatch (the daemon closed the connection after one request while the CLI reused a cached connection). The daemon (`internal/daemon/service.go`) now serves **multiple sequential requests over a single persistent Unix-socket connection** (`handleIPCConnection` loops decode → handle → encode until the client disconnects on `io.EOF`), tracks live connections, and on `Stop()` force-closes them and waits on a `sync.WaitGroup` so handler goroutines don't leak. The CLI (`internal/cli/shell.go`) caches the connection and its JSON encoder/decoder and self-heals: a failed **write** retries once with a fresh dial, while a failed **read** is never retried (`cp`/`rm`/`share`/`revoke` are not idempotent). Wire format is unchanged — line-delimited JSON `model.IPCRequest`/`model.IPCResponse`; `pkg/model` was not modified.
+
 ### Changed
 
 - Migrated the network layer to a **Kubo-backed IPFS adapter (V1)** (spec IPFS001). The rest of the system now depends on a capability-segregated IPFS port (`internal/ipfs/port.go`: `BlockStore`, `NameService`, `PeerInfo`, deferred `Messaging`, composed `Backend`), satisfied by the `internal/ipfs/kubo` adapter which talks to an **external Kubo daemon** over its RPC HTTP API (`github.com/ipfs/go-ipfs-api`). Only `internal/ipfs/kubo` may import Kubo/go-cid/libp2p.

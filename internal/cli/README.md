@@ -32,6 +32,17 @@ The shell supports the following commands:
 
 Commands are sent to the daemon as JSON-RPC 2.0 requests over a Unix socket. The daemon responds with JSON-RPC 2.0 responses.
 
+The shell opens a **single persistent connection per session** and caches it
+together with its JSON encoder/decoder (reusing one decoder so buffered bytes
+are never lost between requests). The daemon serves multiple sequential requests
+over this connection.
+
+The connection is **self-healing** on write: if sending a request fails (for
+example, the daemon closed a stale connection), the shell dials a fresh
+connection once and retries the write. A failed **read** is never retried —
+the request may already have executed on the daemon, and commands such as
+`cp`/`rm`/`share`/`revoke` are not idempotent.
+
 Example request:
 ```json
 {
