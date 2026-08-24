@@ -7,11 +7,15 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"io/ioutil"
 	"os"
 	"testing"
 
 	"github.com/revika/revika/internal/crypto"
+	"github.com/revika/revika/internal/daemon"
+	"github.com/revika/revika/internal/ledger"
+	"github.com/revika/revika/internal/node"
 	"github.com/revika/revika/internal/shard"
 	"github.com/revika/revika/internal/store"
 	"github.com/revika/revika/pkg/model"
@@ -296,6 +300,180 @@ func (k *X25519PublicKey) Bytes() []byte {
 	return k.pub.Bytes()
 }
 
+// TestPhase2LedgerManagement tests ledger operations for tracking files and access
+func TestPhase2LedgerManagement(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", "revika-ledger-test-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	ledgerPath := tmpDir + "/ledger.json"
+
+	// Load empty ledger
+	ledger, err := ledgerLoad(ledgerPath)
+	if err != nil {
+		t.Fatalf("failed to load ledger: %v", err)
+	}
+
+	// Create a tree
+	if err := ledger.AddTree("tree1", "/data"); err != nil {
+		t.Fatalf("failed to add tree: %v", err)
+	}
+
+	// Add a file to the tree
+	shards := []model.ShardRef{
+		{Hash: "shard1"}, {Hash: "shard2"}, {Hash: "shard3"}, {Hash: "shard4"}, {Hash: "shard5"},
+	}
+	if err := ledger.AddFile("tree1", "file1", "/data/document.txt", "sha256:abc123", shards, 3, 2); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+
+	// Grant access to a peer
+	if err := ledger.GrantAccess("tree1", "peer123"); err != nil {
+		t.Fatalf("failed to grant access: %v", err)
+	}
+
+	// Save ledger
+	if err := ledger.Save(ledgerPath); err != nil {
+		t.Fatalf("failed to save ledger: %v", err)
+	}
+
+	// Reload and verify
+	ledger2, err := ledgerLoad(ledgerPath)
+	if err != nil {
+		t.Fatalf("failed to reload ledger: %v", err)
+	}
+
+	trees, err := ledger2.ListTrees()
+	if err != nil {
+		t.Fatalf("failed to list trees: %v", err)
+	}
+
+	if len(trees) != 1 {
+		t.Fatalf("expected 1 tree, got %d", len(trees))
+	}
+
+	tree, err := ledger2.GetTree("tree1")
+	if err != nil {
+		t.Fatalf("failed to get tree: %v", err)
+	}
+
+	if len(tree.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(tree.Files))
+	}
+
+	t.Log("✓ Phase 2 ledger management test passed")
+	t.Log("  - Created tree and added file")
+	t.Log("  - Granted access to peer")
+	t.Log("  - Saved and reloaded ledger")
+}
+
+// TestPhase2DaemonIPC tests the daemon's IPC command handling
+func TestPhase2DaemonIPC(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", "revika-daemon-test-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	ledgerPath := tmpDir + "/ledger.json"
+	ipcAddr := tmpDir + "/daemon.sock"
+
+	// Create daemon service
+	svc, err := daemonNewService(ledgerPath, "127.0.0.1:5001", ipcAddr)
+	if err != nil {
+		t.Fatalf("failed to create daemon: %v", err)
+	}
+	defer svc.Stop()
+
+	// Test IPC commands
+	tests := []struct {
+		name   string
+		method string
+		params []byte
+	}{
+		{
+			name:   "connect",
+			method: "connect",
+			params: marshalParams(map[string]string{"network_type": "Public"}),
+		},
+		{
+			name:   "pwd",
+			method: "pwd",
+			params: []byte("null"),
+		},
+		{
+			name:   "ls",
+			method: "ls",
+			params: marshalParams(map[string]string{"path": "/"}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &model.IPCRequest{
+				Method: tt.method,
+				Params: tt.params,
+				ID:     1,
+			}
+
+			resp, err := svc.HandleIPCRequest(req)
+			if err != nil {
+				t.Errorf("HandleIPCRequest failed: %v", err)
+				return
+			}
+
+			if resp.Error != nil && tt.method != "unknown" {
+				t.Errorf("expected no error, got: %v", resp.Error.Message)
+			}
+
+			if len(resp.Result) == 0 && tt.method != "unknown" {
+				t.Errorf("expected non-empty result")
+			}
+		})
+	}
+
+	t.Log("✓ Phase 2 daemon IPC test passed")
+}
+
+// TestPhase2NodeServerStorage tests the node server's shard storage
+func TestPhase2NodeServerStorage(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", "revika-node-test-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	storeDir := tmpDir + "/store"
+	ledgerPath := tmpDir + "/ledger.json"
+
+	// Create and start node server
+	srv, err := nodeNewServer(storeDir, ledgerPath, "127.0.0.1:5001")
+	if err != nil {
+		t.Fatalf("failed to create node server: %v", err)
+	}
+	defer srv.Stop()
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to start node server: %v", err)
+	}
+
+	// Get initial stats
+	stats, err := srv.GetStats()
+	if err != nil {
+		t.Fatalf("failed to get stats: %v", err)
+	}
+
+	if stats["shards"] != 0 {
+		t.Errorf("expected 0 shards initially, got %v", stats["shards"])
+	}
+
+	t.Log("✓ Phase 2 node server storage test passed")
+	t.Logf("  - Node started with peer ID: %s", srv.GetPeerID())
+	t.Logf("  - Initial storage stats: %+v", stats)
+}
+
 // Benchmark: Full encryption + split for 100MB file
 func BenchmarkPhase1FullWorkflow(b *testing.B) {
 	tmpDir, _ := ioutil.TempDir("", "revika-bench-")
@@ -322,4 +500,32 @@ func BenchmarkPhase1FullWorkflow(b *testing.B) {
 			nodeStore.PutShard(s.ID, s.Bytes)
 		}
 	}
+}
+
+// ============================================================================
+// Phase 2 Helper Functions
+// ============================================================================
+
+// ledgerLoad loads a ledger from disk
+func ledgerLoad(path string) (*ledger.Ledger, error) {
+	return ledger.Load(path)
+}
+
+// daemonNewService creates a new daemon Service
+func daemonNewService(ledgerPath string, apiAddr string, ipcAddr string) (*daemon.Service, error) {
+	return daemon.NewService(ledgerPath, apiAddr, ipcAddr)
+}
+
+// marshalParams marshals parameters to JSON bytes
+func marshalParams(params interface{}) []byte {
+	data, err := json.Marshal(params)
+	if err != nil {
+		return []byte("null")
+	}
+	return data
+}
+
+// nodeNewServer creates a new node Server
+func nodeNewServer(storeDir string, ledgerPath string, apiAddr string) (*node.Server, error) {
+	return node.NewServer(storeDir, ledgerPath, apiAddr)
 }

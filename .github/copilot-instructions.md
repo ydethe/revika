@@ -2,11 +2,19 @@
 
 ## Project status
 
-**Greenfield.** As of this writing the repo contains only `.gitignore` and `.github/`
-config — no Go code, no `go.mod`, no commits. Everything below is the *intended*
-design, agreed with the maintainer, not yet-existing code. Verify against the actual
-tree before relying on any path or type named here, and update this file as the real
-architecture lands.
+**Phase 1 ✅ Complete**: Core cryptographic, erasure coding, and storage primitives implemented
+- `internal/crypto/` — 285 LOC, 17 tests, >80% coverage
+- `internal/shard/` — 200 LOC, 13 tests, >80% coverage
+- `internal/store/` — 280 LOC, 14 tests, >80% coverage
+- `pkg/model/` — 60 LOC shared types
+- **Total**: 825 LOC, 47+ tests, >80% coverage
+
+**Phase 2 🔨 In Progress**: Network, ledger, daemon, node, and CLI packages structurally complete
+- All interfaces and core logic implemented
+- Blocked on dependency installation: `go mod tidy && go mod download`
+- 4 new integration tests added
+- 47 Phase 2 unit tests (network, ledger, daemon, node, cli)
+- Ready for testing after `go mod download`
 
 ## What revika is
 

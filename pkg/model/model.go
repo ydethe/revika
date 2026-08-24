@@ -12,6 +12,15 @@ type ShardInfo struct {
 	ID    string // SHA256(encrypted_shard_bytes), hex-encoded
 	Bytes []byte // encrypted shard data
 	Index int    // position in k+m erasure coding scheme (0 to k+m-1)
+	CID   string // IPFS CIDv1 network address (empty until stored on the network)
+}
+
+// ShardRef references a stored shard in the ledger by both its integrity
+// hash and its IPFS network address.
+type ShardRef struct {
+	Hash  string // sha2-256 hex (integrity)
+	CID   string // IPFS CIDv1 (network address)
+	Index int    // position in the k+m array
 }
 
 // FileInfo represents metadata about a file before sharding.

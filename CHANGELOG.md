@@ -5,6 +5,25 @@ All notable changes to Revika will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Migrated the network layer to a **Kubo-backed IPFS adapter (V1)** (spec IPFS001). The rest of the system now depends on a capability-segregated IPFS port (`internal/ipfs/port.go`: `BlockStore`, `NameService`, `PeerInfo`, deferred `Messaging`, composed `Backend`), satisfied by the `internal/ipfs/kubo` adapter which talks to an **external Kubo daemon** over its RPC HTTP API (`github.com/ipfs/go-ipfs-api`). Only `internal/ipfs/kubo` may import Kubo/go-cid/libp2p.
+- `node.Server` and `daemon.Service` now depend on the IPFS port instead of `*network.Host`. `NewServer(storeDir, ledgerPath, apiAddr)` and `NewService(ledgerPath, apiAddr, ipcAddr)` take a Kubo RPC address (default `127.0.0.1:5001`). `cmd/node` and `cmd/daemon` replace the `-network` flag with `-ipfs-api`.
+- `node.Server.StoreShard` now writes to the store of record AND `AddBlock` + `Provide` on the Kubo backend. `internal/store/` remains the durable store of record (ciphertext shards); the pinned Kubo blockstore is the content-addressed transport/cache copy (V1 accepts ~2× disk).
+- Ledger `File.Shards` is now `[]model.ShardRef` (was `[]string`).
+
+### Added
+
+- `pkg/model.ShardInfo` gained a `CID` field, and a new `model.ShardRef{Hash, CID, Index}`. Shard ID stays sha2-256 hex (integrity); CID is the network address. Shards are stored as single-block CIDv1 (`raw` codec, `sha2-256`), so a shard's CID multihash equals its `model.ComputeShardID` hash — reconciling the Phase-1 "Shard ID = SHA256" decision with IPFS002 (CID addressing).
+- `internal/ipfs/README.md` documenting the port, the Kubo V1 adapter, the import invariant, and the CID⇔sha256 contract.
+- **Operational requirement:** V1 requires a running Kubo daemon (`ipfs daemon`) alongside revika.
+
+### Deprecated
+
+- The direct go-libp2p host and its five stream-protocol handlers (`internal/network/`) are now the **dormant V2 path**, gated behind the `//go:build v2direct` tag and excluded from the default `go build ./...` / `go test ./...`. Overlay protocols (ledger-sync/share/revoke) and LAN mDNS discovery are deferred for V1.
+
 ## [0.1.0] - 2026-08-22
 
 ### Fixed

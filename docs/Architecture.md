@@ -45,7 +45,7 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system with
 ### 2.4 Shared Services
 
 - **Ledger** — Per-user distributed record of directory trees, shards, and access grants
-- **DHT (libp2p Kademlia)** — Peer discovery on WAN; mDNS on LAN
+- **DHT (libp2p Kademlia)** — Peer discovery on WAN (LAN mDNS discovery deferred post-M2)
 
 ---
 
@@ -127,14 +127,72 @@ These protocol IDs are the canonical direct-adapter surface (V2 target and dual-
 
 - **Node Peer ID** — libp2p-generated from Ed25519 keypair; acts as node identity
 - **User Peer ID** — libp2p identity for User Daemon; separate from file encryption key
-- **Peer discovery:** DHT on WAN, mDNS on LAN (configurable per network type)
+- **Peer discovery:** DHT on WAN (LAN mDNS discovery deferred post-M2)
 
 ### 4.3 Transport
 
 - libp2p handles encryption (TLS 1.3), multiplexing, NAT traversal
 - No bespoke wire protocol
 
-### 4.4 Network Types (IPFS Terminology)
+### 4.4 V1 IPFS Port (Kubo-backed adapter)
+
+Per spec IPFS001, V1 satisfies the network layer through a **Kubo-backed adapter**
+rather than an in-process libp2p host. The rest of the system depends on a
+capability-segregated **IPFS port** (`internal/ipfs/`) and never touches
+Kubo/CID/libp2p types directly.
+
+- **`internal/ipfs/port.go`** — the port interfaces:
+  - `BlockStore` — `AddBlock` / `GetBlock` / `Pin` / `Provide` (single-block
+    encrypted shards).
+  - `NameService` — `PublishIPNS` / `ResolveIPNS` (mutable root pointer).
+  - `PeerInfo` — `ID` / `Peers` / `Connect`.
+  - `Messaging` — ledger-sync/share/revoke overlays; **deferred for V1** (defined
+    for forward-compatibility, not wired).
+  - `Backend` composes `BlockStore` + `NameService` + `PeerInfo`.
+- **`internal/ipfs/kubo/`** — the V1 adapter. It talks to an **external Kubo
+  daemon** over its RPC HTTP API via `github.com/ipfs/go-ipfs-api`. Kubo/network
+  errors are wrapped as `model.ErrNetworkFailure` so consumers never see Kubo
+  internals.
+- **Import invariant:** ONLY `internal/ipfs/kubo` may import Kubo, `go-cid`, or
+  libp2p packages. `internal/node`, `internal/daemon`, `internal/cli`, and
+  `pkg/model` stay Kubo-free.
+- **Operational requirement:** V1 requires a running Kubo daemon
+  (`ipfs daemon`, default RPC `127.0.0.1:5001`) alongside revika. Adapter
+  construction is lazy; reachability failures surface on the first
+  network-touching call.
+
+#### Shard ID ⇔ CID reconciliation
+
+Shards are stored as a **single-block CIDv1, `raw` codec, `sha2-256`** multihash,
+so the CID's multihash digest equals our existing sha2-256 shard hash
+(`model.ComputeShardID`). This reconciles the Phase-1 "Shard ID = SHA256"
+decision with IPFS002 (CID addressing):
+
+- **Shard ID** stays a sha2-256 hex string — the durable *integrity* identifier.
+- **CID** is the *network address* used to fetch the block from IPFS.
+- `pkg/model.ShardInfo` gained a `CID` field, and a new
+  `model.ShardRef{Hash, CID, Index}` carries both. Ledger `File.Shards` is now
+  `[]model.ShardRef` (was `[]string`).
+
+#### Store of record vs. content-addressed copy
+
+`internal/store/` remains the **store of record**: nodes durably hold the
+ciphertext shards they cannot read. Kubo's pinned blockstore is the
+content-addressed transport/cache copy. V1 accepts ~2× disk for a simpler
+design — `node.Server.StoreShard` writes to the store AND performs `AddBlock` +
+`Provide` on the Kubo backend.
+
+### 4.5 Direct libp2p path (V2, dormant)
+
+The direct go-libp2p host and its five stream-protocol handlers
+(put-shard/get-shard/ledger-sync/share/revoke) live in `internal/network/` and
+are preserved as the **dormant V2 path**, gated behind the `//go:build v2direct`
+tag. They are therefore excluded from `go build ./...` / `go test ./...` by
+default. The protocol IDs in Section 4.1 describe this V2 surface; in V1 the
+equivalent operations are provided by the Kubo adapter. Overlay protocols
+(ledger-sync/share/revoke) and LAN mDNS discovery are deferred for V1.
+
+### 4.6 Network Types (IPFS Terminology)
 
 | Type | Discovery | Bootstrap | Use Case |
 |------|-----------|-----------|----------|
@@ -146,30 +204,61 @@ These protocol IDs are the canonical direct-adapter surface (V2 target and dual-
 
 ## 5. Module Layout (Go)
 
+### Implementation Status
+
+| Package | Status | Details |
+|---------|--------|---------|
+| **Phase 1** | | |
+| `internal/crypto/` | ✅ Complete | PBKDF2, AES-256-GCM, ECIES key wrapping (285 LOC, 17 tests) |
+| `internal/shard/` | ✅ Complete | Reed-Solomon k=3/m=2 (200 LOC, 13 tests) |
+| `internal/store/` | ✅ Complete | File-based persistent storage (280 LOC, 14 tests) |
+| `pkg/model/` | ✅ Complete | Shared types: ShardInfo, FileInfo, LedgerEntry (60 LOC) |
+| **Phase 2** | | |
+| `internal/ipfs/` | ✅ V1 network layer | IPFS port (`port.go`) + Kubo adapter (`kubo/`) over external Kubo RPC |
+| `internal/network/` | 💤 Dormant (V2) | Direct libp2p host + 5 stream handlers, gated behind `//go:build v2direct` |
+| `internal/ledger/` | ✅ Complete | Ledger read/write, sync logic (10 tests) |
+| `internal/daemon/` | 🔨 Structured | IPC server, service logic (7 tests) |
+| `internal/node/` | 🔨 Structured | Node server, shard handlers (5 tests) |
+| `internal/cli/` | ✅ Complete | Interactive shell, command handlers (9 tests) |
+| `cmd/{daemon,node,cli}/` | ✅ Complete | Entry points complete |
+
+### Directory Structure
+
 ```
 revika/
 ├── go.mod                          # Module: github.com/revika/revika
 ├── cmd/
-│   ├── daemon/                     # User Daemon binary
-│   │   └── main.go
-│   ├── node/                       # Node Server binary
-│   │   └── main.go
-│   └── cli/                        # User CLI binary (testing)
-│       └── main.go
+│   ├── daemon/main.go              # User Daemon entry point ✅
+│   ├── node/main.go                # Node Server entry point ✅
+│   └── cli/main.go                 # User CLI entry point ✅
 ├── internal/
-│   ├── crypto/                     # Encryption, key derivation
-│   ├── shard/                      # Erasure coding, shard ops
-│   ├── ledger/                     # Ledger read/write, sync
-│   ├── network/                    # libp2p protocol handlers
-│   ├── daemon/                     # User Daemon business logic
-│   ├── node/                       # Node Server business logic
-│   ├── cli/                        # CLI shell, subcommand handlers
-│   └── store/                      # Local storage backends (file-based, mock)
+│   ├── crypto/                     # ✅ Encryption, key derivation (Phase 1)
+│   ├── shard/                      # ✅ Erasure coding (Phase 1)
+│   ├── store/                      # ✅ Persistent storage / store of record (Phase 1)
+│   ├── ledger/                     # ✅ Ledger management (Phase 2)
+│   ├── ipfs/                       # ✅ V1 IPFS port (port.go) + Kubo adapter (kubo/)
+│   ├── network/                    # 💤 V2 direct libp2p (build tag: v2direct)
+│   ├── daemon/                     # 🔨 Daemon service (Phase 2)
+│   ├── node/                       # 🔨 Node server (Phase 2)
+│   └── cli/                        # ✅ CLI shell (Phase 2)
 ├── pkg/
-│   └── model/                      # Shared types (File, Shard, Ledger)
+│   └── model/                      # ✅ Shared types (Phase 1)
 └── docs/
-    └── Architecture.md             # This document
+    ├── Architecture.md             # This document
+    └── Specifications.md           # Design requirements
 ```
+
+### Test Coverage
+
+| Phase | Package | Tests | Coverage |
+|-------|---------|-------|----------|
+| P1 | crypto, shard, store, model | 44 unit | >80% |
+| P1 | integration (Phase 1) | 3 integration | ✅ |
+| P2 | network, ledger, daemon, node, cli | 47 unit | — |
+| P2 | integration (Phase 2) | 4 integration | ✅ |
+| **Total** | | **98 tests** | **47 blocking** |
+
+**Blocking Status**: Network and node packages blocked on `libp2p` modules not in `go.mod`. Run `go mod tidy && go mod download` to proceed with testing.
 
 ---
 
@@ -493,11 +582,17 @@ The Core shall depend on the following logical port capabilities (exact Go signa
 ## 20. Package & Dependency Direction
 
 - **Core packages remain adapter-agnostic:** `internal/crypto`, `internal/shard`, `internal/store`, `internal/ledger`, and domain orchestration shall avoid direct dependency on Kubo-specific code.
-- **Adapter packaging:**
-  - `internal/network/port` for Core-facing interfaces and canonical errors.
-  - `internal/network/adapter/kubo` for V1 compatibility path.
-  - `internal/network/adapter/direct` for V2 direct libp2p/IPFS-compatible path.
-  - `internal/network/contracttest` for shared adapter conformance suite.
+- **Adapter packaging (as implemented):**
+  - `internal/ipfs/port.go` for Core-facing port interfaces (`BlockStore`,
+    `NameService`, `PeerInfo`, deferred `Messaging`, composed `Backend`) and
+    canonical error mapping to `model.ErrNetworkFailure`.
+  - `internal/ipfs/kubo/` for the V1 Kubo-backed adapter (external Kubo RPC via
+    `go-ipfs-api`). This is the ONLY package permitted to import Kubo,
+    `go-cid`, or libp2p.
+  - `internal/network/` for the V2 direct libp2p/IPFS-compatible path, gated
+    behind `//go:build v2direct` and excluded from the default build/test.
+  - A shared adapter conformance suite is deferred until the V2 path is
+    reactivated.
 - **Dependency policy:**
   - V1 may depend on Kubo APIs through the Kubo adapter only.
   - V2 direct adapter shall depend only on libp2p/IPFS libraries necessary for compliance and shall avoid introducing non-essential dependencies.

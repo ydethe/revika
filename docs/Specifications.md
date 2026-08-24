@@ -66,7 +66,7 @@ Revika is a decentralized, distributed, end-to-end encrypted storage system that
   - **Hybrid:** Controlled discovery with known bootstrap nodes.
   - **Private:** Restricted to pre-configured peers only.
 - **NAT Traversal:** The system shall transparently handle clients behind NAT/firewalls.
-- **Peer Discovery:** The system shall support automated peer discovery on both LAN (mDNS) and WAN (DHT).
+- **Peer Discovery:** The system shall support automated peer discovery on the WAN via Kademlia DHT. LAN discovery (mDNS) is deferred to a post-M2 milestone.
 
 ### 2.8 User Roles & Deployment
 
