@@ -30,6 +30,18 @@ services:
       - pangolin.public-resources.$COMPOSE_PROJECT_NAME.auth.sso-roles[0]=Member
       - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].method=http
       - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].port=5001
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].healthcheck.enabled=true
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].healthcheck.hostname=$COMPOSE_PROJECT_NAME-kubo-1
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].healthcheck.port=8080
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].healthcheck.path=/ipfs/QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].healthcheck.method=GET
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].healthcheck.status=200
+
+      # Page de maintenance en mode automatique
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.maintenance.enabled=true
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.maintenance.type=automatic
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.maintenance.title=Maintenance en cours
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.maintenance.message=Le service est temporairement indisponible.
 
 volumes:
   kubo_data:
