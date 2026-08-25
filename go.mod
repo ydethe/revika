@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/ipfs/go-cid v0.6.2
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/klauspost/reedsolomon v1.14.1
+	github.com/klauspost/reedsolomon v1.14.2
 	github.com/libp2p/go-libp2p v0.48.0
 	github.com/libp2p/go-libp2p-kad-dht v0.42.1
 	github.com/libp2p/go-libp2p-record v0.3.1
