@@ -1,7 +1,6 @@
 services:
   kubo:
-    image: ipfs/kubo:latest
-    container_name: kubo
+    image: ipfs/kubo:v0.43.0
     restart: unless-stopped
     volumes:
       - kubo_data:/data/ipfs
@@ -10,8 +9,8 @@ services:
       IPFS_PROFILE: server
     ports:
       - "4001:4001"     # P2P
-      - "127.0.0.1:5001:5001"     # API
-      - "8080:8080"     # Gateway
+      # - "127.0.0.1:5001:5001"     # API
+      # - "8080:8080"     # Gateway
     command: ["daemon"]
     healthcheck:
       test: ["CMD", "ipfs", "id"]
@@ -22,7 +21,22 @@ services:
     stop_grace_period: 30s
     security_opt:
       - no-new-privileges:true
+    labels:
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.name=$COMPOSE_PROJECT_NAME
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.full-domain=$HOST
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.protocol=http
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.ssl=true
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.auth.sso-enabled=true
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.auth.sso-roles[0]=Member
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].method=http
+      - pangolin.public-resources.$COMPOSE_PROJECT_NAME.targets[0].port=5001
 
 volumes:
   kubo_data:
   kubo_export:
+      
+networks:
+  default:
+    external: true
+    name: $TRAEFIK_NETWORK
+    
