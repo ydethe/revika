@@ -14,7 +14,7 @@ require (
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/oschwald/maxminddb-golang/v2 v2.5.0
 	golang.org/x/crypto v0.54.0
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
