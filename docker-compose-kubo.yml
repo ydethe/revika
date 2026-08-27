@@ -9,7 +9,7 @@ services:
       IPFS_PROFILE: server
     ports:
       - "4001:4001"     # P2P
-      # - "127.0.0.1:5001:5001"     # API
+      - "127.0.0.1:5001:5001"     # API
       # - "8080:8080"     # Gateway
     command: ["daemon"]
     healthcheck:
