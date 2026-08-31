@@ -33,7 +33,7 @@
     "useGitignore": true,
     "useDotIgnore": true,
     "useDefaultPatterns": true,
-    "customPatterns": []
+    "customPatterns": ["security/**"]
   },
   "security": {
     "enableSecurityCheck": true
