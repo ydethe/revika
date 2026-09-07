@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "revika — Decentralized Encrypted P2P Storage",
+    "quality_profile": "showcase",
+    "viewBox": [1341, 700],
+    "repository": {
+      "url": "https://github.com/ydethe/revika",
+      "revision": "475058826127383feff27bdebfc2122c2484a432"
+    },
+    "views": [
+      { "id": "store-path", "label": "Store data path", "focus": ["revika-ctl", "pipeline", "netstore", "libp2p", "node-server", "diskstore"], "note": "Follow a file from the client CLI through the encode pipeline, over libp2p, into an untrusted node's blob store." },
+      { "id": "trust-model", "label": "Client vs node trust", "focus": ["pipeline", "crypto-cap", "netstore", "node-server", "diskstore"], "note": "All keys and plaintext stay client-side; nodes only ever hold opaque, self-verifying ciphertext shards." },
+      { "id": "node-ops", "label": "Node operations", "focus": ["node-server", "defense", "ledger", "maintenance", "metrics"], "note": "Ingress defense, ownership ledger, self-healing repair/rebalance, and the admin/metrics surface." }
+    ]
+  },
+  "components": [
+    { "id": "revika-ctl", "type": "frontend", "label": "revika-ctl", "sublabel": "User CLI", "tag": "cp · ls · share", "pos": [35, 330], "size": [143, 66], "sources": [{ "path": "cmd/revika-ctl/commands.go" }] },
+    { "id": "pipeline", "type": "backend", "label": "Encode Pipeline", "sublabel": "chunk · encrypt · erasure", "pos": [223, 330], "size": [143, 66], "sources": [{ "path": "internal/pipeline/pipeline.go" }] },
+    { "id": "crypto-cap", "type": "security", "label": "Crypto · Capabilities", "sublabel": "AES-GCM · ML-KEM caps", "pos": [223, 130], "size": [143, 66], "sources": [{ "path": "internal/cap/cap.go" }, { "path": "internal/manifest/file.go" }] },
+    { "id": "netstore", "type": "backend", "label": "NetStore · Placement", "sublabel": "client half · placement", "pos": [411, 330], "size": [143, 66], "sources": [{ "path": "internal/net/client.go" }, { "path": "internal/net/placement.go" }] },
+    { "id": "libp2p", "type": "messagebus", "label": "libp2p Host · DHT", "sublabel": "QUIC · DHT discovery", "pos": [599, 330], "size": [143, 66], "sources": [{ "path": "internal/net/host.go" }, { "path": "internal/net/dht.go" }] },
+    { "id": "geoip", "type": "external", "label": "GeoIP", "sublabel": "self-geolocation", "pos": [599, 130], "size": [143, 66], "sources": [{ "path": "internal/geoip/geoip.go" }] },
+    { "id": "defense", "type": "security", "label": "Ingress Defense", "sublabel": "PoW · rate limits", "pos": [787, 130], "size": [143, 66], "sources": [{ "path": "internal/net/defense.go" }, { "path": "internal/net/ratelimit.go" }] },
+    { "id": "metrics", "type": "frontend", "label": "Metrics · Admin", "sublabel": "/status · /metrics", "pos": [975, 130], "size": [143, 66], "sources": [{ "path": "internal/net/metrics.go" }] },
+    { "id": "node-server", "type": "backend", "label": "Node Server", "sublabel": "revika-node · RX", "tag": "/revika/shard/1.2.0", "pos": [787, 330], "size": [143, 66], "sources": [{ "path": "internal/net/server.go" }, { "path": "cmd/revika-node/main.go" }] },
+    { "id": "diskstore", "type": "database", "label": "DiskStore", "sublabel": "content-addressed blobs", "tag": "opaque ciphertext", "pos": [975, 330], "size": [143, 66], "sources": [{ "path": "internal/store/disk.go" }] },
+    { "id": "ledger", "type": "database", "label": "Ledger", "sublabel": "SQLite ownership · quota", "pos": [787, 530], "size": [143, 66], "sources": [{ "path": "internal/ledger/ledger.go" }] },
+    { "id": "maintenance", "type": "backend", "label": "Repair · Rebalance", "sublabel": "self-healing · diffusion", "pos": [975, 530], "size": [143, 66], "sources": [{ "path": "internal/repair/repair.go" }, { "path": "internal/net/rebalance.go" }] },
+    { "id": "azure", "type": "cloud", "label": "Azure Files", "sublabel": "Container Apps", "pos": [1163, 330], "size": [143, 66] }
+  ],
+  "boundaries": [
+    { "kind": "security-group", "label": "User trust zone — keys + plaintext", "wraps": ["revika-ctl", "crypto-cap", "pipeline", "netstore"] },
+    { "kind": "security-group", "label": "Untrusted node zone — ciphertext only", "wraps": ["defense", "metrics", "node-server", "diskstore", "ledger", "maintenance"] }
+  ],
+  "connections": [
+    { "id": "ctl-pipeline", "from": "revika-ctl", "to": "pipeline", "label": "store file", "variant": "emphasis", "labelDy": -50 },
+    { "id": "pipeline-netstore", "from": "pipeline", "to": "netstore", "label": "shards + grant", "variant": "emphasis", "labelDy": -50 },
+    { "id": "netstore-libp2p", "from": "netstore", "to": "libp2p", "label": "PutStripe", "variant": "emphasis", "labelDy": -50 },
+    { "id": "libp2p-server", "from": "libp2p", "to": "node-server", "label": "shard PUT", "variant": "emphasis", "labelDy": -50 },
+    { "id": "server-diskstore", "from": "node-server", "to": "diskstore", "label": "write by CID", "variant": "emphasis", "labelDy": -50 },
+    { "id": "pipeline-crypto", "from": "pipeline", "to": "crypto-cap", "label": "encrypt · wrap cap", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+    { "id": "defense-server", "from": "defense", "to": "node-server", "label": "PoW · rate-limit", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelDy": 26 },
+    { "id": "server-ledger", "from": "node-server", "to": "ledger", "label": "owner · quota", "fromSide": "bottom", "toSide": "top", "labelDy": 60 },
+    { "id": "libp2p-geoip", "from": "libp2p", "to": "geoip", "label": "geolocate public IP", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "maintenance-diskstore", "from": "maintenance", "to": "diskstore", "label": "regenerate shards", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "maintenance-ledger", "from": "maintenance", "to": "ledger", "label": "stripes", "variant": "dashed", "fromSide": "left", "toSide": "right" },
+    { "id": "metrics-diskstore", "from": "metrics", "to": "diskstore", "label": "status", "fromSide": "bottom", "toSide": "top", "labelDy": 60 },
+    { "id": "diskstore-azure", "from": "diskstore", "to": "azure", "label": "persist", "variant": "dashed", "fromSide": "right", "toSide": "left" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Client intelligence", "items": ["chunk → compress (DEFLATE) → encrypt → Reed–Solomon k=4/m=2", "AES-256-GCM, a fresh random key per chunk", "Address by SHA-256(shard); manifests are encrypted Merkle DAGs", "Any k of k+m shards reconstruct a chunk"] },
+    { "dot": "rose", "title": "Trust model", "items": ["Nodes hold only opaque, self-verifying ciphertext shards", "All keys, chunking, and crypto live client-side", "Trusted for availability, never for confidentiality", "PQC-class: ML-KEM-768 cap wrap, Ed25519 identity"] },
+    { "dot": "amber", "title": "Node ingress defense", "items": ["PoW gates fresh-owner PUT only", "Per-owner and per-subnet rate limits", "Runtime + persistent auto-blocklist", "Repair/rebalance grant path and DELETE are exempt"] },
+    { "dot": "cyan", "title": "Self-healing", "items": ["Repair regenerates missing shards with no key (deterministic RS)", "§3.4 diffusion rebalancer: make-before-break", "Guards: possession probe + per-node concentration cap", "Content addresses never change — manifest is never rewritten"] },
+    { "dot": "violet", "title": "Ownership & quota", "items": ["Per-node SQLite ledger (not a blockchain)", "Content-addressed dedup with multi-owner refcount", "Per-owner quota ramp from first-seen", "Ed25519 repair grants authorize moves without user keys"] }
+  ]
+}
