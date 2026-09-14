@@ -1,0 +1,23 @@
+{
+    "$schema": "https://calm.finos.org/release/1.2/meta/calm.json",
+    "unique-id": "decentralized-e2ee-storage",
+    "name": "Decentralized End-to-End Encrypted Storage",
+    "description": "A self-hosted Dropbox/Drive alternative that stores files across a peer-to-peer network instead of a central server. Files are client-side split into chunks, end-to-end encrypted, and distributed across many independent nodes so that no single node ever holds a whole file or any plaintext. Redundant chunk placement lets the system tolerate node loss while preserving confidentiality and availability.",
+    "metadata": [
+        {
+            "version": "1.0.0",
+            "created-by": "Architecture Team",
+            "topology": "peer-to-peer",
+            "encryption": "end-to-end"
+        }
+    ],
+    "nodes": [
+        {
+            "unique-id": "p2p-encrypted-storage-system",
+            "node-type": "system",
+            "name": "P2P Encrypted Storage System",
+            "description": "Decentralized, distributed, end-to-end encrypted storage system running over a peer-to-peer network. Files are split into chunks, encrypted on the client, and spread across many independent nodes so no single node holds a complete file or any plaintext. Redundant, distributed chunk placement provides fault tolerance against node loss without a central server."
+        }
+    ],
+    "relationships": []
+}

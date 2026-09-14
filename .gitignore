@@ -14,6 +14,11 @@ manifest.json
 testfile.bin
 .*
 *.mmdb
+node_modules/
+.DS_Store
+*.log
+.vscode/settings.json
+**/.docusaurus/
 
 # Test binary, built with `go test -c`
 *.test
