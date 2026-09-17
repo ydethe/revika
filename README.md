@@ -34,9 +34,10 @@ failure-domain-aware placement, ciphertext-only repair, and a cancellable daemon
 Network-specific adapters, DHT/libp2p protocols, hosted-service integrations, FUSE, and
 native operating-system bindings are intentionally excluded from this core implementation.
 
-All generic builds and tests must pass with `CGO_ENABLED=0`. Ed25519 is reserved for signatures;
-cryptographic key establishment and capability delivery remain behind versioned PQC-compatible
-interfaces.
+All generic builds and tests must pass with `CGO_ENABLED=0`. Ed25519 is reserved for signatures.
+Post-quantum key establishment is not yet implemented: shared capabilities currently carry their
+encryption key in cleartext inside the signed capability blob, a known confidentiality gap that
+must be closed with a PQC key-encapsulation mechanism (such as ML-KEM) before sharing is compliant.
 
 ## Fabric model
 

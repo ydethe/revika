@@ -111,7 +111,7 @@ A waiver is required before shipping or expanding any non-PQC cryptographic mech
 4. the compensating controls and migration plan;
 5. an owner, approval date, expiry date, and removal criterion.
 
-**Current waiver status: none approved.** The prototype currently contains AES-256-GCM, Ed25519, and X25519-related code. AES-256-GCM is retained as a symmetric prototype mechanism with a quantum security margin, and Ed25519 is explicitly permitted for signatures. X25519 is not a post-quantum key-establishment mechanism and therefore remains a compliance gap in capability wrapping; it must be replaced by a standardized PQC mechanism such as ML-KEM before the feature can be considered compliant. This is a pending engineering decision, not an approved waiver.
+**Current waiver status: none approved.** The prototype currently contains AES-256-GCM and Ed25519. AES-256-GCM is retained as a symmetric prototype mechanism with a quantum security margin, and Ed25519 is explicitly permitted for signatures. No key-establishment or key-encapsulation mechanism is implemented yet: shared capabilities carry their encryption key in cleartext inside the signed capability blob (`internal/cap`), which is a compliance gap in capability confidentiality. A standardized PQC key-encapsulation mechanism such as ML-KEM must wrap that key before sharing can be considered compliant. This is a pending engineering decision, not an approved waiver.
 
 ## 3. Architectural principles
 
@@ -593,7 +593,7 @@ The owner remains responsible for defining whether a recipient may re-share a ca
 
 CDC is required because fixed chunk boundaries cause a small insertion to rewrite every subsequent chunk. A rolling or equivalent content-defined boundary algorithm keeps most unchanged regions addressed by the same chunk IDs after an edit. This reduces network traffic, preserves deduplication, and limits the scope of conflict resolution.
 
-CDC is part of the target design. The current proof of concept uses a fixed-size chunker, so this requirement remains planned until the CDC implementation and compatibility tests are complete.
+CDC is implemented. `internal/pipeline` splits input with a content-defined, rolling-hash chunker (configurable minimum, average, and maximum sizes), so localized edits keep unchanged regions on stable boundaries. Cross-version compatibility rules for the on-disk chunk format remain to be finalized.
 
 ### 7.3 CRDT and vector clocks
 
@@ -664,14 +664,13 @@ daemon, and native operating-system components are intentionally not implemented
 | Content-defined chunking | Initial deterministic CDC implementation and tests |
 | Provider contract and sync anchors | Types and serialization implemented; pure-Go in-memory reference provider implemented |
 | Immutable content-addressed manifest nodes | Implemented with deterministic encoding, SHA-256 addressing, validation, and generic object-store persistence |
-| Persistent manifest provider | Initial snapshot-backed provider implemented with signed roots and reopen support; full COW DAG mutations remain planned |
+| Persistent manifest provider | Initial snapshot-backed provider implemented with signed roots and reopen support; the snapshot currently serializes item state (including cleartext contents) directly to the object store, so wiring persistence through the encryption/erasure pipeline and full COW DAG mutations remain planned |
 | Mutable roots | Signed monotonic memory and atomic file-backed root stores implemented; network publication excluded |
 | Client-side authenticated encryption | AES-256-GCM chunk protection implemented behind a versioned API; PQC key delivery remains planned |
 | Erasure coding | Reed-Solomon data/parity encoding, integrity checks, and reconstruction implemented |
-| Repair and placement | Planned |
-| Sharing capabilities | Signed scoped Read/Write/Delete capabilities implemented; PQC recipient wrapping remains planned |
+| Sharing capabilities | Signed scoped Read/Write/Delete capabilities implemented; capability key is currently cleartext inside the signed blob; PQC recipient wrapping remains planned |
 | CRDTs and vector clocks | Vector-clock comparison/merge and deterministic text CRDT implemented |
-| SQLite persistence | Pure-Go SQLite schema and migration foundation implemented |
+| SQLite persistence | Pure-Go SQLite schema (identities, root pointers, items, manifests, chunks, providers, shards, capabilities, vector clocks, CRDT operations, sync anchors, repair jobs) and numbered-migration runner implemented |
 | Synchronization | Injectable anchor-driven sync engine implemented; filesystem watchers and conflict-copy surfaces remain planned |
 | Placement and repair | Failure-domain-aware target selection and ciphertext-only shard repair implemented |
 | Background daemon | Cancellable pure-Go lifecycle coordinator implemented; network wiring remains excluded |
@@ -688,11 +687,11 @@ The status table is intentionally conservative. A target interface can be specif
 | PLK002 | No Node owns a special role. Bootstrap peers only provide DHT entry and discovery. | Implemented by design; DHT discovery expansion planned |
 | PLK003 | All content is encrypted at the Client before shard upload; Nodes store ciphertext only. | Implemented |
 | PLK004 | Crypto is isolated behind replaceable interfaces; encryption/key encapsulation must be PQC-compatible, with Ed25519 allowed for signatures. | Partially implemented; current prototype uses AES-256-GCM and Ed25519, PQC migration/coverage continues |
-| ITM001 | Files become chunks, encrypted chunks become RAID6-like data/parity shards, and shards are distributed across independent targets. | Core implemented; CDC and multi-provider placement planned |
+| ITM001 | Files become chunks, encrypted chunks become RAID6-like data/parity shards, and shards are distributed across independent targets. | Core implemented (CDC, encryption, erasure coding); end-to-end pipeline wiring into the provider and multi-provider placement planned |
 | SHR001 | A capability can identify one file or subtree and be wrapped for another Client. | Initial read sharing implemented |
 | SHR002 | Access Controller capabilities carry explicit Read, Write, and Delete roles. | Design specified; full role enforcement planned |
 | SHR003 | Writable shared objects use CRDT merge, vector-clock causality, and explicit conflict handling. | Planned |
-| SHR004 | CDC preserves stable chunk boundaries across localized edits. | Planned; fixed-size chunking currently exists |
+| SHR004 | CDC preserves stable chunk boundaries across localized edits. | Implemented; rolling-hash content-defined chunker in `internal/pipeline` |
 | SHR005 | A file representation-specific CRDT merges concurrent operations without a central coordinator. | Planned |
 | SHR006 | Vector clocks record causal relationships between modifications. | Planned |
 | DCV001 | Provider adapters normalize disconnects, retries, reconnection, discovery, and new target onboarding; repair restores redundancy. | Partially implemented; complete seamless multi-provider discovery planned |
