@@ -3,9 +3,9 @@
 - [revika Architecture](#revika-architecture)
   - [1. Purpose and scope](#1-purpose-and-scope)
   - [2. Language and runtime choice](#2-language-and-runtime-choice)
-    - [Constraints](#constraints)
-        - [Post-quantum cryptography](#post-quantum-cryptography)
-            - [Waiver process](#waiver-process)
+  - [Constraints](#constraints)
+    - [Post-quantum cryptography](#post-quantum-cryptography)
+      - [Waiver process](#waiver-process)
   - [3. Architectural principles](#3-architectural-principles)
     - [3.1 Least knowledge](#31-least-knowledge)
     - [3.2 Interchangeable Nodes](#32-interchangeable-nodes)
@@ -67,9 +67,24 @@ Go is selected because it is compiled, produces self-contained binaries, and is 
 - a practical ecosystem for P2P networking, including `go-libp2p` and its QUIC and Kademlia implementations;
 - straightforward interface-based dependency injection, which makes storage backends replaceable and testable.
 
-Go is used for the portable core. Native operating-system cloud integrations may require thin platform-specific bindings, but those bindings must translate to the common Go interfaces and must not reimplement revika's storage, cryptography, or conflict logic.
+Go is used for the portable core. The generic implementation and all shipped Go binaries must build and test with `CGO_ENABLED=0`. The generic core must not import `C`, depend on cgo-only packages, or require native operating-system bindings. Native operating-system cloud integrations are outside the generic implementation scope; if they are added later, they must remain separate thin translation shims and must not reimplement revika's storage, cryptography, or conflict logic.
 
 ## Constraints
+
+### No cgo in the generic implementation
+
+The generic revika implementation is cgo-free by design. Every core package, command, test, and
+default build must work with `CGO_ENABLED=0`. CI shall test that mode explicitly, and dependencies
+that require cgo are prohibited from the generic module. This keeps the control plane portable and
+ensures that network-neutral storage, manifests, cryptography, synchronization, and local test
+implementations do not depend on a platform toolchain.
+
+Native bindings for macOS File Provider, Windows Cloud Filter, Linux GVfs/GIO, or another operating
+system framework are not part of this implementation phase. They may be developed as separately
+maintained translation layers in the future, but they must not move provider, manifest, encryption,
+sharing, CRDT, or conflict logic across the generic boundary. IPFS, Hyphanet, Freenet, hosted-cloud,
+DHT, and revika-network adapters are likewise excluded from the generic core and may only implement
+the documented provider contracts in separate adapter packages.
 
 ### Post-quantum cryptography
 
@@ -638,24 +653,30 @@ Delete first changes the logical manifest by publishing a tombstone or removing 
 
 ## 10. Current implementation status
 
-The repository currently contains a proof-of-concept for the core storage path:
+The repository currently contains the first pure-Go foundation of the generic core. Network,
+daemon, and native operating-system components are intentionally not implemented here:
 
 | Area | Current status |
 | --- | --- |
-| Go CLI and Node binaries | Implemented: `revika-ctl` and `revika-node` |
-| Content-addressed stores | Implemented: memory and disk stores |
-| Client-side encryption | Implemented with AES-256-GCM in the current prototype; the abstraction must remain PQC-compatible |
-| Erasure coding | Implemented with Reed-Solomon data and parity shards |
-| Chunking | Fixed-size chunker implemented; CDC planned |
-| Repair | Ciphertext-only availability probing and shard regeneration implemented |
-| Native revika networking | libp2p host and shard/probe protocols implemented |
-| Sharing | Initial encrypted read-capability wrapping implemented; complete role and write model planned |
-| Provider API and metadata bridge | Implemented and tested according to `CloudStorage.md` |
-| Mutable roots and local manifest provider | Implemented foundations; networked root publication and broader daemon integration remain planned |
-| DHT-backed placement and discovery | Planned beyond the current direct/networked prototype path |
-| CRDT and vector clocks | Planned |
-| Background daemon, sync engine, and native OS bindings | Planned; FUSE is the intended cross-platform proof of concept |
-| IPFS, Hyphanet, Freenet, Google Drive, Dropbox adapters | Architectural extension points; individual adapters are not all implemented |
+| Go module and cgo-free CI | Implemented with `CGO_ENABLED=0` test and vet checks |
+| Opaque object stores | Implemented with pure-Go memory and disk stores |
+| Signing boundary | Implemented with versioned Ed25519 signing; Ed25519 remains signature-only |
+| Content-defined chunking | Initial deterministic CDC implementation and tests |
+| Provider contract and sync anchors | Types and serialization implemented; pure-Go in-memory reference provider implemented |
+| Immutable content-addressed manifest nodes | Implemented with deterministic encoding, SHA-256 addressing, validation, and generic object-store persistence |
+| Persistent manifest provider | Initial snapshot-backed provider implemented with signed roots and reopen support; full COW DAG mutations remain planned |
+| Mutable roots | Signed monotonic memory and atomic file-backed root stores implemented; network publication excluded |
+| Client-side authenticated encryption | AES-256-GCM chunk protection implemented behind a versioned API; PQC key delivery remains planned |
+| Erasure coding | Reed-Solomon data/parity encoding, integrity checks, and reconstruction implemented |
+| Repair and placement | Planned |
+| Sharing capabilities | Signed scoped Read/Write/Delete capabilities implemented; PQC recipient wrapping remains planned |
+| CRDTs and vector clocks | Vector-clock comparison/merge and deterministic text CRDT implemented |
+| SQLite persistence | Pure-Go SQLite schema and migration foundation implemented |
+| Synchronization | Injectable anchor-driven sync engine implemented; filesystem watchers and conflict-copy surfaces remain planned |
+| Placement and repair | Failure-domain-aware target selection and ciphertext-only shard repair implemented |
+| Background daemon | Cancellable pure-Go lifecycle coordinator implemented; network wiring remains excluded |
+| FUSE | Explicitly excluded from this implementation phase |
+| Native OS bindings and network adapters | Explicitly excluded from this implementation phase |
 
 The status table is intentionally conservative. A target interface can be specified before every implementation behind it exists.
 

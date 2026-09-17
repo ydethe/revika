@@ -23,6 +23,21 @@ revika separates the meaning of data from the systems that carry it:
 The result is a storage system that can use different networks without changing the
 User-facing namespace or the security model.
 
+## Implementation status
+
+The generic implementation is being built as a cgo-free Go module. The current foundation
+includes provider-neutral memory and disk object stores, cancellation-aware object operations,
+deterministic content-defined chunking, authenticated chunk encryption, Reed-Solomon recovery,
+signed capabilities, SQLite schema migrations, persistent manifest snapshots, and an injectable
+synchronization engine. It also includes vector clocks, a deterministic text CRDT,
+failure-domain-aware placement, ciphertext-only repair, and a cancellable daemon coordinator.
+Network-specific adapters, DHT/libp2p protocols, hosted-service integrations, FUSE, and
+native operating-system bindings are intentionally excluded from this core implementation.
+
+All generic builds and tests must pass with `CGO_ENABLED=0`. Ed25519 is reserved for signatures;
+cryptographic key establishment and capability delivery remain behind versioned PQC-compatible
+interfaces.
+
 ## Fabric model
 
 ```mermaid

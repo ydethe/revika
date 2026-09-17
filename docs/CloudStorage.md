@@ -4,11 +4,15 @@ Specification, API reference, and implementation guidelines for **`revika-daemon
 OS filesystem-integration surface. This is the document to build against when the daemon is
 implemented; it makes concrete what [Architecture.md](../Architecture.md) §1/§3.7/§3.8 describes.
 
-- **Status of the code today:** the framework-neutral API (`internal/provider`) and the
-  metadata bridge (`internal/fsmeta`) are **implemented and tested**. The daemon binary
-  (`cmd/revika-daemon`), the sync engine (`internal/sync`), the FUSE PoC (`internal/mount`),
-  the DHT-backed `RootStore`, and the per-OS native bindings are **planned** — this doc is
-  their contract.
+- **Status of the code today:** the framework-neutral provider contract (`internal/provider`),
+  sync-anchor types, initial pure-Go storage foundations, immutable content-addressed manifest
+  nodes, a signed-root snapshot-backed provider, and an in-memory reference provider are
+  implemented. Vector clocks, a deterministic text CRDT, provider-neutral placement/repair, and
+  the generic daemon lifecycle coordinator are also implemented. The metadata
+  bridge (`internal/fsmeta`) and daemon
+  binary (`cmd/revika-daemon`), the sync engine (`internal/sync`), and the FUSE PoC
+  (`internal/mount`) remain planned. The DHT-backed `RootStore`, network adapters, and per-OS
+  native bindings are excluded from this implementation phase — this document is their contract.
 - **Audience:** whoever implements the daemon, the mount, or a per-OS binding shim.
 - **Non-goals:** node-side behaviour (see Architecture §3.2), the crypto/erasure pipeline
   (§3.3), and sharing (§3.5) are covered elsewhere and only referenced here.
@@ -307,10 +311,10 @@ type RootStore interface {
 ## 5. Per-OS binding guidelines
 
 A binding is a thin, per-OS shim that (a) registers the sync root with the OS, (b) receives
-native callbacks, and (c) translates them into `Provider` calls, mapping types both ways. **The
-binding is where the cgo-free constraint breaks** — it is Swift/ObjC (macOS), C#/C++ (Windows),
-or C/GObject (Linux). Keep it *thin*: no revika logic, only translation. Architecture §3.8 marks
-these deferred behind the FUSE PoC.
+native callbacks, and (c) translates them into `Provider` calls, mapping types both ways. Native
+bindings are outside this implementation phase and are not dependencies of the generic Go module.
+If introduced later, they must remain separate from the cgo-free core and contain only translation
+logic. Architecture §3.8 marks these deferred behind the FUSE PoC.
 
 ### 5.1 FUSE — the cross-platform PoC first (`internal/mount`, planned)
 
