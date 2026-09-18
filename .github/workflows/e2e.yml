@@ -25,12 +25,14 @@ jobs:
   e2e-docker:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Job-level so every step (up, logs, down) can interpolate the compose `:?`-required var;
+    # scoping it to only the `up` step made the `down -v` teardown fail interpolation.
+    env:
+      REVIKA_ADAPTER_SECRET: e2e-docker-shared-secret
     steps:
       - uses: actions/checkout@v4
       - name: Run docker-compose E2E against offline Kubo
         working-directory: deploy/ipfs
-        env:
-          REVIKA_ADAPTER_SECRET: e2e-docker-shared-secret
         run: |
           docker compose \
             -f docker-compose.yml -f docker-compose.ci.yml \
