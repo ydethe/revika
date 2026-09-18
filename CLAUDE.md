@@ -9,11 +9,14 @@ revika is an agnostic, modular, end-to-end-encrypted storage fabric. The Client 
 metadata, keys, capabilities, and consistency; untrusted Nodes/providers store only opaque
 encrypted objects. See `README.md` and `docs/` for the full vision.
 
-This repository is the **generic pure-Go core**. Networking, native OS bindings, FUSE, the
-daemon, and provider adapters are intentionally *not* here yet — the docs specify them as a
-target contract. Do not assume a package exists just because a doc references it (e.g.
-`cmd/revika-daemon`, `internal/mount`, `internal/net`, `internal/fsmeta`, `internal/cap/pow.go`,
-and a `revika-ctl` CLI are described in docs but are **not implemented**).
+This repository is the **generic pure-Go core**. Native OS bindings, FUSE, the daemon's network
+wiring, and most provider adapters are intentionally *not* here yet — the docs specify them as a
+target contract. The one exception is a reference **out-of-process storage adapter** for IPFS
+(`internal/netframe`, `internal/ipfsstore`, `cmd/revika-ipfs-adapter`, `cmd/revika-smoke`,
+`deploy/ipfs`), the first concrete instance of the §4.5.1 adapter contract. Do not assume any
+other package exists just because a doc references it (e.g. `cmd/revika-daemon`, `internal/mount`,
+`internal/net`, `internal/fsmeta`, `internal/cap/pow.go`, and a `revika-ctl` CLI are described in
+docs but are **not implemented**).
 
 ## Hard constraints (do not violate)
 
@@ -46,9 +49,9 @@ Match that before considering work done.
 
 ## Layout
 
-All code is under `internal/` (single Go module `github.com/revika/revika`, Go 1.25). There is no
-`cmd/` yet — the module is libraries only. Each package has a `_test.go` sibling; add tests with
-any new behaviour and prefer table-driven tests.
+Most code is under `internal/` (single Go module `github.com/revika/revika`, Go 1.25). The core is
+libraries; the only executables are the reference IPFS adapter binaries under `cmd/` (see below).
+Each package has a `_test.go` sibling; add tests with any new behaviour and prefer table-driven tests.
 
 | Package | Role |
 | --- | --- |
@@ -65,6 +68,11 @@ any new behaviour and prefer table-driven tests.
 | `internal/sync` | Injectable anchor-driven sync engine (conflict-copy fallback, never silently loses data). |
 | `internal/db` | Pure-Go SQLite schema + numbered migrations (`modernc.org/sqlite`). |
 | `internal/daemon` | Cancellable pure-Go lifecycle coordinator (no network wiring). |
+| `internal/netframe` | `rvk-plugin-v1` frame codec + shared-secret handshake; `Serve` (adapter server) and `Client` (a `store.Store` over TCP). The out-of-process adapter wire protocol (§4.5.1). |
+| `internal/ipfsstore` | `store.Store` backed by a Kubo node over its MFS HTTP RPC (cgo-free, `net/http` only). |
+| `cmd/revika-ipfs-adapter` | Adapter binary: `netframe.Serve` in front of `ipfsstore`. First `package main` in the repo. |
+| `cmd/revika-smoke` | Demo client: full store round-trip against an adapter; exits 0 on success. |
+| `deploy/ipfs` | Docker Compose stack (client → adapter → kubo) + Dockerfile. Reference deployment; not in CI. |
 
 The `provider.Provider` interface (`internal/provider`, mirrored in `docs/CloudStorage.md` §2) is
 the central seam. `RootStore` is the one deliberately un-networked seam — keep it behind its

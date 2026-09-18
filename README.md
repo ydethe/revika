@@ -31,8 +31,11 @@ deterministic content-defined chunking, authenticated chunk encryption, Reed-Sol
 signed capabilities, SQLite schema migrations, persistent manifest snapshots, and an injectable
 synchronization engine. It also includes vector clocks, a deterministic text CRDT,
 failure-domain-aware placement, ciphertext-only repair, and a cancellable daemon coordinator.
-Network-specific adapters, DHT/libp2p protocols, hosted-service integrations, FUSE, and
-native operating-system bindings are intentionally excluded from this core implementation.
+It now also includes the first out-of-process storage adapter: the `rvk-plugin-v1` frame
+protocol with a shared-secret handshake (`internal/netframe`), a Kubo-backed object store over
+IPFS MFS (`internal/ipfsstore`), and a runnable `client → adapter → kubo` Docker Compose stack
+(`deploy/ipfs`). DHT/libp2p protocols, further hosted-service integrations, FUSE, and native
+operating-system bindings are intentionally excluded from this core implementation.
 
 All generic builds and tests must pass with `CGO_ENABLED=0`. Ed25519 is reserved for signatures.
 Post-quantum key establishment is not yet implemented: shared capabilities currently carry their
@@ -86,6 +89,17 @@ The Storage Fabric is the interchangeable transport and storage boundary. A comm
 provider contract hides differences in addressing, authentication, quotas, latency,
 eventual consistency, availability, and deletion semantics. Adding a provider must not
 change the file model, encryption policy, sharing model, or conflict-management rules.
+
+A provider that runs out of process — for example as a container in a Compose stack —
+speaks that contract over a size-prefixed binary frame protocol carried on a TCP
+connection, so heterogeneous adapters can be added and composed without touching the
+core. The exchange carries only opaque object identifiers and ciphertext; because content
+is already end-to-end-encrypted, the transport secures against provider impersonation and
+access-pattern leakage rather than payload confidentiality, and its authentication is
+required whenever the connection leaves a network segment the Client fully controls.
+Advisory operations such as delete may be no-ops on a backend that cannot support them,
+but durability-bearing operations must never report a false success. The wire contract is
+specified in `docs/Architecture.md` (§4.5.1).
 
 ### Local state
 

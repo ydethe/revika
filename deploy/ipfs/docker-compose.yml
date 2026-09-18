@@ -1,0 +1,51 @@
+# A three-service revika storage stack: a Kubo node, the revika IPFS adapter that speaks the
+# rvk-plugin-v1 frame protocol on TCP (Hop A) and translates to Kubo MFS RPC (Hop B), and a
+# demo smoke client that exercises the full store round-trip and exits 0 on success.
+#
+# Run:   REVIKA_ADAPTER_SECRET=$(openssl rand -hex 32) docker compose up --build
+# Watch: docker compose logs -f client
+#
+# The build context is the repo root (two levels up) so the Dockerfile can see the module.
+name: revika-ipfs
+
+services:
+  kubo:
+    image: ipfs/kubo:v0.32.1
+    restart: unless-stopped
+    volumes:
+      - kubo-data:/data/ipfs
+    healthcheck:
+      # `ipfs id` succeeds only once the API is serving.
+      test: ["CMD", "ipfs", "id"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  adapter:
+    build:
+      context: ../..
+      dockerfile: deploy/ipfs/Dockerfile
+    command: ["/usr/local/bin/revika-ipfs-adapter"]
+    restart: unless-stopped
+    environment:
+      REVIKA_ADAPTER_LISTEN: ":9090"
+      REVIKA_IPFS_API: "http://kubo:5001"
+      REVIKA_ADAPTER_SECRET: "${REVIKA_ADAPTER_SECRET:?set REVIKA_ADAPTER_SECRET, e.g. openssl rand -hex 32}"
+    depends_on:
+      kubo:
+        condition: service_healthy
+
+  client:
+    build:
+      context: ../..
+      dockerfile: deploy/ipfs/Dockerfile
+    command: ["/usr/local/bin/revika-smoke"]
+    restart: "no"
+    environment:
+      REVIKA_ADAPTER_ADDR: "adapter:9090"
+      REVIKA_ADAPTER_SECRET: "${REVIKA_ADAPTER_SECRET:?set REVIKA_ADAPTER_SECRET, e.g. openssl rand -hex 32}"
+    depends_on:
+      - adapter
+
+volumes:
+  kubo-data:

@@ -313,6 +313,13 @@ The exact public API may evolve, but the contract must preserve these properties
 
 A provider is not trusted with file semantics. It must not decide permissions, merge edits, interpret a path, or publish a User's root pointer.
 
+**Operation semantics: advisory operations may no-op, load-bearing operations must not lie.** Not every operation carries the same weight, and a backend that cannot perform one must respond in the way that preserves the caller's invariants rather than the one that is easiest to implement:
+
+- *Advisory operations may silently no-op.* For an opaque content-addressed ciphertext store, `Delete` is best-effort garbage collection. A backend that cannot delete may return success having done nothing; the only cost is unreclaimed bytes that are useless without the keys the backend never holds. Adapters must not fabricate machinery to refuse such a call or force the Control Plane to special-case it.
+- *Load-bearing operations must not lie.* `Put` (durability, on which placement replica accounting depends) and mutable root publication (monotonic anti-rollback) must either take real effect or return a distinguishable error (unsupported, transient, or permanent) — they must never succeed while doing nothing. A backend that cannot durably store, or cannot provide a mutable compare-and-set, is simply not *selected* for that role by placement; it does not silently degrade the guarantee.
+
+The purpose of this distinction is not to inform the adapter that a method is inert. It is to stop a durability or mutability guarantee that the rest of the core relies on from being silently voided by a backend that quietly declined to honour it.
+
 ### 4.5 Network Adapter
 
 A Network Adapter implements the Network Access Provider contract for one protocol or service. Examples include:
@@ -327,6 +334,41 @@ A Network Adapter implements the Network Access Provider contract for one protoc
 Adapters may differ in latency, object-size limits, naming, authentication, eventual consistency, quota, availability, and delete semantics. The adapter must normalize those differences into the common contract and report limitations rather than leaking them into the Control Plane.
 
 Multiple adapters can be active simultaneously. A placement policy can use provider capabilities, geographic or administrative diversity, cost, observed health, and redundancy requirements to choose targets. Adding a new adapter must require only the adapter and its tests; it must not change encryption, manifest formats, sharing, CRDT logic, or the Object Access Service.
+
+#### 4.5.1 Out-of-process adapter protocol
+
+This section specifies the transport between the core and an adapter that runs as a separate process. A reference implementation now exists: `internal/netframe` provides the `rvk-plugin-v1` codec, the shared-secret handshake, the adapter server (`Serve`), and a `store.Store` client; `internal/ipfsstore` and `cmd/revika-ipfs-adapter` are the first backend built on it, deployable as the `deploy/ipfs` Compose stack. The shared-secret variant of the handshake below is implemented; mutual TLS and request multiplexing remain planned.
+
+**Two hops.** A "custom network provider" involves two distinct boundaries that must not be conflated:
+
+- **Hop A — core ↔ provider adapter.** This is the plugin boundary and the only hop specified here. It carries the Network Access Provider contract (§4.4) and nothing above it.
+- **Hop B — adapter ↔ real backend.** Whatever the backend already speaks: an S3 API, a revika Node protocol, IPFS, WebDAV, and so on. This is the adapter's own concern, not a revika contract. The adapter's job is to translate Hop B into Hop A. The core never sees Hop B, and the wire below is deliberately unspecified here.
+
+Only Hop A is normative.
+
+**Transport: TCP.** Hop A is a stream of size-prefixed binary frames over a TCP connection, with the adapter's address supplied in provider configuration. TCP is the transport because an adapter is a separate network peer — most commonly a container in a Docker Compose (or similar) stack, addressed by service name and port — so a shared byte stream between the two, not a local pipe, is what actually exists between them; TCP is also uniformly available on macOS, Linux, and Windows. The adapter is out of process and independently lifecycle-managed (for example by the container runtime); the core dials it and treats connection loss, like any other transient failure, as a reason to retry or re-place rather than a fatal error.
+
+Because payloads are already end-to-end-encrypted and content-addressed, the transport does **not** need to protect content confidentiality: a peer, or an eavesdropper, learns nothing about plaintext, and a tampered `Get` response fails the client's integrity check regardless of transport. Two residual risks remain, and they — not payload secrecy — are why the transport still matters:
+
+- *Impersonation — integrity of durability claims.* Only end-to-end authentication ties the connection to the provider named in configuration. Without it, any peer on the segment can impersonate that provider, accept `Put` and `Has` calls, acknowledge them, and store nothing; placement then counts durable replicas that do not exist. End-to-end encryption cannot detect this, because the lie is about a liveness claim, not about bytes to verify. Mutual TLS or a shared-secret handshake closes it.
+- *Access-pattern metadata — confidentiality of the envelope.* Although payloads are opaque, the `ObjectID`, size, and timing of each frame are not. An eavesdropper can profile the working set and correlate which shards are read together, working against the least-knowledge principle (§3.1). Transport encryption closes it.
+
+The requirement is therefore keyed to how much of the network segment the Client controls. When the connection crosses a segment the Client does not fully control — any multi-host, cloud, or remote deployment — it **must** use TLS and an authenticated handshake (mutual TLS, or a shared secret injected as a container secret or environment value). On a private, single-host, isolated bridge these **may** be relaxed as a deployment choice, provided the operator accepts the impersonation and metadata exposure described above. The framing and the Network Access Provider contract are identical either way.
+
+**Frame format.** Messages are size-prefixed binary frames, big-endian, mirroring the existing versioned-magic idioms in the codebase (`revika-root-v1` in `internal/rootstore`, `rvk-anchor-v1` in `internal/provider`):
+
+```
+frame = magic("rvk-plugin-v1") | opcode:u8 | requestID:u64 | length:u32 | payload[length]
+```
+
+- **Opcodes:** `PUT`, `GET`, `HAS`, `DELETE`, `CLOSE`, `DATA` (a stream chunk), `END`, and `ERROR`.
+- **Streaming:** `Put` and `Get` bodies stream as a sequence of `DATA` frames terminated by `END`. The `length` prefix bounds every frame, so a reader never has to buffer an unbounded blob to make progress.
+- **Errors:** an `ERROR` frame carries a sentinel code that maps back to the package sentinels (`store.ErrNotFound`, an unsupported-operation error, and a transient-versus-permanent distinction), preserving the §4.4 rule that transient failure is distinguishable from permanent absence — and that load-bearing operations report an error rather than a false success.
+- **Handshake and versioning:** the first exchange negotiates the protocol version through the `rvk-plugin-v1` magic string, so the wire format can migrate under the same discipline as every other persisted or transmitted revika format.
+
+**Least knowledge on the wire.** Frames carry only opaque object identifiers and opaque bytes. File names, cleartext, manifests, and decryption keys never appear in a frame — the boundary has nowhere to put them, so the guarantee holds by construction rather than by review.
+
+**gRPC as an alternative encoding (non-normative).** gRPC is pure Go and cgo-free, and it solves out of the box the same networked concerns this protocol has to address — TLS, authentication, streaming, reconnection, backpressure, and health checking. It is therefore an attractive substitute when the deployment involves polyglot third-party adapters (a Compose stack of heterogeneous service containers, each using generated stubs). The trade-off is a heavier dependency, which is why the default remains the dependency-light `rvk-plugin-v1` frames over a TLS-wrapped connection; a Go-only deployment has no reason to adopt gRPC. Either way the choice changes only the wire beneath the seam: the Network Access Provider contract (§4.4) is unchanged, and nothing above the adapter is affected.
 
 ### 4.6 SQLite database
 
@@ -575,11 +617,11 @@ Sharing wraps capabilities rather than copying data. Client A sends Client B a c
 | Object Access Service -> Access Controller | authorization and capability operations | identity, requested action, object scope, role | cleartext to storage adapters |
 | Object Access Service -> Resilience Manager | logical content operations | manifests, encrypted chunks, shard plans | provider credentials |
 | Resilience Manager -> Network Access Provider | blob operations | opaque object IDs, encrypted shard streams, probes | file names, cleartext, decryption keys |
-| Network Access Provider -> Network Adapter | normalized backend calls | opaque objects, deadlines, health policy | revika file semantics |
+| Network Access Provider -> Network Adapter | normalized backend calls over the §4.5.1 framed protocol | opaque objects, deadlines, health policy | revika file semantics |
 | Network Adapter -> Network Node/service | backend protocol | encrypted objects and transport authentication | manifests and plaintext |
 | Control Plane -> Database | durable local state | roots, manifests, capabilities, clocks, placement state | unencrypted secrets outside protected storage |
 
-The interfaces are intentionally narrow. A test can replace every external network with an in-memory provider, while a production Client can combine several adapters without changing the Control Plane.
+The interfaces are intentionally narrow. A test can replace every external network with an in-memory provider, while a production Client can combine several adapters without changing the Control Plane. When an adapter runs out of process, the concrete wire contract for the Network Access Provider to Network Adapter boundary is the size-prefixed frame protocol specified in §4.5.1.
 
 ## 7. Sharing and collaborative editing
 
@@ -675,7 +717,9 @@ daemon, and native operating-system components are intentionally not implemented
 | Placement and repair | Failure-domain-aware target selection and ciphertext-only shard repair implemented |
 | Background daemon | Cancellable pure-Go lifecycle coordinator implemented; network wiring remains excluded |
 | FUSE | Explicitly excluded from this implementation phase |
-| Native OS bindings and network adapters | Explicitly excluded from this implementation phase |
+| Out-of-process adapter protocol | Implemented: the `rvk-plugin-v1` frame codec, shared-secret handshake, `Serve` (adapter server), and a `store.Store` client live in `internal/netframe` |
+| Reference IPFS adapter | Implemented: `internal/ipfsstore` (a `store.Store` over Kubo MFS HTTP RPC), the `revika-ipfs-adapter` binary, a `revika-smoke` demo client, and a Docker Compose stack in `deploy/ipfs` (client → adapter → kubo). TLS/envelope encryption and request multiplexing remain planned |
+| Other native OS bindings and network adapters | Implementation excluded from this phase; further backends build on the §4.5.1 contract |
 
 The status table is intentionally conservative. A target interface can be specified before every implementation behind it exists.
 
