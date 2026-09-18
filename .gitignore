@@ -19,6 +19,8 @@ node_modules/
 .vscode/settings.json
 **/.docusaurus/
 untitled:plan-*.md
+*.db
+.env
 
 # Test binary, built with `go test -c`
 *.test

@@ -11,7 +11,7 @@ name: revika-ipfs
 
 services:
   kubo:
-    image: ipfs/kubo:v0.32.1
+    image: ipfs/kubo:v0.43.1
     restart: unless-stopped
     volumes:
       - kubo-data:/data/ipfs
@@ -28,6 +28,8 @@ services:
       dockerfile: deploy/ipfs/Dockerfile
     command: ["/usr/local/bin/revika-ipfs-adapter"]
     restart: unless-stopped
+    ports:
+      - 9090:9090
     environment:
       REVIKA_ADAPTER_LISTEN: ":9090"
       REVIKA_IPFS_API: "http://kubo:5001"
@@ -35,30 +37,6 @@ services:
     depends_on:
       kubo:
         condition: service_healthy
-
-  client:
-    build:
-      context: ../..
-      dockerfile: deploy/ipfs/Dockerfile
-    command: ["/usr/local/bin/revika-smoke"]
-    restart: "no"
-    environment:
-      REVIKA_ADAPTER_ADDR: "adapter:9090"
-      REVIKA_ADAPTER_SECRET: "${REVIKA_ADAPTER_SECRET:?set REVIKA_ADAPTER_SECRET, e.g. openssl rand -hex 32}"
-    depends_on:
-      - adapter
-
-  client-ns:
-    build:
-      context: ../..
-      dockerfile: deploy/ipfs/Dockerfile
-    command: ["/usr/local/bin/revika-client-smoke"]
-    restart: "no"
-    environment:
-      REVIKA_ADAPTER_ADDR: "adapter:9090"
-      REVIKA_ADAPTER_SECRET: "${REVIKA_ADAPTER_SECRET:?set REVIKA_ADAPTER_SECRET, e.g. openssl rand -hex 32}"
-    depends_on:
-      - adapter
 
 volumes:
   kubo-data:

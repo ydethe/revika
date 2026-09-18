@@ -15,3 +15,27 @@ services:
 
   adapter:
     restart: "no"
+
+  client:
+    build:
+      context: ../..
+      dockerfile: deploy/ipfs/Dockerfile
+    command: ["/usr/local/bin/revika-smoke"]
+    restart: "no"
+    environment:
+      REVIKA_ADAPTER_ADDR: "adapter:9090"
+      REVIKA_ADAPTER_SECRET: "${REVIKA_ADAPTER_SECRET:?set REVIKA_ADAPTER_SECRET, e.g. openssl rand -hex 32}"
+    depends_on:
+      - adapter
+
+  client-ns:
+    build:
+      context: ../..
+      dockerfile: deploy/ipfs/Dockerfile
+    command: ["/usr/local/bin/revika-client-smoke"]
+    restart: "no"
+    environment:
+      REVIKA_ADAPTER_ADDR: "adapter:9090"
+      REVIKA_ADAPTER_SECRET: "${REVIKA_ADAPTER_SECRET:?set REVIKA_ADAPTER_SECRET, e.g. openssl rand -hex 32}"
+    depends_on:
+      - adapter
