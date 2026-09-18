@@ -73,7 +73,13 @@ func handlePut(ctx context.Context, reader *bufio.Reader, writer *bufio.Writer, 
 	pipeReader, pipeWriter := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		done <- backend.Put(ctx, id, pipeReader)
+		err := backend.Put(ctx, id, pipeReader)
+		// If the backend returned without draining the body — e.g. an early
+		// ErrAlreadyExists after an existence check, as ipfsstore does — close the read
+		// end so a pending or subsequent pipeWriter.Write unblocks instead of deadlocking
+		// the drain loop below.
+		pipeReader.CloseWithError(err)
+		done <- err
 	}()
 
 	// Drain DATA frames until END regardless of an early Put failure, so the connection
