@@ -18,5 +18,8 @@ RUN go build -o /out/revika-ipfs-adapter ./cmd/revika-ipfs-adapter && \
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/revika-ipfs-adapter /usr/local/bin/revika-ipfs-adapter
 COPY --from=build /out/revika-smoke /usr/local/bin/revika-smoke
-# Default command; overridden per-service in docker-compose.yml.
-ENTRYPOINT ["/usr/local/bin/revika-ipfs-adapter"]
+# Default command; overridden per-service in docker-compose.yml. Must be CMD (not ENTRYPOINT):
+# Compose's `command:` overrides CMD, but is only *appended* to an ENTRYPOINT. With ENTRYPOINT,
+# the client service's `command: [revika-smoke]` became an ignored argument to the adapter, so
+# the client silently ran a second adapter and never exited — hanging `--exit-code-from client`.
+CMD ["/usr/local/bin/revika-ipfs-adapter"]

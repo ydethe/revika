@@ -12,7 +12,6 @@ manifest.json
 *.pub
 *.cap
 testfile.bin
-.*
 *.mmdb
 node_modules/
 .DS_Store
