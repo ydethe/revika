@@ -1,0 +1,43 @@
+name: E2E
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Hermetic, Docker-free E2E: the real adapter + smoke-client binaries run as separate
+  # processes against a pure-Go stub Kubo. No public-network egress. Runs on every push.
+  e2e-stub:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run stubbed E2E
+        run: ./scripts/e2e.sh
+
+  # Fidelity E2E: the same smoke client and adapter against a REAL Kubo node, forced fully
+  # offline (no DHT / bootstrap / public dials) via the CI compose overlay.
+  e2e-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run docker-compose E2E against offline Kubo
+        working-directory: deploy/ipfs
+        env:
+          REVIKA_ADAPTER_SECRET: e2e-docker-shared-secret
+        run: |
+          docker compose \
+            -f docker-compose.yml -f docker-compose.ci.yml \
+            up --build --abort-on-container-exit --exit-code-from client
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: deploy/ipfs
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs
+      - name: Tear down
+        if: always()
+        working-directory: deploy/ipfs
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v

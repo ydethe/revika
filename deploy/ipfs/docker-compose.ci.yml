@@ -1,0 +1,17 @@
+# CI overlay for docker-compose.yml. Layer it on top:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up \
+#       --build --abort-on-container-exit --exit-code-from client
+#
+# It runs the real Kubo image but forces it fully OFFLINE — no DHT, no bootstrap peers, no
+# public-network dials — so the fidelity E2E exercises the genuine Kubo MFS API without any
+# egress. MFS (files/*) is entirely local, so the smoke round-trip works unchanged. It also
+# drops the `restart` policies so a finished run tears down cleanly under --abort-on-container-exit.
+services:
+  kubo:
+    # `--offline` disables all networking; --migrate keeps repo upgrades non-interactive.
+    command: ["daemon", "--offline", "--migrate=true"]
+    restart: "no"
+
+  adapter:
+    restart: "no"

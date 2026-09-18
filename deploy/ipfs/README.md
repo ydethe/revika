@@ -67,6 +67,21 @@ docker compose down -v
   front the bridge with TLS (out of scope here — deferred per §4.5.1).
 - The adapter is stateless: object identity is a hash of the opaque `ObjectID`, so any adapter
   replica against the same Kubo node serves the same objects.
-- This stack is intentionally **not** part of CI — the Kubo image is heavy. It is a manual,
-  reproducible reference. The protocol, adapter, and store logic are covered by unit tests
+- CI exercises this stack two ways (`.github/workflows/e2e.yml`): an `e2e-docker` job runs
+  this compose with the `docker-compose.ci.yml` overlay, which forces Kubo fully **offline**
+  (no DHT/bootstrap/public dials) so the real Kubo MFS API is tested without any egress; and a
+  faster, Docker-free `e2e-stub` job (`scripts/e2e.sh`) runs the same adapter and smoke-client
+  binaries against the pure-Go `revika-kubo-stub` instead of a real Kubo node. The protocol,
+  adapter, and store logic are also covered by unit tests
   (`go test ./internal/netframe/... ./internal/ipfsstore/...`).
+
+### CI overlay
+
+To reproduce the `e2e-docker` job locally:
+
+```sh
+cd deploy/ipfs
+export REVIKA_ADAPTER_SECRET=$(openssl rand -hex 32)
+docker compose -f docker-compose.yml -f docker-compose.ci.yml up \
+    --build --abort-on-container-exit --exit-code-from client
+```

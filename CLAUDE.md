@@ -72,7 +72,9 @@ Each package has a `_test.go` sibling; add tests with any new behaviour and pref
 | `internal/ipfsstore` | `store.Store` backed by a Kubo node over its MFS HTTP RPC (cgo-free, `net/http` only). |
 | `cmd/revika-ipfs-adapter` | Adapter binary: `netframe.Serve` in front of `ipfsstore`. First `package main` in the repo. |
 | `cmd/revika-smoke` | Demo client: full store round-trip against an adapter; exits 0 on success. |
-| `deploy/ipfs` | Docker Compose stack (client → adapter → kubo) + Dockerfile. Reference deployment; not in CI. |
+| `cmd/revika-kubo-stub` | Pure-Go, in-memory stand-in for Kubo's MFS RPC surface. CI/test fixture only (no real storage); lets the E2E drive the real binaries without a Kubo node or the public IPFS network. |
+| `deploy/ipfs` | Docker Compose stack (client → adapter → kubo) + Dockerfile. `docker-compose.ci.yml` overlays an offline-Kubo config for the `e2e-docker` CI job. |
+| `scripts/e2e.sh` | Hermetic multi-process E2E: builds the real binaries and runs client → adapter → `revika-kubo-stub` over loopback. Backs the `e2e-stub` CI job. |
 
 The `provider.Provider` interface (`internal/provider`, mirrored in `docs/CloudStorage.md` §2) is
 the central seam. `RootStore` is the one deliberately un-networked seam — keep it behind its
