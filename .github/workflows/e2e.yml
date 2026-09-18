@@ -20,7 +20,7 @@ jobs:
       - name: Run stubbed E2E
         run: ./scripts/e2e.sh
 
-  # Fidelity E2E: the same smoke client and adapter against a REAL Kubo node, forced fully
+  # Fidelity E2E: the same smoke clients and adapter against a REAL Kubo node, forced fully
   # offline (no DHT / bootstrap / public dials) via the CI compose overlay.
   e2e-docker:
     runs-on: ubuntu-latest
@@ -34,9 +34,20 @@ jobs:
       - name: Run docker-compose E2E against offline Kubo
         working-directory: deploy/ipfs
         run: |
+          set -euo pipefail
           docker compose \
             -f docker-compose.yml -f docker-compose.ci.yml \
-            up --build --abort-on-container-exit --exit-code-from client
+            up --build --abort-on-container-exit
+          # Two one-shot clients run in this stack (store-level and namespace-CLI level);
+          # --exit-code-from only tracks one service, so check both explicitly.
+          overall_status=0
+          for service in client client-ns; do
+            container_id=$(docker compose -f docker-compose.yml -f docker-compose.ci.yml ps -a -q "${service}")
+            exit_code=$(docker inspect "${container_id}" --format '{{.State.ExitCode}}')
+            echo "${service} exited with ${exit_code}"
+            [ "${exit_code}" = "0" ] || overall_status=1
+          done
+          exit "${overall_status}"
       - name: Dump logs on failure
         if: failure()
         working-directory: deploy/ipfs

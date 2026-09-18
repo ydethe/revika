@@ -11,12 +11,12 @@ encrypted objects. See `README.md` and `docs/` for the full vision.
 
 This repository is the **generic pure-Go core**. Native OS bindings, FUSE, the daemon's network
 wiring, and most provider adapters are intentionally *not* here yet — the docs specify them as a
-target contract. The one exception is a reference **out-of-process storage adapter** for IPFS
+target contract. The exceptions are a reference **out-of-process storage adapter** for IPFS
 (`internal/netframe`, `internal/ipfsstore`, `cmd/revika-ipfs-adapter`, `cmd/revika-smoke`,
-`deploy/ipfs`), the first concrete instance of the §4.5.1 adapter contract. Do not assume any
-other package exists just because a doc references it (e.g. `cmd/revika-daemon`, `internal/mount`,
-`internal/net`, `internal/fsmeta`, `internal/cap/pow.go`, and a `revika-ctl` CLI are described in
-docs but are **not implemented**).
+`deploy/ipfs`), the first concrete instance of the §4.5.1 adapter contract, and `cmd/revika-client`,
+a single-identity CLI (`cp`/`ls`/`pwd`/`rm`, `rvk:`-prefixed paths). Do not assume any other package exists just because a doc
+references it (e.g. `cmd/revika-daemon`, `internal/mount`, `internal/net`, `internal/fsmeta`,
+`internal/cap/pow.go` are described in docs but are **not implemented**).
 
 ## Hard constraints (do not violate)
 
@@ -50,8 +50,9 @@ Match that before considering work done.
 ## Layout
 
 Most code is under `internal/` (single Go module `github.com/revika/revika`, Go 1.25). The core is
-libraries; the only executables are the reference IPFS adapter binaries under `cmd/` (see below).
-Each package has a `_test.go` sibling; add tests with any new behaviour and prefer table-driven tests.
+libraries; the executables are the reference IPFS adapter binaries and the `revika-client` CLI
+under `cmd/` (see below). Each package has a `_test.go` sibling; add tests with any new behaviour
+and prefer table-driven tests.
 
 | Package | Role |
 | --- | --- |
@@ -60,7 +61,7 @@ Each package has a `_test.go` sibling; add tests with any new behaviour and pref
 | `internal/cap` | Signed, scoped Read/Write/Delete capabilities. |
 | `internal/pipeline` | Chunking, authenticated chunk encryption, erasure (Reed-Solomon), protection, `Metadata`. |
 | `internal/manifest` | Immutable content-addressed Merkle-DAG nodes; signed `RootPointer`; deterministic encoding + SHA-256 addressing. |
-| `internal/rootstore` | Mutable signed root pointers with monotonic anti-rollback (memory + atomic file-backed). |
+| `internal/rootstore` | Mutable signed root pointers with monotonic anti-rollback (memory, atomic file-backed, and sqlite-backed impls). |
 | `internal/provider` | The core `Provider` contract + `Manifest` impl (COW DAG mutations, sync anchors, change diff). The stable boundary all surfaces build on. |
 | `internal/placement` | Failure-domain-aware shard target selection. |
 | `internal/repair` | Ciphertext-only shard repair (never decrypts). |
@@ -72,8 +73,10 @@ Each package has a `_test.go` sibling; add tests with any new behaviour and pref
 | `internal/ipfsstore` | `store.Store` backed by a Kubo node over its MFS HTTP RPC (cgo-free, `net/http` only). |
 | `cmd/revika-ipfs-adapter` | Adapter binary: `netframe.Serve` in front of `ipfsstore`. First `package main` in the repo. |
 | `cmd/revika-smoke` | Demo client: full store round-trip against an adapter; exits 0 on success. |
+| `cmd/revika-client` | Single-identity CLI (`cp`/`ls`/`pwd`/`rm`) over `rvk:`-prefixed namespace paths; sqlite-backed identity/root pointer, per-file AES-256-GCM content encryption keyed locally. |
+| `cmd/revika-client-smoke` | E2E smoke test that drives the real `revika-client` binary through a namespace round trip (cp/ls/rm); exits 0 on success. Backs the `client-ns` service of `deploy/ipfs`. |
 | `cmd/revika-kubo-stub` | Pure-Go, in-memory stand-in for Kubo's MFS RPC surface. CI/test fixture only (no real storage); lets the E2E drive the real binaries without a Kubo node or the public IPFS network. |
-| `deploy/ipfs` | Docker Compose stack (client → adapter → kubo) + Dockerfile. `docker-compose.ci.yml` overlays an offline-Kubo config for the `e2e-docker` CI job. |
+| `deploy/ipfs` | Docker Compose stack (client, client-ns → adapter → kubo) + Dockerfile. `docker-compose.ci.yml` overlays an offline-Kubo config for the `e2e-docker` CI job. |
 | `scripts/e2e.sh` | Hermetic multi-process E2E: builds the real binaries and runs client → adapter → `revika-kubo-stub` over loopback. Backs the `e2e-stub` CI job. |
 
 The `provider.Provider` interface (`internal/provider`, mirrored in `docs/CloudStorage.md` §2) is

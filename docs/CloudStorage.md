@@ -414,7 +414,7 @@ local watcher (`fsnotify`):
   as a conflict copy (`name (conflicted copy <seq>).ext`).
 
 The CLI already ships a stepping-stone of this two-phase model over the namespace
-(`revika-ctl ls`/`cp`, Architecture §3.8): `ls rvk:<path>` fetches **only directory blobs**
+(`revika-client ls`/`cp`, Architecture §3.8): `ls rvk:<path>` fetches **only directory blobs**
 (the `readdir`/`stat` half), and `cp rvk:<path> <local>` then pulls content for just the
 chosen file or subtree (the `open`/`read` fetch), driven explicitly instead of by a page fault.
 

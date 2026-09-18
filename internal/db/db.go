@@ -97,6 +97,13 @@ var migrations = [][]string{
 		`CREATE INDEX crdt_operations_item_idx ON crdt_operations(item_id, created_at_ns)`,
 		`CREATE INDEX repair_jobs_state_idx ON repair_jobs(state, updated_at_ns)`,
 	},
+	// Migration 2: per-item content encryption keys for revika-client (kept local, never
+	// sent to a store/adapter).
+	{
+		`CREATE TABLE file_keys (
+			item_id TEXT PRIMARY KEY, encryption_key BLOB NOT NULL, created_at_ns INTEGER NOT NULL
+		)`,
+	},
 }
 
 type DB struct {

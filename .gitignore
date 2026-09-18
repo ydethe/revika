@@ -48,8 +48,3 @@ tools/.attack-stix/
 # Python tooling bytecode
 __pycache__/
 *.pyc
-# compiled binaries
-revika
-revika-node
-revika-ctl
-revika-daemon

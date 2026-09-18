@@ -50,3 +50,21 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("schema version = %d, want %d", version, len(migrations))
 	}
 }
+
+func TestFileKeysTable(t *testing.T) {
+	database, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec(`INSERT INTO file_keys(item_id, encryption_key, created_at_ns) VALUES (?, ?, ?)`, "item-1", []byte("key-bytes"), int64(1)); err != nil {
+		t.Fatal(err)
+	}
+	var key []byte
+	if err := database.QueryRow(`SELECT encryption_key FROM file_keys WHERE item_id = ?`, "item-1").Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if string(key) != "key-bytes" {
+		t.Fatalf("encryption_key = %q, want %q", key, "key-bytes")
+	}
+}

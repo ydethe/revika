@@ -1,9 +1,10 @@
-# A three-service revika storage stack: a Kubo node, the revika IPFS adapter that speaks the
-# rvk-plugin-v1 frame protocol on TCP (Hop A) and translates to Kubo MFS RPC (Hop B), and a
-# demo smoke client that exercises the full store round-trip and exits 0 on success.
+# A four-service revika storage stack: a Kubo node, the revika IPFS adapter that speaks the
+# rvk-plugin-v1 frame protocol on TCP (Hop A) and translates to Kubo MFS RPC (Hop B), a demo
+# smoke client that exercises the full store round-trip, and a namespace smoke client that
+# drives the real revika-client CLI (cp/ls/rm) end-to-end. Both clients exit 0 on success.
 #
 # Run:   REVIKA_ADAPTER_SECRET=$(openssl rand -hex 32) docker compose up --build
-# Watch: docker compose logs -f client
+# Watch: docker compose logs -f client client-ns
 #
 # The build context is the repo root (two levels up) so the Dockerfile can see the module.
 name: revika-ipfs
@@ -40,6 +41,18 @@ services:
       context: ../..
       dockerfile: deploy/ipfs/Dockerfile
     command: ["/usr/local/bin/revika-smoke"]
+    restart: "no"
+    environment:
+      REVIKA_ADAPTER_ADDR: "adapter:9090"
+      REVIKA_ADAPTER_SECRET: "${REVIKA_ADAPTER_SECRET:?set REVIKA_ADAPTER_SECRET, e.g. openssl rand -hex 32}"
+    depends_on:
+      - adapter
+
+  client-ns:
+    build:
+      context: ../..
+      dockerfile: deploy/ipfs/Dockerfile
+    command: ["/usr/local/bin/revika-client-smoke"]
     restart: "no"
     environment:
       REVIKA_ADAPTER_ADDR: "adapter:9090"
