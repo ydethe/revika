@@ -35,18 +35,21 @@ jobs:
         working-directory: deploy/ipfs
         run: |
           set -euo pipefail
-          docker compose \
-            -f docker-compose.yml -f docker-compose.ci.yml \
-            up --build --abort-on-container-exit
-          # Two one-shot clients run in this stack (store-level and namespace-CLI level);
-          # --exit-code-from only tracks one service, so check both explicitly.
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.ci.yml"
+          # Bring up only the long-running backend; the two clients are one-shot and run
+          # below via `run`, since `up --abort-on-container-exit` kills every container the
+          # instant the FASTER one-shot client exits, truncating the slower one mid-run.
+          ${COMPOSE} up --build -d kubo adapter
+          client_status=0
+          # No --rm: keep the exited containers around so the logs step below can inspect them.
+          ${COMPOSE} run --build --name client client || client_status=$?
+          client_ns_status=0
+          ${COMPOSE} run --build --name client-ns client-ns || client_ns_status=$?
+          echo "client exited with ${client_status}"
+          echo "client-ns exited with ${client_ns_status}"
           overall_status=0
-          for service in client client-ns; do
-            container_id=$(docker compose -f docker-compose.yml -f docker-compose.ci.yml ps -a -q "${service}")
-            exit_code=$(docker inspect "${container_id}" --format '{{.State.ExitCode}}')
-            echo "${service} exited with ${exit_code}"
-            [ "${exit_code}" = "0" ] || overall_status=1
-          done
+          [ "${client_status}" = "0" ] || overall_status=1
+          [ "${client_ns_status}" = "0" ] || overall_status=1
           exit "${overall_status}"
       - name: Dump logs on failure
         if: failure()
